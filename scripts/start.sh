@@ -32,5 +32,7 @@ bash "$REPO/scripts/set-hotkey.sh" >/dev/null 2>&1 || true  # ensure Ctrl+Super+
 echo "▸ overlay — Ctrl+Super+Space to hide/show · Ctrl-C here stops Jarvis."
 cd "$REPO/overlay"
 [ -d node_modules ] || { echo "  (first run: installing Electron ~200MB…)"; npm install; }
+# this script already owns the backend + voice processes, so tell the overlay not to spawn its own
+export JARVIS_OVERLAY_SPAWN=0
 export ELECTRON_OZONE_PLATFORM_HINT=x11 ELECTRON_DISABLE_SECURITY_WARNINGS=1
 npx electron .

@@ -28,7 +28,7 @@ stats(); setInterval(stats, 3000);
 function state(s) {
   document.body.classList.remove("listening", "thinking", "speaking", "idle");
   document.body.classList.add(s || "idle");
-  $("astatus").textContent = s === "listening" ? "listening" : s === "thinking" ? "processing" : s === "speaking" ? "responding" : "systems online";
+  $("astatus").textContent = s === "listening" ? "listening" : s === "thinking" ? "processing" : s === "speaking" ? "responding" : "awaiting · hey jarvis";
 }
 try {
   const es = new EventSource(API + "/events");

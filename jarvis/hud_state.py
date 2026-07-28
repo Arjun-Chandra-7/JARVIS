@@ -127,14 +127,30 @@ def _google_health() -> dict:
 
 
 def _phone_health() -> dict:
-    ok = shutil.which("kdeconnect-cli") is not None
-    return {"name": "Phone", "label": "KDE Connect" if ok else "unavailable", "ok": ok}
+    if shutil.which("kdeconnect-cli") is None:
+        return {"name": "Phone", "label": "unavailable", "ok": False}
+    # a reachable, paired device counts as connected
+    try:
+        out = subprocess.run(
+            ["kdeconnect-cli", "-a", "--id-only"],
+            capture_output=True, text=True, timeout=4,
+        ).stdout.strip()
+        ok = bool(out)
+    except Exception:  # noqa: BLE001
+        ok = False
+    return {"name": "Phone", "label": "linked" if ok else "no device", "ok": ok}
 
 
 def _whatsapp_health() -> dict:
-    session = Path(__file__).resolve().parent.parent / "whatsapp" / ".wwebjs_auth"
-    ok = session.exists()
-    return {"name": "WhatsApp", "label": "bridge" if ok else "not linked", "ok": ok}
+    """Probe the live WhatsApp bridge (node service on :8765) — authoritative."""
+    try:
+        import urllib.request
+
+        with urllib.request.urlopen("http://127.0.0.1:8765/status", timeout=1.5) as r:
+            connected = bool(json.loads(r.read().decode("utf-8")).get("connected"))
+        return {"name": "WhatsApp", "label": "connected" if connected else "linking…", "ok": connected}
+    except Exception:  # noqa: BLE001
+        return {"name": "WhatsApp", "label": "bridge offline", "ok": False}
 
 
 _wx_cache: dict = {"t": 0.0, "data": None}

@@ -8,17 +8,22 @@
   </head>
   <body class="voice">
     <div class="hud">
-      <!-- expanded panel (text mode): chat + actions -->
+      <!-- expanded panel (text mode): conversation + systems + actions -->
       <section class="expand">
-        <div class="ehead"><span>J.A.R.V.I.S</span><em id="ehint">text mode</em></div>
+        <div class="ehead">
+          <span>J.A.R.V.I.S</span>
+          <div class="sysdots" id="sysdots" title="subsystems"></div>
+          <em id="ehint">online</em>
+        </div>
         <div id="log" class="log"></div>
         <div class="actions">
-          <button class="act" data-cmd="__phone" title="Phone"><svg viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg></button>
-          <button class="act" id="awayBtn" data-say="I'm not available, cover my messages." title="Away"><svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg></button>
-          <button class="act" data-say="what did I miss?" title="Catch up"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg></button>
-          <button class="act" data-say="take a screenshot and tell me what's on my screen." title="Screen"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></button>
-          <button class="act" data-say="give me my system status." title="Status"><svg viewBox="0 0 24 24"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg></button>
-          <button class="act" data-say="what's my next meeting?" title="Agenda"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg></button>
+          <button class="act" data-say="What did I miss? Summarise WhatsApp, messages and mail." title="Catch me up"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg></button>
+          <button class="act" data-say="Check my WhatsApp and summarise anything that needs a reply." title="WhatsApp"><svg viewBox="0 0 24 24"><path d="M21 11.5a8.5 8.5 0 0 1-12.6 7.4L3 20l1.2-5.2A8.5 8.5 0 1 1 21 11.5z"/></svg></button>
+          <button class="act" data-say="What's on my calendar today and what's my next meeting?" title="Agenda"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg></button>
+          <button class="act" data-say="Take a screenshot and tell me what's on my screen." title="Read screen"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          <button class="act" data-say="Give me a full system status report." title="Status"><svg viewBox="0 0 24 24"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg></button>
+          <button class="act" data-cmd="__phone" title="Mirror phone"><svg viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg></button>
+          <button class="act" id="awayBtn" data-say="I'm heads-down — hold non-urgent notifications and cover my messages." title="Focus / Away"><svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg></button>
         </div>
       </section>
 
@@ -34,15 +39,20 @@
           <span class="r r1"></span><span class="r r2"></span><span class="r r3"></span>
           <div class="core"></div>
           <svg class="mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4M8 21h8"/></svg>
-          <div class="wave" id="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
         </div>
 
         <div class="mid">
-          <div class="status" id="status">initialising…</div>
-          <input id="msg" class="msg" type="text" placeholder="message Jarvis…" autocomplete="off" />
+          <div class="statuswrap">
+            <div class="status" id="status">initialising…</div>
+            <canvas class="wave" id="wave" width="360" height="26"></canvas>
+          </div>
+          <input id="msg" class="msg" type="text" placeholder="message Jarvis…   ( ↵ send · scroll orb for voice )" autocomplete="off" />
         </div>
 
-        <div class="clock" id="clock">--:--</div>
+        <div class="rightcol">
+          <div class="clock" id="clock">--:--</div>
+          <div class="mini" id="mini">—</div>
+        </div>
       </section>
     </div>
 

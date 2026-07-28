@@ -1,6 +1,9 @@
-:root { --ink: #eaffff; --dim: #5a97a4; --glass: rgba(7, 16, 23, 0.72); --line: rgba(120, 220, 240, .28); }
+:root { --ink: #eaffff; --dim: #5a97a4; --glass: rgba(7, 16, 23, 0.74); --line: rgba(120, 220, 240, .28); --good:#38f2b0; --bad:#ff6b7f; }
 body.voice { --accent: #37e7ff; --accent2: #bff3ff; --glow: 0 0 26px rgba(55,231,255,.5); }
 body.text  { --accent: #ffc062; --accent2: #ffe6c4; --glow: 0 0 26px rgba(255,192,98,.5); }
+body.listening { --accent: #46f2ff; --accent2: #e6ffff; }
+body.speaking  { --accent: #ffc062; --accent2: #ffe6c4; }
+body.thinking  { --accent: #8f6dff; --accent2: #d9ccff; }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { width: 100vw; height: 100vh; overflow: hidden; background: transparent;
@@ -12,41 +15,53 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round
 
 /* ---------- expanded panel (text mode only) ---------- */
 .expand { flex: 1; min-height: 0; display: none; flex-direction: column;
-  background: var(--glass); border: 1px solid var(--line); border-radius: 16px; backdrop-filter: blur(16px);
+  background: var(--glass); border: 1px solid var(--line); border-radius: 16px; backdrop-filter: blur(18px);
   box-shadow: var(--glow), inset 0 0 40px rgba(0,0,0,.5); overflow: hidden; animation: slideUp .3s ease; }
 body.text .expand { display: flex; }
 @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } }
-.ehead { display: flex; align-items: center; justify-content: space-between; padding: 11px 16px;
+.ehead { display: flex; align-items: center; gap: 14px; padding: 11px 16px;
   font-family: "Orbitron"; font-size: 11px; letter-spacing: 4px; color: var(--accent); border-bottom: 1px solid var(--line); }
-.ehead em { font-family: "Chakra Petch"; font-style: normal; letter-spacing: 1px; color: var(--dim); font-size: 11px; }
+.ehead > span:first-child { text-shadow: var(--glow); }
+.ehead em { margin-left: auto; font-family: "Chakra Petch"; font-style: normal; letter-spacing: 1px; color: var(--dim); font-size: 11px; }
+.sysdots { display: flex; gap: 6px; }
+.sysdots .d { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); box-shadow: 0 0 6px var(--bad); opacity: .5; transition: .3s; }
+.sysdots .d.on { background: var(--good); box-shadow: 0 0 8px var(--good); opacity: 1; }
+
 .log { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .log::-webkit-scrollbar { width: 4px; } .log::-webkit-scrollbar-thumb { background: var(--dim); border-radius: 4px; }
-.msgline { max-width: 92%; padding: 9px 13px; border-radius: 12px; line-height: 1.4; font-size: 15px; animation: pop .3s ease; }
+.msgline { max-width: 92%; padding: 9px 13px; border-radius: 12px; line-height: 1.45; font-size: 15px; animation: pop .3s ease; }
 @keyframes pop { from { opacity: 0; transform: translateY(6px); } }
 .msgline .who { font-family: "Orbitron"; font-size: 8px; letter-spacing: 2px; opacity: .6; display: block; margin-bottom: 3px; }
 .msgline.you { align-self: flex-end; background: rgba(255,255,255,.08); border: 1px solid var(--line); }
 .msgline.jarvis { align-self: flex-start; background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid var(--line); }
-.msgline.sys { align-self: center; font-size: 12px; color: var(--dim); }
+.msgline.sys { align-self: center; font-size: 12px; color: var(--dim); letter-spacing: 1px; }
+.msgline code { background: rgba(0,0,0,.4); padding: 1px 6px; border-radius: 5px; font-size: 13px; }
 .actions { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
 .act { flex: 1; height: 42px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 10px;
   color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); transition: .15s; }
 .act svg { width: 20px; height: 20px; }
 .act:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); box-shadow: var(--glow); transform: translateY(-2px); }
 .act:active { transform: scale(.94); }
+.act.on { background: color-mix(in srgb, var(--accent) 30%, transparent); box-shadow: var(--glow); }
 
 /* ---------- console bar (always visible) ---------- */
-.bar { height: 104px; display: flex; align-items: center; gap: 16px; padding: 0 20px;
-  background: var(--glass); border: 1px solid var(--line); border-radius: 20px; backdrop-filter: blur(16px);
-  box-shadow: var(--glow), inset 0 0 40px rgba(0,0,0,.55); }
+.bar { height: 112px; display: flex; align-items: center; gap: 16px; padding: 0 20px;
+  background: var(--glass); border: 1px solid var(--line); border-radius: 22px; backdrop-filter: blur(18px);
+  box-shadow: var(--glow), inset 0 0 40px rgba(0,0,0,.55); position: relative; overflow: hidden; }
+/* breathing top edge that intensifies while listening */
+.bar::before { content: ""; position: absolute; top: 0; left: 8%; right: 8%; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent); opacity: .5; transition: opacity .4s; }
+body.listening .bar::before { opacity: 1; animation: edge 1.4s ease-in-out infinite; }
+@keyframes edge { 50% { opacity: .35; } }
 
 /* webcam eye (keeps hand-gestures alive) */
-.eye { position: relative; width: 60px; height: 60px; border-radius: 50%; overflow: hidden;
-  border: 1px solid var(--line); box-shadow: inset 0 0 14px rgba(0,0,0,.6); flex: none; }
+.eye { position: relative; width: 62px; height: 62px; border-radius: 50%; overflow: hidden;
+  border: 1px solid var(--line); box-shadow: inset 0 0 14px rgba(0,0,0,.6), var(--glow); flex: none; }
 .eye video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
 .eye canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 
 /* the MIC ORB — the hero. scroll or click to switch modes */
-.orb { position: relative; width: 84px; height: 84px; flex: none; display: grid; place-items: center; cursor: pointer; }
+.orb { position: relative; width: 86px; height: 86px; flex: none; display: grid; place-items: center; cursor: pointer; }
 .orb .r { position: absolute; border-radius: 50%; border: 1.5px solid var(--line); }
 .orb .r1 { inset: 0; border-top-color: var(--accent); border-right-color: var(--accent); animation: spin 4s linear infinite; }
 .orb .r2 { inset: 12%; border-bottom-color: var(--accent); animation: spin 2.8s linear infinite reverse; }
@@ -58,31 +73,29 @@ body.text .expand { display: flex; }
 .orb:hover .r1 { animation-duration: 1.6s; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 0%,100% { transform: scale(.86); opacity: .8; } 50% { transform: scale(1.06); opacity: 1; } }
-body.listening .orb .core { animation-duration: .9s; box-shadow: 0 0 34px var(--accent); }
-body.thinking .orb .r1, body.thinking .orb .r2 { animation-duration: 1s; }
-
-/* waveform inside the orb ring area, only when active */
-.wave { position: absolute; bottom: -2px; display: flex; align-items: flex-end; gap: 3px; height: 16px; opacity: 0; transition: .3s; z-index: 2; }
-.wave i { width: 3px; height: 4px; background: var(--accent); border-radius: 2px; }
-body.listening .wave, body.speaking .wave { opacity: 0; }        /* keep orb clean; waveform lives in .mid */
+body.listening .orb .core { animation-duration: .8s; box-shadow: 0 0 40px var(--accent); }
+body.thinking .orb .r1, body.thinking .orb .r2 { animation-duration: .9s; }
+body.speaking .orb .core { animation-duration: 1.1s; }
 
 /* middle: status (voice) OR text input (text) */
-.mid { flex: 1; min-width: 0; display: flex; align-items: center; }
+.mid { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 6px; }
+.statuswrap { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .status { font-size: 17px; letter-spacing: 1px; color: var(--accent2); text-shadow: var(--glow); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status .cue { color: var(--accent); font-weight: 600; }
+.wave { width: 150px; height: 26px; opacity: 0; transition: opacity .3s; flex: none; }
+body.listening .wave, body.speaking .wave { opacity: .9; }
+body.text .statuswrap { display: none; }
 .msg { display: none; width: 100%; background: rgba(0,0,0,.4); border: 1px solid var(--line); border-radius: 12px;
   color: var(--ink); font-family: inherit; font-size: 16px; padding: 12px 15px; outline: none; transition: .2s; }
 .msg::placeholder { color: var(--dim); }
 .msg:focus { border-color: var(--accent); box-shadow: var(--glow); }
-body.text .status { display: none; }
 body.text .msg { display: block; }
 
-.clock { font-family: "Orbitron"; font-weight: 700; font-size: 22px; color: var(--accent2); text-shadow: var(--glow); flex: none; }
+.rightcol { flex: none; text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.clock { font-family: "Orbitron"; font-weight: 700; font-size: 22px; color: var(--accent2); text-shadow: var(--glow); }
+.mini { font-size: 11px; letter-spacing: 1px; color: var(--dim); white-space: nowrap; }
 
-/* live waveform bars ride the status line when listening/speaking */
-body.listening .status::after, body.speaking .status::after { content: " ▂▄▆█▆▄▂"; letter-spacing: 1px; animation: eq .8s steps(4) infinite; color: var(--accent); }
-@keyframes eq { 50% { content: " ▆█▄▂▄█▆"; } }
-
-.toast { position: fixed; bottom: 140px; left: 50%; transform: translateX(-50%) translateY(10px);
+.toast { position: fixed; bottom: 150px; left: 50%; transform: translateX(-50%) translateY(10px);
   background: var(--glass); border: 1px solid var(--accent); color: var(--accent2); padding: 10px 20px; border-radius: 10px;
-  font-size: 14px; letter-spacing: 1px; opacity: 0; transition: .3s; pointer-events: none; }
+  font-size: 14px; letter-spacing: 1px; opacity: 0; transition: .3s; pointer-events: none; backdrop-filter: blur(12px); }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }

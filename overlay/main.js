@@ -1,16 +1,68 @@
 // JARVIS console — a compact, always-on-top, FULLY INTERACTIVE floating HUD (not fullscreen), so
 // typing and buttons work like a normal window and the desktop stays usable around it.
+// The overlay also *is* Jarvis: it auto-starts the backend (:8770) and the always-listening
+// "Hey Jarvis" voice loop, so launching the overlay = a live, listening assistant.
 const { app, BrowserWindow, globalShortcut, ipcMain, screen } = require("electron");
 const { spawn } = require("child_process");
+const http = require("http");
+const path = require("path");
 const fs = require("fs");
 
 app.commandLine.appendSwitch("ozone-platform", "x11");
 
+const REPO = path.resolve(__dirname, "..");
+const PY = path.join(REPO, ".venv", "bin", "python");
+const PORT = process.env.JARVIS_WEB_PORT || "8770";
+
 let win = null;       // interactive console (bottom)
 let ambient = null;   // fullscreen, ALWAYS click-through, decorative HUD
 let visible = true;
-const COMPACT = { w: 560, h: 120 };
-const EXPANDED = { w: 560, h: 500 };
+const COMPACT = { w: 620, h: 128 };
+const EXPANDED = { w: 620, h: 520 };
+
+// --------------------------------------------------------------------------- //
+// backend + voice as managed child processes (always-listening)               //
+// --------------------------------------------------------------------------- //
+const kids = [];
+function cleanEnv() {
+  const env = { ...process.env };
+  delete env.LD_LIBRARY_PATH; delete env.LD_PRELOAD;   // drop snap/conda pollution
+  env.JARVIS_WEB_PORT = PORT;
+  return env;
+}
+function probe(port) {
+  return new Promise((resolve) => {
+    const req = http.get({ host: "127.0.0.1", port, path: "/stats", timeout: 800 }, (r) => { r.destroy(); resolve(true); });
+    req.on("error", () => resolve(false));
+    req.on("timeout", () => { req.destroy(); resolve(false); });
+  });
+}
+function supervise(name, args, logfile) {
+  let stopped = false, backoff = 1000;
+  const start = () => {
+    const out = fs.openSync(logfile, "a");
+    const p = spawn(PY, ["-m", "jarvis", ...args], { cwd: REPO, env: cleanEnv(), stdio: ["ignore", out, out] });
+    kids.push(p);
+    p.on("exit", () => {
+      if (stopped || app.isQuiting) return;
+      setTimeout(start, backoff);
+      backoff = Math.min(backoff * 2, 15000);
+    });
+    p.on("spawn", () => { backoff = 1000; });
+  };
+  start();
+  return () => { stopped = true; };
+}
+async function ensureBackend() {
+  if (!fs.existsSync(PY)) { toast("No .venv — run pip install -r requirements.txt"); return; }
+  if (process.env.JARVIS_OVERLAY_SPAWN === "0") return;   // external launcher owns the processes
+  const up = await probe(PORT);
+  if (!up) supervise("web", ["--web"], "/tmp/jarvis-web.log");
+  // always-listening wake word; the voice loop pushes events to the HUD via /emit
+  supervise("voice", ["--voice"], "/tmp/jarvis-voice.log");
+}
+
+function toast(msg) { win && win.webContents.send("toast", msg); }
 
 function createAmbient() {
   const a = screen.getPrimaryDisplay().workArea;
@@ -81,9 +133,9 @@ ipcMain.on("launch-phone", () => {
   try {
     const p = spawn("scrcpy", ["--window-title=JARVIS Phone", "--window-borderless", "--always-on-top",
       `--window-x=${x}`, `--window-y=${y}`, `--window-width=${w}`, "--stay-awake"], { detached: true, stdio: "ignore" });
-    p.on("error", () => win && win.webContents.send("toast", "Install scrcpy + connect phone via USB"));
+    p.on("error", () => toast("Install scrcpy + connect phone via USB"));
     p.unref();
-    win && win.webContents.send("toast", "Opening phone…");
+    toast("Opening phone…");
   } catch (e) {}
 });
 
@@ -97,12 +149,14 @@ function watchScreencast() {
     mon.stdout.on("data", (d) => {
       if (/member=(Start|SelectSources|CreateSession)/.test(d.toString()) && visible) hideAll();
     });
+    kids.push(mon);
   } catch (e) {}
 }
 
 app.whenReady().then(() => {
   createAmbient();
   createWindow();
+  ensureBackend();
   try { fs.writeFileSync("/tmp/jarvis-overlay.pid", String(process.pid)); } catch (e) {}
   globalShortcut.register("Control+Super", toggleOverlay);
   globalShortcut.register("Control+Alt+J", toggleOverlay);
@@ -111,5 +165,9 @@ app.whenReady().then(() => {
   app.on("activate", () => BrowserWindow.getAllWindows().length === 0 && createWindow());
 });
 
-app.on("will-quit", () => globalShortcut.unregisterAll());
+app.on("will-quit", () => {
+  app.isQuiting = true;
+  globalShortcut.unregisterAll();
+  for (const k of kids) { try { k.kill("SIGTERM"); } catch (e) {} }
+});
 app.on("window-all-closed", () => app.quit());
