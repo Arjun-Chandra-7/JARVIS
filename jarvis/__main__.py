@@ -522,10 +522,15 @@ def main() -> None:
     parser.add_argument("--screen-test", action="store_true", help="diagnose screen capture (Wayland/X11)")
     parser.add_argument("--perplexity-login", action="store_true",
                         help="one-time: sign in to Perplexity so Jarvis can deep-research as your account")
+    parser.add_argument("--chatgpt-login", action="store_true",
+                        help="one-time: sign in to ChatGPT so Jarvis can think through your account")
     args = parser.parse_args()
 
     try:
-        if args.perplexity_login:
+        if args.chatgpt_login:
+            from .integrations import chatgpt
+            chatgpt.login()
+        elif args.perplexity_login:
             from .integrations import research
             research.login()
         elif args.check:

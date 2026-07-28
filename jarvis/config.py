@@ -170,6 +170,17 @@ class Config:
         # Local brain needs no key at all.
         if self.brain == "ollama":
             return "ollama"
+        # ChatGPT brain drives the web app via the user's account — no key/CLI, just a one-time login.
+        if self.brain == "chatgpt":
+            try:
+                import playwright  # noqa: F401
+            except ImportError:
+                raise SystemExit(
+                    "ChatGPT brain selected but Playwright isn't installed.\n"
+                    "  .venv/bin/pip install playwright\n"
+                    "  then sign in once:  python -m jarvis --chatgpt-login"
+                )
+            return "chatgpt"
         # API brains (gemini/groq) don't need the Claude CLI — just the API key.
         if self.brain == "gemini":
             if not self.gemini_api_key:
