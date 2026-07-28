@@ -127,12 +127,39 @@ async def _run_voice() -> None:
     if created:
         print(f"Created a fresh memory vault at {CONFIG.vault_path}")
 
-    # Auto-recover: if the SDK transport dies mid-turn (e.g. an over-large tool payload), rebuild the
-    # agent and keep listening instead of exiting. Ctrl-C still stops cleanly.
+    # Single-session sharing: if the --web brain is up, the voice loop talks to IT (one ChatGPT
+    # browser shared by voice + HUD) instead of opening a second one. Falls back to a local brain
+    # if no web server is running. Disable with JARVIS_VOICE_SHARE_WEB=0.
+    from .agent.remote import RemoteAgent, web_reachable
+
+    share = os.environ.get("JARVIS_VOICE_SHARE_WEB", "1").strip().lower() not in ("0", "false", "no")
+
+    # The --web brain boots its browser (~15s); wait briefly so we attach to it instead of racing
+    # ahead and opening a second ChatGPT session. Falls back to a local brain if it never appears.
+    if share and not web_reachable():
+        try:
+            wait_s = int(os.environ.get("JARVIS_VOICE_WAIT_WEB_S", "45"))
+        except ValueError:
+            wait_s = 45
+        print(f"voice: waiting up to {wait_s}s for the --web brain to come up…")
+        for _ in range(wait_s):
+            if web_reachable():
+                break
+            await asyncio.sleep(1)
+
+    def _make_voice_agent():
+        if share and web_reachable():
+            print("voice: using the shared --web brain (single ChatGPT session)")
+            return RemoteAgent(mode="voice")
+        print("voice: no --web brain found — starting a local brain for voice.")
+        return make_agent(CONFIG, mode="voice", confirm_fn=_confirm, on_tool=_on_tool)
+
+    # Auto-recover: if the transport dies mid-turn, rebuild the agent and keep listening instead of
+    # exiting. Ctrl-C still stops cleanly.
     attempt = 0
     while True:
         try:
-            async with make_agent(CONFIG, mode="voice", confirm_fn=_confirm, on_tool=_on_tool) as agent:
+            async with _make_voice_agent() as agent:
                 session = VoiceSession(CONFIG, on_event=_voice_event)
                 await session.run(agent)
             return
