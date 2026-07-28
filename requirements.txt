@@ -27,3 +27,6 @@ Pillow>=10.0
 
 # system health readout (system_stats)
 psutil>=5.9
+
+# deep research via the user's Perplexity account (drives system Chrome; no browser download)
+playwright>=1.40

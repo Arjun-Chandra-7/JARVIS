@@ -71,10 +71,23 @@ def smart_send(to: str, message: str) -> dict:
         r = send(digits, message)
         return {"ok": bool(r.get("ok")), "message": "Sent." if r.get("ok") else f"Failed: {r.get('error')}"}
 
-    # 3) a name → resolve against the address book
+    # 3) a name → check Jarvis's own durable memory FIRST (numbers Arjun told it), then the bridge
+    try:
+        from . import contacts
+
+        remembered = contacts.lookup(to)
+        if remembered and remembered.get("number"):
+            r = send(remembered["number"], message)
+            if r.get("ok"):
+                return {"ok": True, "message": f"Sent to {remembered['name']}."}
+            return {"ok": False, "message": f"Couldn't send to {remembered['name']}: {r.get('error')}"}
+    except Exception:  # noqa: BLE001
+        pass
+
     cands = resolve(to)
     if not cands:
-        return {"ok": False, "message": f"I don't have '{to}' in your contacts. What's their number, with country code?"}
+        return {"ok": False, "message": f"I don't have '{to}' in your contacts. Tell me their number "
+                                        "(with country code) and I'll remember it."}
     exact = [c for c in cands if c.get("name", "").lower() == to.lower()]
     if len(cands) > 1 and not exact:
         names = ", ".join(c["name"] for c in cands[:5])

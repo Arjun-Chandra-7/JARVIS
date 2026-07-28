@@ -520,10 +520,15 @@ def main() -> None:
     parser.add_argument("--check", action="store_true", help="preflight: deps, keys, audio devices")
     parser.add_argument("--selftest", action="store_true", help="one live TTS→mic→STT round trip")
     parser.add_argument("--screen-test", action="store_true", help="diagnose screen capture (Wayland/X11)")
+    parser.add_argument("--perplexity-login", action="store_true",
+                        help="one-time: sign in to Perplexity so Jarvis can deep-research as your account")
     args = parser.parse_args()
 
     try:
-        if args.check:
+        if args.perplexity_login:
+            from .integrations import research
+            research.login()
+        elif args.check:
             _preflight()
         elif args.screen_test:
             _screen_test()

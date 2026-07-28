@@ -31,6 +31,36 @@ def _b(v) -> bool:
     return str(v).strip().lower() in ("1", "true", "yes", "on")
 
 
+async def _compose_message(config: Config, name: str, about: str) -> str:
+    """Turn an intent ('ask how his health is') into a natural WhatsApp message, via the LLM.
+
+    Falls back to a sensible template if the model is unreachable, so a message always goes out.
+    """
+    about = (about or "").strip()
+    first = (name or "there").strip().split()[0].title()
+    try:
+        import httpx
+
+        base, key, model = config.llm_params()
+        prompt = (
+            f"Write a short, warm, natural WhatsApp message to {first} about: {about}. "
+            "One or two sentences, first person as the sender, no quotes, no preamble, no emojis "
+            "unless natural. Just the message text."
+        )
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(
+                f"{base.rstrip('/')}/chat/completions",
+                headers={"Authorization": f"Bearer {key}"},
+                json={"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.7},
+            )
+            text = r.json()["choices"][0]["message"]["content"].strip().strip('"').strip()
+            if text:
+                return text
+    except Exception:  # noqa: BLE001
+        pass
+    return f"Hey {first}, {about}".strip()
+
+
 def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[str], Awaitable[bool]]]):
     """Return (schemas, dispatch). `dispatch(name, args)` runs a tool and returns text."""
     reg: dict[str, tuple[dict, Callable]] = {}
@@ -111,6 +141,25 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
             return re.sub(r"\s+", " ", text).strip()[:5000]
         except Exception as exc:  # noqa: BLE001
             return f"fetch error: {exc}"
+
+    @tool("deep_research",
+          "Do serious, up-to-date research using the user's Perplexity account (browses the live web, "
+          "synthesises sources). Use this WHENEVER the user asks to 'research', wants depth/current "
+          "information, or is thinking through a project — not for trivial facts (use web_search for those).",
+          {"query": {"type": "string"}}, ["query"])
+    async def deep_research(a):
+        from ..integrations import research
+        q = a.get("query", "")
+        try:
+            r = await research.research(q)
+        except Exception as exc:  # noqa: BLE001
+            return f"Deep research failed ({exc}). Is Playwright/Chrome set up? Try `--perplexity-login`."
+        if not r.get("ok"):
+            return r.get("text", "No result.")
+        out = r["text"]
+        if r.get("sources"):
+            out += "\n\nSources:\n" + "\n".join("- " + s for s in r["sources"])
+        return out[:6000]
 
     # ---------------- memory / status ----------------
     @tool("recall", "Search the Obsidian memory vault for relevant notes.", {"query": {"type": "string"}}, ["query"])
@@ -240,11 +289,39 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     @tool("find_contact", "Look up a person's WhatsApp contact by name (before sending).",
           {"name": {"type": "string"}}, ["name"])
     async def find_contact(a):
+        from ..integrations import contacts, whatsapp
+        name = a.get("name", "")
+        local = contacts.lookup(name)
+        cands = whatsapp.resolve(name)
+        out = []
+        if local:
+            out.append(f"{local['name']}" + (f" ({local['number']})" if local.get("number") else "") + " [remembered]")
+        out += [c["name"] for c in cands[:6]]
+        return "; ".join(out) if out else f"No contact matching '{name}'."
+
+    @tool("remember_contact",
+          "Permanently remember a person's phone number (and optional note) in the vault, so you can "
+          "message/call them later. Use whenever the user tells you someone's number or who someone is.",
+          {"name": {"type": "string"}, "number": {"type": "string"}, "note": {"type": "string"}},
+          ["name"])
+    async def remember_contact(a):
+        from ..integrations import contacts
+        return contacts.remember(a.get("name", ""), a.get("number", ""), a.get("note", ""))["message"]
+
+    @tool("message_person",
+          "Message someone by INTENT — you give the person's name and what the message is ABOUT, and "
+          "Jarvis composes a natural, friendly WhatsApp message and sends it. Use this for requests like "
+          "'message Pradhuman about his health' (about='ask how his health is'). For exact dictated text "
+          "use whatsapp_send instead.",
+          {"name": {"type": "string"}, "about": {"type": "string"}}, ["name", "about"])
+    async def message_person(a):
         from ..integrations import whatsapp
-        cands = whatsapp.resolve(a.get("name", ""))
-        if not cands:
-            return f"No contact matching '{a.get('name','')}'."
-        return "; ".join(c["name"] for c in cands[:6])
+        name, about = a.get("name", ""), a.get("about", "")
+        text = await _compose_message(config, name, about)
+        res = whatsapp.smart_send(name, text)
+        if res.get("ok"):
+            return f'Sent to {name}: "{text}"'
+        return res["message"]
 
     @tool("place_call", "Open the phone dialer for a number.", {"number": {"type": "string"}}, ["number"])
     async def place_call(a):
