@@ -413,6 +413,12 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         from ..integrations.google import gmail
         return gmail.check(config, a.get("query") or "is:unread") or "Google not connected."
 
+    @tool("google_email_read", "Read the full body of one Gmail message by its id (from google_email_check).",
+          {"id": {"type": "string"}}, ["id"])
+    async def google_email_read(a):
+        from ..integrations.google import gmail
+        return gmail.read(config, a.get("id", "")) or "Google not connected."
+
     @tool("google_email_send", "Send an email (confirm first).",
           {"to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}}, ["to", "subject", "body"])
     async def google_email_send(a):
@@ -420,6 +426,31 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
             return "user declined."
         from ..integrations.google import gmail
         return gmail.send(config, a.get("to", ""), a.get("subject", ""), a.get("body", "")) or "Google not connected."
+
+    @tool("google_calendar_create", "Create a calendar event. start/end are ISO datetimes.",
+          {"title": {"type": "string"}, "start": {"type": "string"}, "end": {"type": "string"},
+           "description": {"type": "string"}}, ["title", "start", "end"])
+    async def google_calendar_create(a):
+        if not await _confirm(f"create calendar event '{a.get('title')}' at {a.get('start')}"):
+            return "user declined."
+        from ..integrations.google import calendar as gcal
+        return gcal.create_event(config, a.get("title", ""), a.get("start", ""), a.get("end", ""),
+                                 a.get("description", "")) or "Google not connected."
+
+    @tool("google_tasks_list", "List your Google Tasks.", {})
+    async def google_tasks_list(a):
+        from ..integrations.google import tasks
+        return tasks.list_tasks(config) or "Google not connected."
+
+    @tool("google_tasks_add", "Add a Google Task.", {"title": {"type": "string"}, "notes": {"type": "string"}}, ["title"])
+    async def google_tasks_add(a):
+        from ..integrations.google import tasks
+        return tasks.add_task(config, a.get("title", ""), a.get("notes", "")) or "Google not connected."
+
+    @tool("google_tasks_complete", "Mark a Google Task complete by its title.", {"title": {"type": "string"}}, ["title"])
+    async def google_tasks_complete(a):
+        from ..integrations.google import tasks
+        return tasks.complete_task(config, a.get("title", "")) or "Google not connected."
 
     schemas = [s for s, _ in reg.values()]
 
