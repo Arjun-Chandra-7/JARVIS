@@ -280,6 +280,12 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         from ..integrations import whatsapp
         return whatsapp.smart_send(a.get("to", ""), a.get("message", ""))["message"]
 
+    @tool("instagram_dms", "Read the user's recent Instagram direct-message threads (their account).", {})
+    async def instagram_dms(a):
+        from ..integrations import instagram
+        r = await instagram.dms()
+        return r.get("text", "Couldn't read Instagram DMs.")
+
     @tool("whatsapp_inbox", "Recent incoming WhatsApp messages (sender name + text; no IDs).", {})
     async def whatsapp_inbox(a):
         from ..integrations import whatsapp

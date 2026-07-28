@@ -55,6 +55,7 @@ ROUTING:
   (compose a natural message yourself; the name resolves to their number). Save numbers with remember_contact.
 - Check email: <function=google_email_check>{{}}</function> · read one: google_email_read · send: google_email_send.
 - Calendar: <function=google_agenda>{{"days":"1"}}</function> · add event: google_calendar_create.
+- Check Instagram DMs: <function=instagram_dms>{{}}</function>
 - "What did I miss?" across WhatsApp + email + calendar: <function=catch_up>{{}}</function>
 - For deep/current RESEARCH or working through a project: use deep_research (it uses Perplexity).
 - For CODING tasks ("fix the code on my screen", build/refactor): use code_with_antigravity (Gemini).

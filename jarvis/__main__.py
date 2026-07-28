@@ -558,10 +558,15 @@ def main() -> None:
                         help="one-time: sign in to Perplexity so Jarvis can deep-research as your account")
     parser.add_argument("--chatgpt-login", action="store_true",
                         help="one-time: sign in to ChatGPT so Jarvis can think through your account")
+    parser.add_argument("--instagram-login", action="store_true",
+                        help="one-time: sign in to Instagram so Jarvis can read your DMs")
     args = parser.parse_args()
 
     try:
-        if args.chatgpt_login:
+        if args.instagram_login:
+            from .integrations import instagram
+            instagram.login()
+        elif args.chatgpt_login:
             from .integrations import chatgpt
             chatgpt.login()
         elif args.perplexity_login:
