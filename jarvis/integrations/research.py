@@ -19,14 +19,20 @@ PROFILE = Path("~/.config/jarvis/perplexity-profile").expanduser()
 URL = "https://www.perplexity.ai/"
 
 
-def _ctx(p, headless: bool):
+def _ctx(p, headless: bool, hidden: bool = False):
     PROFILE.mkdir(parents=True, exist_ok=True)
+    env_over, extra_args = ({}, [])
+    if hidden:
+        from .browser_env import launch_extras
+
+        env_over, extra_args = launch_extras()
     return p.chromium.launch_persistent_context(
         str(PROFILE),
         channel="chrome",
         headless=headless,
         viewport={"width": 1280, "height": 900},
-        args=["--disable-blink-features=AutomationControlled"],
+        env={**os.environ, **env_over} if env_over else None,
+        args=["--disable-blink-features=AutomationControlled", *extra_args],
     )
 
 
@@ -69,7 +75,7 @@ def _research_sync(query: str, headless: bool = True, timeout_s: int = 75) -> di
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
-        ctx = _ctx(p, headless=headless)
+        ctx = _ctx(p, headless=headless, hidden=True)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         try:
             page.goto(URL, timeout=45000)

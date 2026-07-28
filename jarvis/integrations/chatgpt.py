@@ -63,12 +63,16 @@ class ChatGPTSession:
     async def start(self) -> None:
         from playwright.async_api import async_playwright
 
+        from .browser_env import launch_extras
+
         PROFILE.mkdir(parents=True, exist_ok=True)
+        env_over, extra_args = launch_extras()
         self._pw = await async_playwright().start()
         self.ctx = await self._pw.chromium.launch_persistent_context(
             str(PROFILE), channel="chrome", headless=self.headless,
             viewport={"width": 1280, "height": 900},
-            args=["--disable-blink-features=AutomationControlled"],
+            env={**os.environ, **env_over} if env_over else None,
+            args=["--disable-blink-features=AutomationControlled", *extra_args],
         )
         self.page = self.ctx.pages[0] if self.ctx.pages else await self.ctx.new_page()
         # start a FRESH temporary chat so no old conversation context leaks in
