@@ -263,19 +263,59 @@ class VoiceSession:
             else:
                 run = 0
 
+    # abbreviations/symbols Piper otherwise reads awkwardly → spoken forms
+    _SPEECH_SUBS = [
+        (r"\be\.g\.\s*", "for example, "),
+        (r"\bi\.e\.\s*", "that is, "),
+        (r"\betc\.?", "and so on"),
+        (r"\bvs\.?\b", "versus"),
+        (r"\bapprox\.?\b", "approximately"),
+        (r"\bDr\.\s*", "Doctor "),
+        (r"\bMr\.\s*", "Mister "),
+        (r"\bMrs\.\s*", "Missus "),
+        (r"\bMs\.\s*", "Miss "),
+        (r"\bSt\.\s*", "Saint "),
+        (r"\ba\.m\.", "AM"), (r"\bp\.m\.", "PM"),
+    ]
+    # currency: symbol before a number → "<number> <unit>"
+    _CURRENCY = [(r"\$(\d[\d,.]*)", r"\1 dollars"), (r"£(\d[\d,.]*)", r"\1 pounds"),
+                 (r"€(\d[\d,.]*)", r"\1 euros"), (r"₹(\d[\d,.]*)", r"\1 rupees")]
+    _SYMBOL_SUBS = [
+        ("&", " and "), ("%", " percent"), ("°", " degrees"), ("=", " equals "),
+        ("+", " plus "), ("~", " about "), ("×", " times "), ("@", " at "),
+    ]
+
     @staticmethod
     def _clean_for_speech(text: str) -> str:
-        """Strip markdown/formatting so the TTS doesn't read 'asterisk asterisk', backticks, etc."""
+        """Normalise text so the TTS pronounces it naturally: strip markdown/emoji and expand
+        common abbreviations and symbols into spoken words."""
         import re
 
         t = text
         t = re.sub(r"```.*?```", " ", t, flags=re.DOTALL)   # code fences
         t = re.sub(r"`([^`]*)`", r"\1", t)                   # inline code
         t = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", t)     # links/images -> label
+        t = re.sub(r"https?://\S+", "", t)                   # bare URLs — don't read them out
         t = re.sub(r"^\s{0,3}#{1,6}\s*", "", t, flags=re.MULTILINE)  # headings
         t = re.sub(r"^\s*[-*+]\s+", "", t, flags=re.MULTILINE)       # bullet markers
         t = re.sub(r"[*_]{1,3}([^*_]+)[*_]{1,3}", r"\1", t)  # **bold** / *italic* / _em_
         t = t.replace("*", " ").replace("#", " ").replace("`", " ")  # any stray marks
+
+        for pat, rep in VoiceSession._SPEECH_SUBS:
+            t = re.sub(pat, rep, t, flags=re.IGNORECASE)
+        for pat, rep in VoiceSession._CURRENCY:
+            t = re.sub(pat, rep, t)
+        for sym, rep in VoiceSession._SYMBOL_SUBS:
+            t = t.replace(sym, rep)
+
+        # strip emoji / pictographs so they aren't announced by name
+        t = re.sub(
+            "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F000-\U0001F0FF\U00002190-\U000021FF️]",
+            "", t,
+        )
+        # newlines become sentence pauses; collapse whitespace
+        t = re.sub(r"\s*\n+\s*", ". ", t)
+        t = re.sub(r"\.\s*\.\s*", ". ", t)   # avoid double periods
         t = re.sub(r"[ \t]{2,}", " ", t)
         return t.strip()
 
