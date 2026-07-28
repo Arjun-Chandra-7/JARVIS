@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600&family=Orbitron:wght@600;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="ambient.css" />
+  </head>
+  <body class="idle">
+    <!-- corner reticles -->
+    <div class="corner tl"><span></span><span></span></div>
+    <div class="corner tr"><span></span><span></span></div>
+    <div class="corner bl"><span></span><span></span></div>
+    <div class="corner br"><span></span><span></span></div>
+    <div class="scan"></div>
+    <div class="rail left"></div><div class="rail right"></div>
+
+    <!-- top-left identity -->
+    <header class="brand">
+      <div class="ring"><i></i><b>J</b></div>
+      <div>
+        <div class="title">J A R V I S</div>
+        <div class="status" id="astatus">systems online</div>
+      </div>
+    </header>
+
+    <!-- top-right clock/date -->
+    <div class="clockbox"><div class="clock" id="aclock">--:--</div><div class="date" id="adate"></div></div>
+
+    <!-- right-side telemetry -->
+    <aside class="telemetry">
+      <div class="tlabel">DIAGNOSTICS</div>
+      <div class="trow"><label>CPU</label><div class="tbar"><i id="cpubar"></i></div><b id="cpu">--</b></div>
+      <div class="trow"><label>MEM</label><div class="tbar"><i id="membar"></i></div><b id="mem">--</b></div>
+      <div class="trow"><label>GPU</label><div class="tbar"><i id="gpubar"></i></div><b id="gpu">--</b></div>
+      <div class="radar"><span></span><span></span><span></span><div class="sweep"></div><div class="rc"></div></div>
+    </aside>
+
+    <script src="ambient.js"></script>
+  </body>
+</html>

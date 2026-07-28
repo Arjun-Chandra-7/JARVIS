@@ -1,0 +1,29 @@
+# Core brain — runs on your Antigravity (Gemini) CLI (no API key)
+google-antigravity
+python-dotenv
+
+# Voice (Phase 5). Also needs the system PortAudio lib:  sudo apt install libportaudio2
+pvporcupine        # wake word ("Jarvis")
+pvrecorder         # microphone capture
+sounddevice        # audio playback
+numpy              # audio math / voice-activity detection
+httpx              # Deepgram (STT) + ElevenLabs (TTS) over HTTP
+
+# Phase 2b — local semantic search (install when you get there)
+#   Ollama is a separate system install: https://ollama.com  (then: ollama pull nomic-embed-text)
+# lancedb
+# watchdog
+
+# Phase 3 — Google (Calendar / Gmail / Tasks)
+google-api-python-client
+google-auth-oauthlib
+google-auth-httplib2
+
+# Phase 4 — proactive routines
+# apscheduler
+
+# screenshot blank-frame detection
+Pillow>=10.0
+
+# system health readout (system_stats)
+psutil>=5.9

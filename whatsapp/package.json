@@ -1,0 +1,14 @@
+{
+  "name": "jarvis-whatsapp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local WhatsApp Web bridge for Jarvis (Baileys)",
+  "main": "wa_service.js",
+  "type": "commonjs",
+  "scripts": { "start": "node wa_service.js" },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.0",
+    "qrcode-terminal": "^0.12.0",
+    "pino": "^9.0.0"
+  }
+}

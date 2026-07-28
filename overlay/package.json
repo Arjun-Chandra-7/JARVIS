@@ -1,0 +1,12 @@
+{
+  "name": "jarvis-overlay",
+  "version": "1.0.0",
+  "description": "JARVIS heads-up overlay for Jarvis",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^32.2.0"
+  }
+}
