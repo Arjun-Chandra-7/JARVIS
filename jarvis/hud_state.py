@@ -137,6 +137,37 @@ def _whatsapp_health() -> dict:
     return {"name": "WhatsApp", "label": "bridge" if ok else "not linked", "ok": ok}
 
 
+_wx_cache: dict = {"t": 0.0, "data": None}
+
+
+def weather() -> dict | None:
+    """Current conditions for CONFIG.city via keyless wttr.in, cached 15 min."""
+    now = time.time()
+    if _wx_cache["data"] is not None and now - _wx_cache["t"] < 900:
+        return _wx_cache["data"]
+    try:
+        import urllib.parse
+        import urllib.request
+
+        city = urllib.parse.quote(CONFIG.city)
+        url = f"https://wttr.in/{city}?format=j1"
+        req = urllib.request.Request(url, headers={"User-Agent": "curl/8"})
+        with urllib.request.urlopen(req, timeout=4) as r:
+            raw = json.loads(r.read().decode("utf-8"))
+        cur = raw["current_condition"][0]
+        data = {
+            "temp_c": int(cur["temp_C"]),
+            "feels_c": int(cur["FeelsLikeC"]),
+            "desc": cur["weatherDesc"][0]["value"],
+            "humidity": int(cur["humidity"]),
+            "city": CONFIG.city,
+        }
+    except Exception:  # noqa: BLE001
+        data = None
+    _wx_cache.update(t=now, data=data)
+    return data
+
+
 def health() -> dict:
     """Full subsystem snapshot for the HUD SYSTEMS panel + header."""
     systems = [

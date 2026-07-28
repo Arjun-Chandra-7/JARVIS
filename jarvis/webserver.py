@@ -101,6 +101,11 @@ async def health():
     return h
 
 
+@app.get("/weather")
+async def weather():
+    return {"weather": hud_state.weather()}
+
+
 @app.get("/history")
 async def history(limit: int = 40):
     return {"messages": hud_state.recent_history(limit)}

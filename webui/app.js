@@ -212,7 +212,6 @@ async function pollHealth() {
     if (h.error) return;
     document.getElementById("brainlbl").textContent = h.brain || "—";
     document.getElementById("syscount").textContent = `${h.online}/${h.total}`;
-    if (h.city) document.getElementById("wx").textContent = h.city.toUpperCase();
     const rows = (h.systems || []).map((s) =>
       `<div class="${s.ok ? "" : "off"}"><span class="nm"><span class="dot"></span>${s.name}</span><span class="meta">${s.label}</span></div>`
     ).join("");
@@ -220,6 +219,15 @@ async function pollHealth() {
   } catch {}
 }
 pollHealth(); setInterval(pollHealth, 8000);
+
+// ---------- weather (keyless, via /weather) ----------
+async function pollWeather() {
+  try {
+    const w = (await (await fetch("/weather")).json()).weather;
+    if (w) document.getElementById("wx").textContent = `${w.city.toUpperCase()} · ${w.temp_c}° · ${w.desc}`;
+  } catch {}
+}
+pollWeather(); setInterval(pollWeather, 900000);
 
 // ---------- quick-action chips (from /suggestions) ----------
 async function loadQuick() {
