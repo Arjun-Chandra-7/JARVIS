@@ -19,8 +19,25 @@ PROFILE = Path("~/.config/jarvis/perplexity-profile").expanduser()
 URL = "https://www.perplexity.ai/"
 
 
+def _clear_lock() -> None:
+    import subprocess
+
+    try:
+        subprocess.run(["pkill", "-f", f"chrome.*--user-data-dir={PROFILE}"], capture_output=True, timeout=5)
+    except Exception:  # noqa: BLE001
+        pass
+    for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+        try:
+            (PROFILE / name).unlink()
+        except FileNotFoundError:
+            pass
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def _ctx(p, headless: bool, hidden: bool = False):
     PROFILE.mkdir(parents=True, exist_ok=True)
+    _clear_lock()
     env_over, extra_args = ({}, [])
     if hidden:
         from .browser_env import launch_extras

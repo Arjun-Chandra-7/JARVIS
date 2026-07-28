@@ -22,6 +22,25 @@ _INPUT_SELECTORS = ["#prompt-textarea", "div[contenteditable='true']", "textarea
 _ASSISTANT = "[data-message-author-role='assistant']"
 
 
+def _clear_profile_lock() -> None:
+    """Remove stale Chrome singleton locks (and kill orphan chromes on this profile) so a crashed
+    previous run can't wedge the profile with 'Opening in existing browser session'."""
+    import subprocess
+
+    try:
+        subprocess.run(["pkill", "-f", f"chrome.*--user-data-dir={PROFILE}"],
+                       capture_output=True, timeout=5)
+    except Exception:  # noqa: BLE001
+        pass
+    for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+        try:
+            (PROFILE / name).unlink()
+        except FileNotFoundError:
+            pass
+        except Exception:  # noqa: BLE001
+            pass
+
+
 # --------------------------------------------------------------------------- #
 # one-time login (sync, for the CLI)                                           #
 # --------------------------------------------------------------------------- #
@@ -66,6 +85,7 @@ class ChatGPTSession:
         from .browser_env import launch_extras
 
         PROFILE.mkdir(parents=True, exist_ok=True)
+        _clear_profile_lock()   # a leftover Chrome must not block us from opening the profile
         env_over, extra_args = launch_extras()
         self._pw = await async_playwright().start()
         self.ctx = await self._pw.chromium.launch_persistent_context(
