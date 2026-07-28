@@ -1,4 +1,4 @@
-:root { --dim: #4a8a97; }
+:root { --dim: #4a8a97; --good: #38f2b0; --bad: #ff5d78; --wa: #25d366; }
 body { --accent: #37e7ff; --accent2: #bff3ff; }
 body.listening { --accent: #46f2ff; --accent2: #d8ffff; }
 body.speaking  { --accent: #ffc062; --accent2: #ffe6c4; }
@@ -10,8 +10,8 @@ html, body { width: 100vw; height: 100vh; overflow: hidden; background: transpar
   pointer-events: none; user-select: none; transition: color .6s; }
 
 /* corner reticles */
-.corner { position: fixed; width: 62px; height: 62px; opacity: .8; }
-.corner span { position: absolute; background: var(--accent); box-shadow: 0 0 8px var(--accent); transition: background .6s, box-shadow .6s; }
+.corner { position: fixed; width: 66px; height: 66px; opacity: .9; }
+.corner span { position: absolute; background: var(--accent); box-shadow: 0 0 10px var(--accent); transition: background .6s, box-shadow .6s; }
 .corner span:nth-child(1) { width: 100%; height: 2px; }
 .corner span:nth-child(2) { width: 2px; height: 100%; }
 .tl { top: 16px; left: 16px; }
@@ -19,45 +19,92 @@ html, body { width: 100vw; height: 100vh; overflow: hidden; background: transpar
 .bl { bottom: 16px; left: 16px; } .bl span:nth-child(1) { bottom: 0; }
 .br { bottom: 16px; right: 16px; } .br span:nth-child(1) { bottom: 0; } .br span:nth-child(2) { right: 0; }
 
-.rail { position: fixed; top: 18%; bottom: 18%; width: 1px;
-  background: linear-gradient(var(--accent), transparent 15%, transparent 85%, var(--accent)); opacity: .25; }
+.rail { position: fixed; top: 16%; bottom: 16%; width: 1px;
+  background: linear-gradient(var(--accent), transparent 15%, transparent 85%, var(--accent)); opacity: .3; }
 .rail.left { left: 10px; } .rail.right { right: 10px; }
 
 .scan { position: fixed; left: 0; right: 0; height: 2px;
-  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 40%, transparent), transparent);
-  animation: scan 9s linear infinite; opacity: .4; }
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 55%, transparent), transparent);
+  animation: scan 9s linear infinite; opacity: .5; }
 @keyframes scan { from { top: 0; } to { top: 100%; } }
 
 /* identity top-left */
-.brand { position: fixed; top: 30px; left: 44px; display: flex; align-items: center; gap: 14px; }
-.ring { position: relative; width: 52px; height: 52px; display: grid; place-items: center; }
-.ring i { position: absolute; inset: 0; border-radius: 50%; border: 1.5px solid rgba(120,220,240,.3);
-  border-top-color: var(--accent); box-shadow: 0 0 16px color-mix(in srgb, var(--accent) 50%, transparent); animation: spin 6s linear infinite; transition: border-color .6s; }
-.ring b { font-family: "Orbitron"; font-weight: 800; font-size: 22px; color: var(--accent); text-shadow: 0 0 14px var(--accent); }
+.brand { position: fixed; top: 28px; left: 44px; display: flex; align-items: center; gap: 14px; }
+.ring { position: relative; width: 54px; height: 54px; display: grid; place-items: center; }
+.ring i { position: absolute; inset: 0; border-radius: 50%; border: 1.5px solid rgba(120,220,240,.32);
+  border-top-color: var(--accent); box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 55%, transparent); animation: spin 6s linear infinite; transition: border-color .6s; }
+.ring b { font-family: "Orbitron"; font-weight: 800; font-size: 23px; color: var(--accent); text-shadow: 0 0 16px var(--accent); }
 @keyframes spin { to { transform: rotate(360deg); } }
-.title { font-family: "Orbitron"; font-weight: 800; letter-spacing: 8px; font-size: 24px; text-shadow: 0 0 18px color-mix(in srgb, var(--accent) 50%, transparent); }
-.status { font-size: 12px; letter-spacing: 3px; text-transform: uppercase; color: var(--dim); margin-top: 3px; }
+.title { font-family: "Orbitron"; font-weight: 800; letter-spacing: 8px; font-size: 25px; text-shadow: 0 0 20px color-mix(in srgb, var(--accent) 60%, transparent); }
+.status { font-size: 12px; letter-spacing: 3px; text-transform: uppercase; color: var(--accent); opacity: .8; margin-top: 3px; }
 
 /* clock top-right */
-.clockbox { position: fixed; top: 30px; right: 44px; text-align: right; }
-.clock { font-family: "Orbitron"; font-weight: 800; font-size: 30px; text-shadow: 0 0 16px color-mix(in srgb, var(--accent) 50%, transparent); }
+.clockbox { position: fixed; top: 28px; right: 44px; text-align: right; }
+.clock { font-family: "Orbitron"; font-weight: 800; font-size: 32px; text-shadow: 0 0 18px color-mix(in srgb, var(--accent) 55%, transparent); }
 .date { font-size: 12px; letter-spacing: 3px; color: var(--dim); text-transform: uppercase; }
+.wx { font-size: 12px; letter-spacing: 2px; color: var(--accent); opacity: .85; margin-top: 3px; text-transform: uppercase; }
 
-/* right-side telemetry */
-.telemetry { position: fixed; right: 40px; top: 50%; transform: translateY(-50%); width: 210px; display: flex; flex-direction: column; gap: 14px; }
-.tlabel { font-family: "Orbitron"; font-size: 10px; letter-spacing: 4px; color: var(--dim); text-align: right; }
-.trow { display: flex; align-items: center; gap: 10px; }
-.trow label { font-family: "Orbitron"; font-size: 10px; letter-spacing: 2px; color: var(--dim); width: 34px; }
-.tbar { flex: 1; height: 5px; background: rgba(120,220,240,.12); border-radius: 3px; overflow: hidden; }
-.tbar i { display: block; height: 100%; width: 0%; background: var(--accent); box-shadow: 0 0 10px var(--accent); border-radius: 3px; transition: width .8s, background .6s; }
-.trow b { font-family: "Orbitron"; font-size: 13px; width: 46px; text-align: right; }
+/* cards (glass panels) */
+.card { width: 250px; padding: 13px 15px; border-radius: 14px;
+  background: rgba(7,16,23,.42); border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+  box-shadow: 0 0 30px color-mix(in srgb, var(--accent) 10%, transparent), inset 0 0 30px rgba(0,0,0,.35);
+  backdrop-filter: blur(6px); }
+.clabel { font-family: "Orbitron"; font-size: 10px; letter-spacing: 4px; color: var(--accent); opacity: .95;
+  display: flex; align-items: center; gap: 8px; margin-bottom: 11px; }
+.clabel b { margin-left: auto; color: var(--accent2); letter-spacing: 2px; }
 
-/* radar dial */
-.radar { position: relative; width: 130px; height: 130px; align-self: center; margin-top: 12px; }
-.radar span { position: absolute; border-radius: 50%; border: 1px solid rgba(120,220,240,.25); }
-.radar span:nth-child(1) { inset: 0; } .radar span:nth-child(2) { inset: 22%; } .radar span:nth-child(3) { inset: 44%; }
+.left-col { position: fixed; left: 40px; top: 120px; display: flex; flex-direction: column; gap: 14px; }
+.right-col { position: fixed; right: 40px; top: 120px; display: flex; flex-direction: column; gap: 14px; }
+
+/* subsystems list with green/red */
+.syslist { display: flex; flex-direction: column; gap: 8px; }
+.srow { display: flex; align-items: center; gap: 9px; font-size: 13px; letter-spacing: .5px; }
+.srow .d { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--bad); box-shadow: 0 0 8px var(--bad); }
+.srow.on .d { background: var(--good); box-shadow: 0 0 9px var(--good); }
+.srow .nm { color: var(--accent2); }
+.srow .meta { margin-left: auto; font-size: 11px; color: var(--dim); }
+.srow:not(.on) .nm { opacity: .55; }
+
+/* whatsapp feed */
+.wa .wadot { width: 8px; height: 8px; border-radius: 50%; background: var(--wa); box-shadow: 0 0 8px var(--wa); }
+.wafeed { display: flex; flex-direction: column; gap: 9px; max-height: 210px; overflow: hidden; }
+.wamsg { border-left: 2px solid var(--wa); padding-left: 9px; }
+.wamsg .from { font-size: 12px; color: var(--wa); letter-spacing: .5px; display: flex; justify-content: space-between; }
+.wamsg .from time { color: var(--dim); font-size: 10px; }
+.wamsg .txt { font-size: 13px; color: var(--accent2); opacity: .92; line-height: 1.35;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.wafeed .empty { font-size: 12px; color: var(--dim); letter-spacing: 1px; }
+
+/* diagnostics */
+.trow { display: flex; align-items: center; gap: 10px; margin: 9px 0; }
+.trow label { font-family: "Orbitron"; font-size: 10px; letter-spacing: 2px; color: var(--dim); width: 30px; }
+.tbar { flex: 1; height: 6px; background: rgba(120,220,240,.12); border-radius: 3px; overflow: hidden; }
+.tbar i { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent2));
+  box-shadow: 0 0 10px var(--accent); border-radius: 3px; transition: width .8s, background .6s; }
+.tbar i.hot { background: linear-gradient(90deg, #ffb15a, var(--bad)); box-shadow: 0 0 10px var(--bad); }
+.trow b { font-family: "Orbitron"; font-size: 12px; width: 58px; text-align: right; color: var(--accent2); }
+
+/* PROXIMITY radar — real nearby devices */
+.radar { position: relative; width: 218px; height: 218px; margin: 6px auto 2px; }
+.radar > span { position: absolute; border-radius: 50%; border: 1px solid rgba(120,220,240,.22); }
+.radar > span:nth-child(1) { inset: 0; } .radar > span:nth-child(2) { inset: 17%; } .radar > span:nth-child(3) { inset: 34%; }
 .radar .sweep { position: absolute; inset: 0; border-radius: 50%;
-  background: conic-gradient(from 0deg, transparent 0 75%, color-mix(in srgb, var(--accent) 55%, transparent) 92%, transparent);
-  -webkit-mask: radial-gradient(circle, transparent 4%, #000 5%); animation: spin 3s linear infinite; transition: background .6s; }
-.radar .rc { position: absolute; inset: 46%; border-radius: 50%; background: var(--accent); box-shadow: 0 0 18px var(--accent); animation: pulse 2.4s ease-in-out infinite; }
+  background: conic-gradient(from 0deg, transparent 0 68%, color-mix(in srgb, var(--accent) 55%, transparent) 90%, transparent);
+  -webkit-mask: radial-gradient(circle, transparent 3%, #000 4%); animation: spin 3.4s linear infinite; transition: background .6s; }
+.radar .rc { position: absolute; inset: 48%; border-radius: 50%; background: var(--accent); box-shadow: 0 0 18px var(--accent); animation: pulse 2.4s ease-in-out infinite; }
 @keyframes pulse { 0%,100% { opacity: .6; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.15); } }
+.blips { position: absolute; inset: 0; }
+.blip { position: absolute; width: 9px; height: 9px; border-radius: 50%; transform: translate(-50%,-50%);
+  animation: ping 2.6s ease-out infinite; }
+.blip.wifi { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.blip.lan  { background: #8f6dff; box-shadow: 0 0 10px #8f6dff; }
+.blip.bt   { background: var(--good); box-shadow: 0 0 10px var(--good); }
+.blip.phone { width: 12px; height: 12px; }
+.blip .tag { position: absolute; left: 13px; top: -4px; font-size: 9px; letter-spacing: .5px; white-space: nowrap;
+  color: var(--accent2); opacity: .8; text-shadow: 0 0 6px #000; }
+@keyframes ping { 0% { box-shadow: 0 0 0 0 currentColor; } 70%,100% { box-shadow: 0 0 0 10px transparent; } }
+.legend { display: flex; justify-content: space-around; margin-top: 8px; }
+.legend em { font-style: normal; font-size: 11px; letter-spacing: 1px; color: var(--dim); display: flex; align-items: center; gap: 5px; }
+.legend b { color: var(--accent2); }
+.lg { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.lg.wifi { background: var(--accent); } .lg.lan { background: #8f6dff; } .lg.bt { background: var(--good); }

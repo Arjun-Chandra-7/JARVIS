@@ -23,16 +23,47 @@
       </div>
     </header>
 
-    <!-- top-right clock/date -->
-    <div class="clockbox"><div class="clock" id="aclock">--:--</div><div class="date" id="adate"></div></div>
+    <!-- top-right clock/date/weather -->
+    <div class="clockbox">
+      <div class="clock" id="aclock">--:--</div>
+      <div class="date" id="adate"></div>
+      <div class="wx" id="awx"></div>
+    </div>
 
-    <!-- right-side telemetry -->
-    <aside class="telemetry">
-      <div class="tlabel">DIAGNOSTICS</div>
-      <div class="trow"><label>CPU</label><div class="tbar"><i id="cpubar"></i></div><b id="cpu">--</b></div>
-      <div class="trow"><label>MEM</label><div class="tbar"><i id="membar"></i></div><b id="mem">--</b></div>
-      <div class="trow"><label>GPU</label><div class="tbar"><i id="gpubar"></i></div><b id="gpu">--</b></div>
-      <div class="radar"><span></span><span></span><span></span><div class="sweep"></div><div class="rc"></div></div>
+    <!-- LEFT: subsystems (green/red) + live WhatsApp feed -->
+    <aside class="left-col">
+      <section class="card">
+        <div class="clabel">SUBSYSTEMS <b id="sysratio">—</b></div>
+        <div class="syslist" id="syslist"></div>
+      </section>
+      <section class="card wa">
+        <div class="clabel"><span class="wadot"></span>WHATSAPP <b id="wacount">·</b></div>
+        <div class="wafeed" id="wafeed"><div class="empty">no recent messages</div></div>
+      </section>
+    </aside>
+
+    <!-- RIGHT: diagnostics + PROXIMITY radar (real nearby devices) -->
+    <aside class="right-col">
+      <section class="card">
+        <div class="clabel">DIAGNOSTICS</div>
+        <div class="trow"><label>CPU</label><div class="tbar"><i id="cpubar"></i></div><b id="cpu">--</b></div>
+        <div class="trow"><label>MEM</label><div class="tbar"><i id="membar"></i></div><b id="mem">--</b></div>
+        <div class="trow"><label>GPU</label><div class="tbar"><i id="gpubar"></i></div><b id="gpu">--</b></div>
+        <div class="trow"><label>NET</label><div class="tbar"><i id="netbar"></i></div><b id="net">--</b></div>
+      </section>
+      <section class="card">
+        <div class="clabel">PROXIMITY SCAN <b id="nearcount">—</b></div>
+        <div class="radar" id="radar">
+          <span></span><span></span><span></span>
+          <div class="sweep"></div><div class="rc"></div>
+          <div class="blips" id="blips"></div>
+        </div>
+        <div class="legend">
+          <em><i class="lg wifi"></i>WiFi <b id="lgwifi">0</b></em>
+          <em><i class="lg lan"></i>LAN <b id="lglan">0</b></em>
+          <em><i class="lg bt"></i>BT <b id="lgbt">0</b></em>
+        </div>
+      </section>
     </aside>
 
     <script src="ambient.js"></script>

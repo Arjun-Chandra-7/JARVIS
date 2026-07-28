@@ -106,6 +106,28 @@ async def weather():
     return {"weather": hud_state.weather()}
 
 
+@app.get("/nearby")
+async def nearby():
+    from . import nearby as _nb
+
+    try:
+        return _nb.snapshot()
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
+
+
+@app.get("/whatsapp/inbox")
+async def whatsapp_inbox():
+    """Proxy the live WhatsApp bridge's recent-message feed for the HUD."""
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8765/inbox", timeout=2) as r:
+            return {"messages": json.loads(r.read().decode("utf-8"))}
+    except Exception as exc:  # noqa: BLE001
+        return {"messages": [], "error": str(exc)}
+
+
 @app.get("/history")
 async def history(limit: int = 40):
     return {"messages": hud_state.recent_history(limit)}
