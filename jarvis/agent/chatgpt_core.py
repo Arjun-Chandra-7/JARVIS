@@ -99,6 +99,10 @@ class ChatGPTAgent:
 
     async def __aenter__(self) -> "ChatGPTAgent":
         await self.session.start()
+        try:
+            await self._prime()   # prime at boot so the first real message isn't slow
+        except Exception:  # noqa: BLE001
+            pass
         return self
 
     async def __aexit__(self, *exc: Any) -> None:

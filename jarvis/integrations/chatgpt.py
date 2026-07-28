@@ -130,36 +130,33 @@ class ChatGPTSession:
         if not box:
             return "[chatgpt] couldn't find the message box — is the account logged in? Run --chatgpt-login."
 
-        before = len(await page.query_selector_all(_ASSISTANT))
         await box.click()
         await page.keyboard.insert_text(text)          # fast, preserves newlines
-        await page.wait_for_timeout(150)
         await page.keyboard.press("Enter")
 
-        # wait for a new assistant message to appear
-        start = asyncio.get_event_loop().time()
-        while asyncio.get_event_loop().time() - start < 30:
-            if len(await page.query_selector_all(_ASSISTANT)) > before:
-                break
-            await page.wait_for_timeout(400)
+        # Primary done-signal: the "stop generating" button appears while streaming and detaches when
+        # finished — far faster than polling for stable text. Fall back to a short stability poll.
+        stop_sel = "[data-testid='stop-button']"
+        try:
+            await page.wait_for_selector(stop_sel, timeout=9000)          # streaming started
+            await page.wait_for_selector(stop_sel, state="detached", timeout=timeout_s * 1000)  # finished
+            await page.wait_for_timeout(120)
+        except Exception:  # noqa: BLE001 - button testid may change; fall back to stability poll
+            start = asyncio.get_event_loop().time()
+            last, stable = "", 0
+            while asyncio.get_event_loop().time() - start < timeout_s:
+                await page.wait_for_timeout(450)
+                nodes = await page.query_selector_all(_ASSISTANT)
+                cur = (await nodes[-1].inner_text()).strip() if nodes else ""
+                if cur and cur == last:
+                    stable += 1
+                    if stable >= 2:
+                        break
+                else:
+                    stable, last = 0, cur
 
-        # wait for streaming to finish: assistant text stable + no stop button
-        last, stable = "", 0
-        while asyncio.get_event_loop().time() - start < timeout_s:
-            await page.wait_for_timeout(700)
-            nodes = await page.query_selector_all(_ASSISTANT)
-            if not nodes:
-                continue
-            cur = (await nodes[-1].inner_text()).strip()
-            streaming = await page.query_selector("[data-testid='stop-button']")
-            if cur and cur == last and not streaming:
-                stable += 1
-                if stable >= 3:
-                    break
-            else:
-                stable = 0
-                last = cur
-        return last or "[chatgpt] no reply captured."
+        nodes = await page.query_selector_all(_ASSISTANT)
+        return ((await nodes[-1].inner_text()).strip() if nodes else "") or "[chatgpt] no reply captured."
 
     async def new_chat(self) -> None:
         try:
