@@ -66,7 +66,20 @@ Shortcuts inside the HUD: `/` focus input · `Esc` blur · `↵` send · click t
 
 Backend API (all CORS-open, used by the HUD and the Electron overlay):
 `POST /chat` · `GET /stats` · `GET /health` · `GET /history` · `DELETE /history` ·
-`GET /suggestions` · `GET /events` (SSE) · `POST /emit` (voice/phone → HUD).
+`GET /suggestions` · `GET /weather` · `GET /nearby` · `GET /whatsapp/inbox` ·
+`GET /events` (SSE) · `POST /emit` (voice/phone/presence → HUD).
+
+### Overlay situational awareness (all real, no fake decoration)
+
+The Electron overlay's ambient layer shows only **live** data:
+- **Proximity radar** — real nearby devices plotted by signal: WiFi APs (`nmcli`), LAN
+  devices (`ip neigh`), and Bluetooth devices (`bluetoothctl`, phones flagged). Backed by
+  `jarvis/nearby.py` (bounded background scans, cached) → `GET /nearby`.
+- **People nearby** — webcam face detection (MediaPipe) counts people in front of you, shows a
+  badge on the optics and plots them on the radar (`overlay/presence.js` → `/emit` → ambient).
+- **WhatsApp feed** — recent messages from the live bridge (`GET /whatsapp/inbox`).
+- **Subsystems** — green/red status for brain, memory, voice, Google, phone, WhatsApp.
+- **Diagnostics** — real CPU / MEM / GPU / disk. **Weather** for your city.
 
 ### Voice
 Two backends (auto-selected; force with `JARVIS_VOICE_BACKEND=local|cloud`):

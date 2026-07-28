@@ -100,6 +100,7 @@ html, body { width: 100vw; height: 100vh; overflow: hidden; background: transpar
 .blip.lan  { background: #8f6dff; box-shadow: 0 0 10px #8f6dff; }
 .blip.bt   { background: var(--good); box-shadow: 0 0 10px var(--good); }
 .blip.phone { width: 12px; height: 12px; }
+.blip.person { width: 13px; height: 13px; background: var(--accent2); box-shadow: 0 0 12px var(--accent2); border: 2px solid var(--accent); }
 .blip .tag { position: absolute; left: 13px; top: -4px; font-size: 9px; letter-spacing: .5px; white-space: nowrap;
   color: var(--accent2); opacity: .8; text-shadow: 0 0 6px #000; }
 @keyframes ping { 0% { box-shadow: 0 0 0 0 currentColor; } 70%,100% { box-shadow: 0 0 0 10px transparent; } }

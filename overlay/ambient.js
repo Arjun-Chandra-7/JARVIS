@@ -124,6 +124,7 @@ async function nearby() {
     document.querySelectorAll("#blips .blip").forEach((el) => {
       place(el, parseFloat(el.dataset.a), parseFloat(el.dataset.r));
     });
+    if (people) setPeople(people);   // re-apply person blips after the rebuild
   } catch (e) {}
 }
 function blip(cls, angle, radiusPct, label) {
@@ -147,5 +148,23 @@ try {
     else if (d.kind === "reply") { state("speaking"); setTimeout(() => state(null), Math.min(6000, 1600 + (d.text || "").length * 28)); }
     else if (d.kind === "sleep" || d.kind === "ready") state(null);
     else if (d.kind === "phone") whatsapp();   // refresh feed on new phone/WA event
+    else if (d.kind === "presence") setPeople(parseInt(d.text, 10) || 0);
   };
 } catch (e) {}
+
+// ---------- people nearby (from webcam face detection in the interactive window) ----------
+let people = 0;
+function setPeople(n) {
+  people = n;
+  document.querySelectorAll("#blips .blip.person").forEach((el) => el.remove());
+  const host = $("blips");
+  if (!host) return;
+  for (let i = 0; i < Math.min(n, 6); i++) {
+    const a = (i / Math.max(1, n)) * Math.PI * 2;
+    const el = document.createElement("div");
+    el.className = "blip person";
+    el.innerHTML = i === 0 ? '<span class="tag">' + n + ' nearby</span>' : "";
+    host.appendChild(el);
+    place(el, a, 24);
+  }
+}

@@ -59,6 +59,9 @@ body.listening .bar::before { opacity: 1; animation: edge 1.4s ease-in-out infin
   border: 1px solid var(--line); box-shadow: inset 0 0 14px rgba(0,0,0,.6), var(--glow); flex: none; }
 .eye video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
 .eye canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.presence { position: absolute; bottom: 0; left: 0; right: 0; text-align: center; font-size: 11px; font-weight: 600;
+  color: #041016; background: var(--accent); letter-spacing: .5px; padding: 1px 0; opacity: 0; transition: opacity .3s; }
+.presence.show { opacity: .95; }
 
 /* the MIC ORB — the hero. scroll or click to switch modes */
 .orb { position: relative; width: 86px; height: 86px; flex: none; display: grid; place-items: center; cursor: pointer; }
