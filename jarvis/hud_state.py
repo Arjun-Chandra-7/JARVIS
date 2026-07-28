@@ -70,32 +70,28 @@ def clear_history() -> None:
 # --------------------------------------------------------------------------- #
 # subsystem health                                                            #
 # --------------------------------------------------------------------------- #
-def _ollama_up() -> bool:
-    try:
-        import urllib.request
-
-        with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=1.5) as r:
-            return r.status == 200
-    except Exception:  # noqa: BLE001
-        return False
+def _chatgpt_ready() -> bool:
+    """A logged-in ChatGPT profile exists on disk."""
+    prof = Path("~/.config/jarvis/chatgpt-profile").expanduser()
+    return prof.exists() and any(prof.iterdir())
 
 
 def _brain_health() -> dict:
     brain = CONFIG.brain
     label = {
-        "ollama": f"Ollama · {CONFIG.ollama_model}",
+        "chatgpt": "ChatGPT",
         "gemini": f"Gemini · {CONFIG.gemini_model}",
         "groq": f"Groq · {CONFIG.groq_model}",
-        "claude": f"Claude · {CONFIG.model}",
     }.get(brain, brain)
-    if brain == "ollama":
-        ok = _ollama_up()
+    if brain == "chatgpt":
+        ok = _chatgpt_ready()
+        label = "ChatGPT" if ok else "ChatGPT · login"
     elif brain == "gemini":
         ok = bool(CONFIG.gemini_api_key)
     elif brain == "groq":
         ok = bool(CONFIG.groq_api_key)
     else:
-        ok = shutil.which("claude") is not None
+        ok = False
     return {"name": "Brain", "label": label, "ok": ok}
 
 

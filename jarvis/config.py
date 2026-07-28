@@ -1,8 +1,8 @@
 """Runtime configuration, loaded from environment / .env.
 
-Jarvis runs its brain through the local Claude Code CLI (the Claude Agent SDK spawns it),
-so it uses your Claude subscription — no ANTHROPIC_API_KEY required. Voice (Phase 5) needs
-Deepgram (STT), ElevenLabs (TTS), and Picovoice (wake word) keys.
+Jarvis's brain is ChatGPT via the web app (JARVIS_BRAIN=chatgpt, the default) — the user's own
+account, no API key; sign in once with `--chatgpt-login`. Alternative API brains: gemini / groq.
+Voice (Phase 5) needs Deepgram (STT), ElevenLabs (TTS), and Picovoice (wake word) keys.
 """
 
 from __future__ import annotations
@@ -37,9 +37,9 @@ def _int(name: str, default: int) -> int:
 @dataclass
 class Config:
     # --- brain ---
-    # JARVIS_BRAIN = "gemini" (generous free tier + vision), "groq" (fast, low daily cap),
-    # or "claude" (subscription via the CLI).
-    brain: str = field(default_factory=lambda: os.environ.get("JARVIS_BRAIN", "gemini").lower())
+    # JARVIS_BRAIN = "chatgpt" (default — your ChatGPT account via the web app, no API key),
+    # "gemini" (API key), or "groq" (API key). Ollama and Claude have been removed.
+    brain: str = field(default_factory=lambda: os.environ.get("JARVIS_BRAIN", "chatgpt").lower())
     model: str = field(default_factory=lambda: os.environ.get("JARVIS_MODEL", "sonnet"))
     effort: str = field(default_factory=lambda: os.environ.get("JARVIS_EFFORT", "low"))
     user_name: str = field(default_factory=lambda: os.environ.get("JARVIS_USER_NAME", "sir"))
@@ -57,11 +57,9 @@ class Config:
     gemini_api_key: str = field(default_factory=lambda: os.environ.get("GEMINI_API_KEY", ""))
     gemini_model: str = field(default_factory=lambda: os.environ.get("JARVIS_GEMINI_MODEL", "gemini-2.0-flash"))
 
-    # --- Ollama (fully local brain via GPU; no limits, no cost, offline) ---
-    ollama_model: str = field(default_factory=lambda: os.environ.get("JARVIS_OLLAMA_MODEL", "qwen2.5:3b"))
-
-    # --- image understanding (for a text-only brain) ---
-    # "auto" prefers local Ollama, else Gemini. Or force "ollama" / "gemini" / "none".
+    # --- image understanding (screen vision; optional) ---
+    # "auto"/"gemini" use Gemini (needs GEMINI_API_KEY); the local moondream path stays as a
+    # graceful fallback only if you happen to run it. "none" disables vision.
     vision_provider: str = field(default_factory=lambda: os.environ.get("JARVIS_VISION", "auto").lower())
     ollama_vision_model: str = field(default_factory=lambda: os.environ.get("JARVIS_VISION_MODEL", "moondream"))
 
@@ -155,9 +153,7 @@ class Config:
         return self.model or None
 
     def llm_params(self) -> tuple[str, str, str]:
-        """(base_url, api_key, model) for the active OpenAI-compatible brain."""
-        if self.brain == "ollama":
-            return ("http://localhost:11434/v1", "ollama", self.ollama_model)
+        """(base_url, api_key, model) for the OpenAI-compatible API brains (gemini/groq)."""
         if self.brain == "gemini":
             return ("https://generativelanguage.googleapis.com/v1beta/openai/",
                     self.gemini_api_key, self.gemini_model)
@@ -167,9 +163,7 @@ class Config:
         return self.brain == "gemini"
 
     def require_claude_cli(self) -> str:
-        # Local brain needs no key at all.
-        if self.brain == "ollama":
-            return "ollama"
+        """Preflight the selected brain. (Name kept for callers; no Claude/Ollama anymore.)"""
         # ChatGPT brain drives the web app via the user's account — no key/CLI, just a one-time login.
         if self.brain == "chatgpt":
             try:
@@ -181,32 +175,24 @@ class Config:
                     "  then sign in once:  python -m jarvis --chatgpt-login"
                 )
             return "chatgpt"
-        # API brains (gemini/groq) don't need the Claude CLI — just the API key.
         if self.brain == "gemini":
             if not self.gemini_api_key:
                 raise SystemExit(
                     "Gemini brain selected but GEMINI_API_KEY is empty.\n"
                     "  Get a free key at https://aistudio.google.com/apikey and put it in .env:\n"
-                    "  GEMINI_API_KEY=...\n"
-                    "  (or set JARVIS_BRAIN=groq / claude)."
+                    "  GEMINI_API_KEY=...   (or set JARVIS_BRAIN=chatgpt / groq)."
                 )
             return "gemini"
         if self.brain == "groq":
             if not self.groq_api_key:
                 raise SystemExit(
                     "Groq brain selected but GROQ_API_KEY is empty.\n"
-                    "  Put your key in .env:  GROQ_API_KEY=gsk_...\n"
-                    "  (or set JARVIS_BRAIN=claude to use the Claude subscription instead)."
+                    "  Put your key in .env:  GROQ_API_KEY=gsk_...   (or set JARVIS_BRAIN=chatgpt)."
                 )
             return "groq"
-        path = shutil.which("claude")
-        if not path:
-            raise SystemExit(
-                "The `claude` CLI (Claude Code) was not found on PATH.\n"
-                "Jarvis drives Claude through it, using your subscription.\n"
-                "  Install: https://docs.claude.com/claude-code   then run `claude` once and log in."
-            )
-        return path
+        raise SystemExit(
+            f"Unknown JARVIS_BRAIN={self.brain!r}. Use 'chatgpt' (default), 'gemini', or 'groq'."
+        )
 
     def resolved_voice_backend(self) -> str:
         """'local' (keyless) or 'cloud' (keys). 'auto' picks cloud when all keys are present."""

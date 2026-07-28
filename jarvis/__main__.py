@@ -1,6 +1,6 @@
 """Entry point: `python -m jarvis [--text | --voice | --check | --selftest]`.
 
-Runs on your Claude subscription via the local `claude` CLI — no API key needed.
+Brain: your ChatGPT account via the web app — no API key (sign in once with --chatgpt-login).
 Voice additionally needs Deepgram, ElevenLabs, and Picovoice keys (see `.env.example`).
 """
 
@@ -18,7 +18,7 @@ BANNER = r"""
    __  ____ _____   ___  _____ ___
   / / / _  |  _  \ / / |/ /_ _/ __|
  / /_/ / | | |/ /  V /| |\  \| \__ \
- \____/  |_|_|\_\ \_/ |_|/___/|___/   running on your Claude subscription
+ \____/  |_|_|\_\ \_/ |_|/___/|___/   brain: ChatGPT · research: Perplexity · code: Gemini
 """
 
 
@@ -150,7 +150,13 @@ async def _run_voice() -> None:
 # --------------------------------------------------------------------------- diagnostics
 def _preflight() -> None:
     print("Jarvis preflight\n")
-    print("claude CLI:", shutil.which("claude") or "MISSING (install Claude Code and log in)")
+    print(f"brain: {CONFIG.brain}", end="")
+    if CONFIG.brain == "chatgpt":
+        from .integrations.chatgpt import PROFILE
+        ready = PROFILE.exists() and any(PROFILE.iterdir())
+        print(f"  ({'signed in' if ready else 'run --chatgpt-login'})")
+    else:
+        print()
     print("\naudio dependencies:")
     for module in ["pvrecorder", "numpy", "httpx", "sounddevice"]:
         try:

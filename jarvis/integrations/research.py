@@ -153,39 +153,18 @@ def _sources(page) -> list[str]:
 _HEADLESS = os.environ.get("JARVIS_PERPLEXITY_HEADLESS", "0").strip().lower() in ("1", "true", "yes")
 
 
-async def summarize(query: str, answer: str) -> str:
-    """Condense a long Perplexity answer into a tight brief. Uses the local Ollama model so it's
-    instant, free, and works no matter which main brain is active. Falls back to the raw answer."""
-    answer = (answer or "").strip()
-    if len(answer) < 400:
-        return answer
-    try:
-        import httpx
-
-        model = os.environ.get("JARVIS_OLLAMA_MODEL", "qwen2.5:3b")
-        prompt = (
-            f"Summarise the following research answer to the question '{query}'. Give a crisp brief: "
-            "2-4 sentences of the key takeaway, then up to 4 bullet points of the most important "
-            "specifics. No preamble, no repetition.\n\n---\n" + answer[:6000]
-        )
-        async with httpx.AsyncClient(timeout=45) as client:
-            r = await client.post(
-                "http://localhost:11434/v1/chat/completions",
-                json={"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.3},
-            )
-            out = r.json()["choices"][0]["message"]["content"].strip()
-            return out or answer
-    except Exception:  # noqa: BLE001
-        return answer
+_CONCISE = (" — answer concisely as a short brief: 2-4 sentences of the key takeaway, then up to 4 "
+            "bullet points of the most important specifics. No preamble.")
 
 
-async def research(query: str, headless: bool | None = None, summarised: bool = True) -> dict:
-    """Async wrapper — runs the sync Playwright flow in a worker thread, then summarises."""
+async def research(query: str, headless: bool | None = None, concise: bool = True) -> dict:
+    """Async wrapper — runs the sync Playwright flow in a worker thread.
+
+    The summary is produced by Perplexity itself (we ask it to be concise), so there's no dependency
+    on any local model — the ChatGPT brain gets a tight, ready-to-relay brief.
+    """
     import asyncio
 
     hl = _HEADLESS if headless is None else headless
-    result = await asyncio.to_thread(_research_sync, query, hl)
-    if summarised and result.get("ok") and result.get("text"):
-        result["full"] = result["text"]
-        result["text"] = await summarize(query, result["text"])
-    return result
+    q = query + _CONCISE if concise else query
+    return await asyncio.to_thread(_research_sync, q, hl)
