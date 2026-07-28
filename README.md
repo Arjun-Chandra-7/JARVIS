@@ -46,7 +46,27 @@ cp .env.example .env        # optional — user name, model, vault path, voice/t
 .venv/bin/python -m jarvis --check       # preflight: deps, voice keys, audio devices
 .venv/bin/python -m jarvis --selftest    # one live TTS → mic → STT round trip
 .venv/bin/python -m jarvis --voice       # wake word + speech
+.venv/bin/python -m jarvis --web         # backend + WebGL HUD at http://127.0.0.1:8770
 ```
+
+### HUD (Iron-Man console)
+
+The WebGL HUD (`webui/`, served by `--web`) is the visual face of Jarvis: an energy-core
+that reacts to state (standby / listening / thinking / speaking), **live system telemetry**
+(CPU, memory, GPU, disk, battery — real, polled from `/stats`), a **live subsystem health**
+panel (brain, memory, voice, Google, phone, WhatsApp — from `/health`), one-tap **quick-action
+chips**, browser voice input, and a conversation log that **persists across reloads**.
+
+```bash
+bash scripts/hud.sh          # one command: backend + open the HUD in an app window
+bash scripts/hud.sh voice    # …and also start the wake-word voice loop
+```
+
+Shortcuts inside the HUD: `/` focus input · `Esc` blur · `↵` send · click the core to pulse.
+
+Backend API (all CORS-open, used by the HUD and the Electron overlay):
+`POST /chat` · `GET /stats` · `GET /health` · `GET /history` · `DELETE /history` ·
+`GET /suggestions` · `GET /events` (SSE) · `POST /emit` (voice/phone → HUD).
 
 ### Voice
 Two backends (auto-selected; force with `JARVIS_VOICE_BACKEND=local|cloud`):

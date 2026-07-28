@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from .agent.factory import make_agent
 from .config import CONFIG
+from . import hud_state
 from .memory.vault import ensure_vault
 
 WEBUI = Path(__file__).resolve().parent.parent / "webui"
@@ -52,11 +53,13 @@ async def chat(c: Chat):
     agent = _agent["a"]
     if agent is None:
         return {"reply": "Brain still booting, sir — one moment."}
+    hud_state.log_turn("you", c.message)
     async with _lock:
         try:
             reply = await agent.send(c.message)
         except Exception as exc:  # noqa: BLE001
             reply = f"[error] {exc}"
+    hud_state.log_turn("jarvis", reply)
     return {"reply": reply}
 
 
@@ -79,8 +82,50 @@ class Emit(BaseModel):
 
 @app.post("/emit")
 async def emit(e: Emit):
+    # persist the meaningful spoken turns so the HUD can restore them on reload
+    if e.kind == "heard" and e.text:
+        hud_state.log_turn("you", e.text)
+    elif e.kind == "reply" and e.text:
+        hud_state.log_turn("jarvis", e.text)
     await _emit(e.kind, e.text)
     return {"ok": True}
+
+
+@app.get("/health")
+async def health():
+    try:
+        h = hud_state.health()
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
+    h["booting"] = _agent["a"] is None
+    return h
+
+
+@app.get("/history")
+async def history(limit: int = 40):
+    return {"messages": hud_state.recent_history(limit)}
+
+
+@app.delete("/history")
+async def wipe_history():
+    hud_state.clear_history()
+    return {"ok": True}
+
+
+# Quick-action chips shown in the HUD. Each maps a label → a prompt sent to the brain.
+_SUGGESTIONS = [
+    {"label": "Catch me up", "icon": "inbox", "say": "What did I miss? Summarise messages, mail and anything important."},
+    {"label": "My agenda", "icon": "calendar", "say": "What's on my calendar today and what's my next meeting?"},
+    {"label": "Read screen", "icon": "eye", "say": "Take a screenshot and tell me what's on my screen."},
+    {"label": "System status", "icon": "activity", "say": "Give me a full system status report."},
+    {"label": "Unread mail", "icon": "mail", "say": "Check my email and summarise anything that needs a reply."},
+    {"label": "Focus mode", "icon": "moon", "say": "I'm going heads-down. Hold non-urgent notifications and cover my messages."},
+]
+
+
+@app.get("/suggestions")
+async def suggestions():
+    return {"suggestions": _SUGGESTIONS}
 
 
 @app.get("/stats")

@@ -117,7 +117,7 @@ composer.addPass(bloom);
 // ---------- interaction ----------
 const mouse = { x: 0, y: 0 };
 addEventListener("pointermove", (e) => { mouse.x = (e.clientX / innerWidth - 0.5); mouse.y = (e.clientY / innerHeight - 0.5); });
-addEventListener("click", () => gsap.fromTo(coreUniforms.uPulse, { value: 1 }, { value: 0, duration: 1.1, ease: "power2.out" }));
+canvas.addEventListener("click", () => gsap.fromTo(coreUniforms.uPulse, { value: 1 }, { value: 0, duration: 1.1, ease: "power2.out" }));
 
 function resize() {
   const w = innerWidth, h = innerHeight;
@@ -155,34 +155,118 @@ function setState(s) {
   document.getElementById("substate").textContent = cfg.sub;
 }
 
-// ---------- HUD chrome ----------
+// =========================================================================
+//  HUD CHROME  — real telemetry, live health, quick actions, conversation
+// =========================================================================
 function pad(n){return String(n).padStart(2,"0");}
 setInterval(() => {
   const d = new Date();
   document.getElementById("clk").textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   document.getElementById("date").textContent = d.toDateString().toUpperCase();
 }, 1000);
-function jitter(){
-  for (let i = 1; i <= 4; i++){
-    const v = 20 + Math.random() * 78;
-    document.getElementById("b"+i).style.transform = `scaleX(${v/100})`;
-    document.getElementById("v"+i).textContent = Math.round(v)+"%";
+
+// ---------- live system telemetry (real, from /stats) ----------
+function setBar(id, pct, hot) {
+  const bar = document.getElementById(id);
+  bar.style.transform = `scaleX(${Math.max(0, Math.min(100, pct)) / 100})`;
+  bar.parentElement.classList.toggle("hot", hot);
+}
+async function pollStats() {
+  try {
+    const s = await (await fetch("/stats")).json();
+    if (s.error) throw new Error();
+    const cpu = Math.round(s.cpu_percent ?? 0);
+    document.getElementById("v1").textContent = cpu + "%" + (s.cpu_temp ? ` · ${Math.round(s.cpu_temp)}°C` : "");
+    setBar("b1", cpu, cpu > 85);
+    const mem = s.mem || {};
+    document.getElementById("v2").textContent = `${mem.used_gb ?? "?"}/${mem.total_gb ?? "?"}G`;
+    setBar("b2", mem.percent ?? 0, (mem.percent ?? 0) > 88);
+    if (s.gpu) {
+      document.getElementById("v3").textContent = `${s.gpu.util}% · ${s.gpu.temp}°C`;
+      setBar("b3", s.gpu.util, s.gpu.util > 90);
+    } else {
+      document.getElementById("v3").textContent = "n/a"; setBar("b3", 0, false);
+    }
+    const disk = s.disk || {};
+    document.getElementById("v4").textContent = `${disk.percent ?? 0}%`;
+    setBar("b4", disk.percent ?? 0, (disk.percent ?? 0) > 92);
+    let head = `${s.uptime_h ?? 0}h up`;
+    if (s.battery) head = `🔋${s.battery.percent}%` + (s.battery.plugged ? "⚡" : "");
+    document.getElementById("pct").textContent = head;
+  } catch { document.getElementById("pct").textContent = "offline"; }
+}
+pollStats(); setInterval(pollStats, 2500);
+
+// ---------- live subsystem health (real, from /health) ----------
+const ICONS = {
+  inbox:'<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+  calendar:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+  eye:'<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
+  activity:'<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  mail:'<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/>',
+  moon:'<path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/>',
+};
+async function pollHealth() {
+  try {
+    const h = await (await fetch("/health")).json();
+    if (h.error) return;
+    document.getElementById("brainlbl").textContent = h.brain || "—";
+    document.getElementById("syscount").textContent = `${h.online}/${h.total}`;
+    if (h.city) document.getElementById("wx").textContent = h.city.toUpperCase();
+    const rows = (h.systems || []).map((s) =>
+      `<div class="${s.ok ? "" : "off"}"><span class="nm"><span class="dot"></span>${s.name}</span><span class="meta">${s.label}</span></div>`
+    ).join("");
+    document.getElementById("sysrows").innerHTML = rows;
+  } catch {}
+}
+pollHealth(); setInterval(pollHealth, 8000);
+
+// ---------- quick-action chips (from /suggestions) ----------
+async function loadQuick() {
+  let items;
+  try { items = (await (await fetch("/suggestions")).json()).suggestions; } catch { return; }
+  const q = document.getElementById("quick");
+  q.innerHTML = "";
+  for (const it of items) {
+    const c = document.createElement("div");
+    c.className = "chip";
+    c.innerHTML = `<svg viewBox="0 0 24 24">${ICONS[it.icon] || ICONS.activity}</svg>${it.label}`;
+    c.onclick = () => { cmd.value = ""; ask(it.say); };
+    q.appendChild(c);
   }
 }
-setInterval(jitter, 1400); jitter();
 
 // ---------- conversation ----------
 const log = document.getElementById("log");
-function addMsg(who, text) {
+function fmt(text) {
+  return String(text)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/\n/g, "<br>");
+}
+function stamp(ts) {
+  const d = ts ? new Date(ts * 1000) : new Date();
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function addMsg(who, text, ts, animate = true) {
   const el = document.createElement("div");
-  el.className = "msg " + (who === "you" ? "you" : "jarvis");
-  el.innerHTML = `<span class="who">${who === "you" ? "YOU" : "JARVIS"}</span>${text}`;
+  const cls = who === "you" ? "you" : who === "sys" ? "sys" : "jarvis";
+  el.className = "msg " + cls;
+  if (cls === "sys") el.innerHTML = fmt(text);
+  else el.innerHTML = `<span class="who">${who === "you" ? "YOU" : "JARVIS"}</span><span class="tm">${stamp(ts)}</span><br>${fmt(text)}`;
   log.appendChild(el);
-  while (log.children.length > 6) log.removeChild(log.firstChild);
-  gsap.to(el, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" });
+  while (log.children.length > 40) log.removeChild(log.firstChild);
+  if (animate) gsap.to(el, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" });
+  else { el.style.opacity = 1; el.style.transform = "none"; }
+  log.scrollTop = log.scrollHeight;
 }
 
+let busy = false;
 async function ask(text) {
+  text = (text || "").trim();
+  if (!text || busy) return;
+  busy = true;
   addMsg("you", text);
   setState("thinking");
   let reply;
@@ -194,12 +278,34 @@ async function ask(text) {
   }
   setState("speaking");
   addMsg("jarvis", reply || "…");
-  if (window.speechSynthesis) { const u = new SpeechSynthesisUtterance(reply); u.rate = 1.05; u.pitch = 0.9; speechSynthesis.speak(u); }
+  if (window.speechSynthesis) { const u = new SpeechSynthesisUtterance(String(reply).replace(/[`*#]/g, "")); u.rate = 1.05; u.pitch = 0.9; speechSynthesis.speak(u); }
   setTimeout(() => setState("standby"), Math.min(6000, 1500 + (reply||"").length * 35));
+  busy = false;
 }
 
 const cmd = document.getElementById("cmd");
+const inputrow = document.getElementById("inputrow");
 cmd.addEventListener("keydown", (e) => { if (e.key === "Enter" && cmd.value.trim()) { const v = cmd.value.trim(); cmd.value = ""; ask(v); } });
+cmd.addEventListener("focus", () => inputrow.classList.add("focus"));
+cmd.addEventListener("blur", () => inputrow.classList.remove("focus"));
+
+// keyboard shortcuts: "/" focuses, Esc blurs
+addEventListener("keydown", (e) => {
+  if (e.key === "/" && document.activeElement !== cmd) { e.preventDefault(); cmd.focus(); }
+  else if (e.key === "Escape") cmd.blur();
+});
+
+document.getElementById("clearbtn").onclick = async () => {
+  log.innerHTML = "";
+  try { await fetch("/history", { method: "DELETE" }); } catch {}
+  toast("Conversation cleared");
+  addMsg("jarvis", "Cleared. Fresh slate, sir.");
+};
+
+// ---------- toast ----------
+const toastEl = document.getElementById("toast");
+let toastT;
+function toast(m) { toastEl.textContent = m; toastEl.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => toastEl.classList.remove("show"), 2600); }
 
 // ---------- voice input (browser speech) ----------
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -210,7 +316,7 @@ if (SR) {
   mic.addEventListener("click", () => { live ? rec.stop() : rec.start(); });
   rec.onstart = () => { live = true; mic.classList.add("live"); setState("listening"); };
   rec.onend = () => { live = false; mic.classList.remove("live"); if (state === "listening") setState("standby"); };
-  rec.onresult = (e) => { const txt = e.results[0][0].transcript; ask(txt); };
+  rec.onresult = (e) => { ask(e.results[0][0].transcript); };
 } else {
   mic.title = "Voice input needs Chrome/Edge"; mic.style.opacity = 0.5;
 }
@@ -218,19 +324,26 @@ if (SR) {
 // ---------- live voice/phone events streamed from the --voice process ----------
 try {
   const es = new EventSource("/events");
-  es.onmessage = (ev) => {
-    let d; try { d = JSON.parse(ev.data); } catch { return; }
-    onLiveEvent(d.kind, d.text || "");
-  };
+  es.onmessage = (ev) => { let d; try { d = JSON.parse(ev.data); } catch { return; } onLiveEvent(d.kind, d.text || ""); };
 } catch {}
 function onLiveEvent(kind, text) {
   if (kind === "wake") setState("listening");
   else if (kind === "heard") { addMsg("you", text); setState("thinking"); }
   else if (kind === "reply") { addMsg("jarvis", text); setState("speaking"); setTimeout(() => setState("standby"), Math.min(6000, 1500 + text.length * 30)); }
-  else if (kind === "phone") addMsg("jarvis", "📱 " + text);
+  else if (kind === "phone") { addMsg("sys", "📱 " + text); toast("📱 " + text); }
   else if (kind === "sleep") setState("standby");
   else if (kind === "ready") document.getElementById("substate").textContent = text;
 }
 
-addMsg("jarvis", "Systems online. How can I help, sir?");
-
+// ---------- boot: restore recent history, then greet ----------
+async function boot() {
+  loadQuick();
+  let restored = false;
+  try {
+    const msgs = (await (await fetch("/history?limit=12")).json()).messages || [];
+    for (const m of msgs) { addMsg(m.who, m.text, m.t, false); restored = true; }
+  } catch {}
+  if (!restored) addMsg("jarvis", "Systems online. How can I help, sir?");
+  else addMsg("sys", "— session restored —");
+}
+boot();
