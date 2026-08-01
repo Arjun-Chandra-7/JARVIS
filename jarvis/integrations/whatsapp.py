@@ -71,7 +71,10 @@ def smart_send(to: str, message: str) -> dict:
         r = send(digits, message)
         return {"ok": bool(r.get("ok")), "message": "Sent." if r.get("ok") else f"Failed: {r.get('error')}"}
 
-    # 3) a name → check Jarvis's own durable memory FIRST (numbers Arjun told it), then the bridge
+    # 3) a name → resolve in priority order:
+    #    a) numbers Arjun explicitly told Jarvis (durable vault memory)
+    #    b) the phone address book synced by KDE Connect (thousands of real contacts)
+    #    c) the WhatsApp bridge's own learned contacts
     try:
         from . import contacts
 
@@ -81,6 +84,23 @@ def smart_send(to: str, message: str) -> dict:
             if r.get("ok"):
                 return {"ok": True, "message": f"Sent to {remembered['name']}."}
             return {"ok": False, "message": f"Couldn't send to {remembered['name']}: {r.get('error')}"}
+    except Exception:  # noqa: BLE001
+        pass
+
+    try:
+        from . import phone_contacts
+
+        pcs = phone_contacts.lookup(to)
+        exact = [c for c in pcs if c["name"].lower() == to.lower()]
+        if len(pcs) == 1 or exact:
+            target = exact[0] if exact else pcs[0]
+            r = send(target["number"], message)
+            if r.get("ok"):
+                return {"ok": True, "message": f"Sent to {target['name']}."}
+            return {"ok": False, "message": f"Couldn't send to {target['name']}: {r.get('error')}"}
+        if len(pcs) > 1:
+            names = ", ".join(c["name"] for c in pcs[:5])
+            return {"ok": False, "message": f"Several contacts match '{to}': {names}. Which one?"}
     except Exception:  # noqa: BLE001
         pass
 

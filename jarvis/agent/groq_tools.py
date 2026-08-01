@@ -300,14 +300,15 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     @tool("find_contact", "Look up a person's WhatsApp contact by name (before sending).",
           {"name": {"type": "string"}}, ["name"])
     async def find_contact(a):
-        from ..integrations import contacts, whatsapp
+        from ..integrations import contacts, phone_contacts, whatsapp
         name = a.get("name", "")
-        local = contacts.lookup(name)
-        cands = whatsapp.resolve(name)
         out = []
+        local = contacts.lookup(name)
         if local:
             out.append(f"{local['name']}" + (f" ({local['number']})" if local.get("number") else "") + " [remembered]")
-        out += [c["name"] for c in cands[:6]]
+        for c in phone_contacts.lookup(name)[:6]:
+            out.append(f"{c['name']} ({c['number']})")
+        out += [c["name"] for c in whatsapp.resolve(name)[:4]]
         return "; ".join(out) if out else f"No contact matching '{name}'."
 
     @tool("remember_contact",

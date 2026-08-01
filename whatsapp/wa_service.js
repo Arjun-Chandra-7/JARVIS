@@ -45,13 +45,37 @@ let connected = false;
 const inbox = []; // recent incoming messages
 const contacts = new Map(); // jid -> best known name (for resolving "message <name>")
 
+// --- persist contacts across restarts (WhatsApp only re-sends the address book occasionally) ---
+const CONTACTS_FILE = path.join(AUTH_DIR, "contacts.json");
+function loadContacts() {
+  try {
+    const obj = JSON.parse(fs.readFileSync(CONTACTS_FILE, "utf8"));
+    for (const [jid, name] of Object.entries(obj)) contacts.set(jid, name);
+    console.log(`Loaded ${contacts.size} saved contacts.`);
+  } catch {}
+}
+let saveTimer = null;
+function saveContacts() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      fs.mkdirSync(AUTH_DIR, { recursive: true });
+      fs.writeFileSync(CONTACTS_FILE, JSON.stringify(Object.fromEntries(contacts)));
+    } catch {}
+  }, 1500);
+}
+
 function recordContact(jid, name) {
   if (!jid || !name) return;
   if (jid.includes("@g.us") || jid.includes("@newsletter") || jid.includes("broadcast")) return;
   const clean = String(name).trim();
   if (!clean || /^\d+$/.test(clean) || clean.includes("@")) return; // skip numbers / raw jids
-  contacts.set(jid, clean);
+  if (contacts.get(jid) !== clean) {
+    contacts.set(jid, clean);
+    saveContacts();
+  }
 }
+loadContacts();
 
 async function start() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
@@ -63,6 +87,8 @@ async function start() {
     auth: state,
     browser: Browsers.ubuntu("Chrome"),
     logger: P({ level: "silent" }),
+    syncFullHistory: true,   // pull the address book + chat history so we can resolve names
+    markOnlineOnConnect: false,
   });
   sock.ev.on("creds.update", saveCreds);
 
