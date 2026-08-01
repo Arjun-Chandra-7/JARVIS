@@ -214,11 +214,15 @@ class VoiceSession:
             wait_s=wait_s,
         )
         if not pcm:
+            # nothing above the VAD threshold → mic muted/wrong device, or threshold too high
+            self.on_event("timing", f"no audio captured (VAD threshold={self.threshold})")
             return None
         duration = len(pcm) / 2 / self.sample_rate
         start = time.monotonic()
         text = self._transcribe(pcm)
-        self.on_event("timing", f"heard {duration:.1f}s clip, transcribed in {time.monotonic() - start:.1f}s")
+        self.on_event("timing",
+                      f"heard {duration:.1f}s clip, transcribed in {time.monotonic() - start:.1f}s "
+                      f"-> {'\"'+text+'\"' if text else 'EMPTY (STT found no words)'}")
         return text
 
     def _transcribe(self, pcm: bytes) -> str:
@@ -570,11 +574,24 @@ class VoiceSession:
                     continue
                 self.on_event("wake")
                 transcript = self._record_transcript(wait_s=POST_WAKE_WAIT_S)
+                if not transcript:
+                    # Woke but captured nothing intelligible → say so instead of going silent, so it
+                    # never looks "stuck". Usually a mic/VAD/threshold issue (see the timing log).
+                    self.on_event("heard", "(nothing captured)")
+                    self._speak("Sorry sir, I didn't catch that.")
+                    self.on_event("sleep")
+                    continue
                 while transcript:
                     self.on_event("heard", transcript)
                     start = time.monotonic()
-                    reply = await agent.send(self._augment(transcript))
+                    try:
+                        reply = await agent.send(self._augment(transcript))
+                    except Exception as exc:  # noqa: BLE001 - never let one bad turn kill the loop
+                        reply = "Something went wrong on that one, sir."
+                        self.on_event("error", f"brain: {exc}")
                     self.on_event("timing", f"thought in {time.monotonic() - start:.1f}s")
+                    if not (reply or "").strip():
+                        reply = "I don't have an answer for that, sir."
                     self.on_event("reply", reply)
                     self._speak(reply)
                     # By default require the wake word again for each turn (no auto-listen after a
