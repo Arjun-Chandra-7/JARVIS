@@ -109,6 +109,23 @@ def _is_rate_limit(exc: Exception) -> bool:
     return "429" in s or "rate limit" in s or "rate_limit" in s
 
 
+def _retry_after(exc: Exception) -> Optional[float]:
+    """Seconds to wait before retrying a 429, from the Retry-After header or the message text."""
+    resp = getattr(exc, "response", None)
+    if resp is not None:
+        try:
+            ra = (resp.headers or {}).get("retry-after")
+            if ra:
+                return float(ra)
+        except Exception:  # noqa: BLE001
+            pass
+    text = str(exc)
+    m = re.search(r"try again in\s+(?:(\d+)m)?([\d.]+)s", text, re.I)
+    if m:
+        return (int(m.group(1)) * 60 if m.group(1) else 0) + float(m.group(2))
+    return None
+
+
 def _data_uri(path: str) -> Optional[str]:
     try:
         b = Path(path).read_bytes()
@@ -134,10 +151,10 @@ class GroqAgent:
         self._on_fallback = False
         self.client = OpenAI(base_url=base_url, api_key=api_key, max_retries=0, timeout=45)
         self.schemas, self.dispatch = build_registry(config, self.job_runner, confirm_fn)
-        for s in self.schemas:  # trim descriptions to conserve tokens (tool names are self-explanatory)
-            d = s["function"].get("description", "")
-            if len(d) > 60:
-                s["function"]["description"] = d[:60]
+        for s in self.schemas:  # trim descriptions hard — tool names are self-explanatory, and every
+            d = s["function"].get("description", "")   # token here is sent on EVERY request (rate limits)
+            if len(d) > 40:
+                s["function"]["description"] = d[:40]
 
         self.messages: list[dict] = [{"role": "system", "content": _compact_system(config)}]
 
@@ -160,9 +177,9 @@ class GroqAgent:
     def _trim(self) -> None:
         # Keep the system message + a suffix that starts on a clean 'user' turn (never split a
         # tool_calls/tool pair, which the API rejects).
-        if len(self.messages) <= 24:
+        if len(self.messages) <= 14:
             return
-        keep_from = len(self.messages) - 18
+        keep_from = len(self.messages) - 10
         while keep_from < len(self.messages) and self.messages[keep_from].get("role") != "user":
             keep_from += 1
         if keep_from < len(self.messages):
@@ -181,15 +198,26 @@ class GroqAgent:
         self.messages.append({"role": "user", "content": f"[time: {now:%A %Y-%m-%d %H:%M %Z}] {user_text}"})
 
         reply = ""
-        for _ in range(10):  # bounded tool rounds
+        rl_waits = 0  # how many times we've waited out a rate-limit this turn
+        for _ in range(12):  # bounded tool rounds
             try:
                 resp = await asyncio.to_thread(self._complete)
             except Exception as exc:  # noqa: BLE001
-                # rate-limited on the primary model → drop to the high-limit fallback and retry
-                if _is_rate_limit(exc) and self.config.brain == "groq" and self.model != self.fallback_model:
-                    self.model = self.fallback_model
-                    self._on_fallback = True
-                    continue
+                if _is_rate_limit(exc) and self.config.brain == "groq":
+                    # 1) first, switch to the high-limit fallback model (once)
+                    if self.model != self.fallback_model:
+                        self.model = self.fallback_model
+                        self._on_fallback = True
+                        continue
+                    # 2) already on fallback: if it's a short per-minute cap, wait it out and retry
+                    wait = _retry_after(exc)
+                    if wait is not None and wait <= 30 and rl_waits < 2:
+                        rl_waits += 1
+                        await asyncio.sleep(wait + 0.5)
+                        continue
+                    # 3) genuinely exhausted (daily cap / long wait) → say so, don't error out
+                    return ("I've hit Groq's rate limit for the moment, sir. Give it "
+                            + (f"about {int(wait)}s" if wait else "a minute") + " and ask again.")
                 salvaged = _parse_calls(_failed_gen(exc) or "")  # rescue a malformed tool call
                 if not salvaged:
                     return f"[groq error] {exc}"
