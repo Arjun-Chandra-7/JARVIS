@@ -40,9 +40,13 @@ class RemoteAgent:
 
     async def send(self, user_text: str) -> str:
         msg = user_text + (_VOICE_SUFFIX if self.mode == "voice" else "")
+        # generous enough for a deep-research turn, but bounded so a hung call can't wedge the
+        # voice loop (which can't listen while it's waiting on a reply).
         try:
-            async with httpx.AsyncClient(timeout=240) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=5.0)) as client:
                 r = await client.post(f"{self.base}/chat", json={"message": msg})
                 return (r.json() or {}).get("reply", "") or "(no reply)"
+        except httpx.TimeoutException:
+            return "That one took too long, sir — let me know if you'd like me to try again."
         except Exception as exc:  # noqa: BLE001
             return f"[voice can't reach the brain — is --web running? {exc}]"
