@@ -131,6 +131,11 @@ async function sendMessage(to, text) {
 http
   .createServer((req, res) => {
     res.setHeader("Content-Type", "application/json");
+    const origin = req.headers.origin;
+    if (origin && !origin.startsWith("http://127.0.0.1") && !origin.startsWith("http://localhost")) {
+      res.statusCode = 403;
+      return res.end(JSON.stringify({ error: "Unauthorized cross-origin request" }));
+    }
     if (req.url === "/status") return res.end(JSON.stringify({ connected }));
     if (req.url === "/inbox") return res.end(JSON.stringify(inbox.slice(-30)));
     if (req.url === "/contacts") {

@@ -80,7 +80,7 @@ def is_logged_in() -> bool:
 
     try:
         with sync_playwright() as p:
-            ctx = _ctx(p, headless=True)
+            ctx = _ctx(p, headless=False, hidden=True)
             cookies = ctx.cookies()
             ctx.close()
         return any("session" in (c.get("name", "").lower()) or "__Secure" in c.get("name", "") for c in cookies)
@@ -88,7 +88,7 @@ def is_logged_in() -> bool:
         return False
 
 
-def _research_sync(query: str, headless: bool = True, timeout_s: int = 75) -> dict:
+def _research_sync(query: str, headless: bool = False, timeout_s: int = 75) -> dict:
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
@@ -109,26 +109,26 @@ def _research_sync(query: str, headless: bool = True, timeout_s: int = 75) -> di
                 return {"ok": False, "text": "Couldn't find Perplexity's search box (UI may have changed)."}
             box.click()
             # works for both <textarea> and contenteditable boxes
-            page.keyboard.type(query, delay=8)
-            page.wait_for_timeout(300)
+            page.keyboard.insert_text(query)
+            page.wait_for_timeout(100)
             page.keyboard.press("Enter")
 
             # wait for the answer to appear and stop growing (streaming finished)
-            page.wait_for_timeout(3500)
+            page.wait_for_timeout(800)
             answer, stable = "", 0
             import time as _t
 
             start = _t.time()
             while _t.time() - start < timeout_s:
                 txt = _extract(page)
-                if txt and txt == answer:
+                if txt and txt == answer and len(txt) > 0:
                     stable += 1
-                    if stable >= 3:
+                    if stable >= 2:
                         break
                 else:
                     stable = 0
                     answer = txt
-                page.wait_for_timeout(1200)
+                page.wait_for_timeout(400)
 
             sources = _sources(page)
             if not answer:

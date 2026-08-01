@@ -74,7 +74,7 @@ def _dms_sync(limit: int = 8) -> dict:
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         try:
             page.goto(INBOX, timeout=45000)
-            page.wait_for_timeout(5000)
+            page.wait_for_timeout(1500)
             body = (page.inner_text("body"))[:200].lower()
             if "log in" in body and "message" not in body:
                 return {"ok": False, "text": "Instagram isn't logged in — run `--instagram-login`."}

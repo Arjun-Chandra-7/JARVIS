@@ -73,6 +73,7 @@ def login() -> None:
 # --------------------------------------------------------------------------- #
 class ChatGPTSession:
     def __init__(self, headless: bool | None = None) -> None:
+        # Default headless=False because Cloudflare blocks headless Chrome; Xvfb handles invisible rendering
         env = os.environ.get("JARVIS_CHATGPT_HEADLESS", "0").strip().lower()
         self.headless = (env in ("1", "true", "yes")) if headless is None else headless
         self._pw = None
@@ -97,7 +98,7 @@ class ChatGPTSession:
         self.page = self.ctx.pages[0] if self.ctx.pages else await self.ctx.new_page()
         # start a FRESH temporary chat so no old conversation context leaks in
         await self.page.goto(URL + "?temporary-chat=true", timeout=60000)
-        await self.page.wait_for_timeout(2500)
+        await self.page.wait_for_timeout(500)
 
     async def close(self) -> None:
         try:
@@ -136,19 +137,19 @@ class ChatGPTSession:
 
         # Primary done-signal: the "stop generating" button appears while streaming and detaches when
         # finished — far faster than polling for stable text. Fall back to a short stability poll.
-        stop_sel = "[data-testid='stop-button']"
+        stop_sel = "[data-testid*='stop'], button[aria-label*='Stop'], button[aria-label*='stop']"
         try:
-            await page.wait_for_selector(stop_sel, timeout=9000)          # streaming started
+            await page.wait_for_selector(stop_sel, timeout=1500)          # streaming started
             await page.wait_for_selector(stop_sel, state="detached", timeout=timeout_s * 1000)  # finished
-            await page.wait_for_timeout(120)
+            await page.wait_for_timeout(100)
         except Exception:  # noqa: BLE001 - button testid may change; fall back to stability poll
             start = asyncio.get_event_loop().time()
             last, stable = "", 0
             while asyncio.get_event_loop().time() - start < timeout_s:
-                await page.wait_for_timeout(450)
+                await page.wait_for_timeout(250)
                 nodes = await page.query_selector_all(_ASSISTANT)
                 cur = (await nodes[-1].inner_text()).strip() if nodes else ""
-                if cur and cur == last:
+                if cur and cur == last and len(cur) > 0:
                     stable += 1
                     if stable >= 2:
                         break

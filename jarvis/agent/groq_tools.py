@@ -101,7 +101,12 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
           {"path": {"type": "string"}, "content": {"type": "string"}}, ["path", "content"])
     async def write_file(a):
         try:
-            p = Path(a["path"]).expanduser()
+            p = Path(a["path"]).expanduser().resolve()
+            if p.exists() and not config.allow_unconfirmed_shell:
+                head = p.read_text(errors="ignore")[:400]
+                if "author: jarvis" not in head and "/scratch" not in str(p) and "/tmp" not in str(p):
+                    if not await _confirm(f"overwrite existing file not created by Jarvis:\n    {p}"):
+                        return "User declined overwriting this file."
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(a.get("content", ""))
             return f"wrote {p}"
@@ -398,6 +403,20 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         return apps.read_clipboard() or "(clipboard empty/unavailable)"
 
     # ---------------- desktop control ----------------
+    @tool("mouse_move", "Move the mouse cursor to screen pixel coordinates x, y.", {"x": {"type": "integer"}, "y": {"type": "integer"}}, ["x", "y"])
+    async def mouse_move(a):
+        from ..integrations import desktop_control as dc
+        return "moved." if dc.move(_i(a.get("x", 0)), _i(a.get("y", 0))) else "control not ready."
+
+    @tool("mouse_click", "Click mouse button at optional x, y coordinates.", {"button": {"type": "string"}, "x": {"type": "integer"}, "y": {"type": "integer"}, "double": {"type": "boolean"}})
+    async def mouse_click(a):
+        from ..integrations import desktop_control as dc
+        button = a.get("button", "left") or "left"
+        double = _b(a.get("double", False))
+        x, y = _i(a.get("x", -1), -1), _i(a.get("y", -1), -1)
+        ok = dc.move_click(x, y, button, double) if x >= 0 and y >= 0 else dc.click(button, double)
+        return f"{'double-' if double else ''}clicked {button}." if ok else "click failed."
+
     @tool("type_text", "Type text at the keyboard focus.", {"text": {"type": "string"}}, ["text"])
     async def type_text(a):
         from ..integrations import desktop_control as dc
@@ -407,6 +426,16 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     async def press_keys(a):
         from ..integrations import desktop_control as dc
         return "pressed." if dc.press_keys(a.get("keys", "")) else "control not ready."
+
+    @tool("scroll_page", "Scroll screen up or down.", {"direction": {"type": "string"}, "amount": {"type": "integer"}})
+    async def scroll_page(a):
+        from ..integrations import desktop_control as dc
+        return "scrolled." if dc.scroll(a.get("direction", "down") or "down", _i(a.get("amount", 5), 5)) else "scroll failed."
+
+    @tool("find_and_click", "Find a button, icon, or text element on screen via vision and click it directly.", {"target": {"type": "string"}, "button": {"type": "string"}, "double": {"type": "boolean"}}, ["target"])
+    async def find_and_click(a):
+        from ..integrations import desktop_control as dc
+        return dc.find_and_click(a.get("target", ""), button=a.get("button", "left") or "left", double=_b(a.get("double", False)), config=config)
 
     # ---------------- Google ----------------
     @tool("google_agenda", "Upcoming calendar events for N days.", {"days": {"type": "string"}})

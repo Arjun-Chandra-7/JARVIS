@@ -533,6 +533,30 @@ def build_tool_server(config: Config, job_runner: JobRunner):
         ok = dc.press_keys(args.get("keys", ""))
         return _text(f"Pressed {args.get('keys','')}." if ok else f"Couldn't press '{args.get('keys','')}'.")
 
+    @tool(
+        "scroll_page",
+        "Scroll up or down on the screen. direction: 'up' or 'down', amount: steps (default 5).",
+        {"direction": str, "amount": int},
+    )
+    async def scroll_page(args):
+        from ..integrations import desktop_control as dc
+        if dc.available() is None:
+            return _text(_CONTROL_HINT)
+        ok = dc.scroll(args.get("direction", "down") or "down", int(args.get("amount", 5) or 5))
+        return _text("Scrolled." if ok else "Scroll failed.")
+
+    @tool(
+        "find_and_click",
+        "Automatically find a button, icon, or text element on screen using vision and click it directly. Use when asked to click something like 'ok button' or 'submit' or an icon without needing manual coordinate calculation.",
+        {"target": str, "button": str, "double": bool},
+    )
+    async def find_and_click(args):
+        from ..integrations import desktop_control as dc
+        if dc.available() is None:
+            return _text(_CONTROL_HINT)
+        res = dc.find_and_click(args.get("target", ""), button=args.get("button", "left") or "left", double=bool(args.get("double", False)), config=config)
+        return _text(res)
+
     @tool("do_not_disturb", "Turn Do Not Disturb (notification silencing) on or off.", {"on": bool})
     async def do_not_disturb(args):
         from ..integrations import system_control as sc
@@ -681,7 +705,7 @@ def build_tool_server(config: Config, job_runner: JobRunner):
             set_away, set_available,
             set_volume, adjust_volume, mute_audio, media_control, set_brightness,
             lock_screen, suspend_computer, set_radio, do_not_disturb, system_stats,
-            mouse_move, mouse_click, type_text, press_keys,
+            mouse_move, mouse_click, type_text, press_keys, scroll_page, find_and_click,
             google_agenda, google_calendar_create,
             google_email_check, google_email_read, google_email_send,
             google_tasks_list, google_tasks_add, google_tasks_complete,

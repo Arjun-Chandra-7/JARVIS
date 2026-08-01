@@ -39,8 +39,12 @@ app = FastAPI(lifespan=lifespan)
 
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
+# Security: Restrict CORS strictly to local HUD clients to prevent external web page CSRF attacks
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
+    CORSMiddleware,
+    allow_origins=["http://127.0.0.1:8770", "http://localhost:8770", "http://127.0.0.1:8765", "http://localhost:8765"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 

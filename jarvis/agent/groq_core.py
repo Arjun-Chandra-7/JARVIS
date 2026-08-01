@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -46,6 +47,12 @@ You are running on Groq with function tools. Follow these rules exactly:
    files (read specific files with read_file to understand them), briefly say what you found and ASK
    what they want changed, then call `code_with_antigravity` with a clear task to do the work. For
    tiny edits you may just use read_file/write_file yourself.
+8. IRON MAN PROTOCOLS & SIGNATURE COMMANDS: When asked to trigger signature command sequences, adopt Tony Stark's AI right-hand J.A.R.V.I.S. persona — razor-sharp, cinematic, and unflappable — acknowledging out loud and instantly calling the tool:
+   - "Initiate Clean Sweep" or "Protocol Catch Up": Call `catch_up` to sweep unread emails, recent WhatsApp chats, and upcoming calendar agenda into a concise executive briefing.
+   - "Initiate Deep Research Sequence" or "Protocol Deep Dive": Call `deep_research` via Perplexity to synthesize live global intelligence.
+   - "Engage Overwatch Protocol" or "Control my screen": Use GUI automation tools like `find_and_click` (to locate and click buttons/text visually), `mouse_move`, `mouse_click`, `scroll_page`, and `type_text` to control the computer hands-free.
+   - "Execute Fortress Protocol" or "Engage Focus Mode": Call `do_not_disturb` and set communication defense shields via WhatsApp away messages.
+   - "Run Diagnostics Sequence" or "Protocol System Pulse": Call `system_stats` to query thermals, memory load, and system health.
 """
 
 
@@ -95,6 +102,13 @@ def _parse_calls(text: str):
     return out
 
 
+def _is_rate_limit(exc: Exception) -> bool:
+    if getattr(exc, "status_code", None) == 429:
+        return True
+    s = str(exc).lower()
+    return "429" in s or "rate limit" in s or "rate_limit" in s
+
+
 def _data_uri(path: str) -> Optional[str]:
     try:
         b = Path(path).read_bytes()
@@ -114,6 +128,10 @@ class GroqAgent:
         self.job_runner = JobRunner(config)
         # max_retries=0 + a timeout so a rate-limit (429) fails fast instead of hanging on backoff.
         base_url, api_key, self.model = config.llm_params()
+        # When the primary model is rate-limited (429), fall back to a high-limit fast model so Jarvis
+        # keeps answering instead of erroring. Only applies to Groq (llama models on the free tier).
+        self.fallback_model = os.environ.get("JARVIS_GROQ_FALLBACK", "llama-3.1-8b-instant")
+        self._on_fallback = False
         self.client = OpenAI(base_url=base_url, api_key=api_key, max_retries=0, timeout=45)
         self.schemas, self.dispatch = build_registry(config, self.job_runner, confirm_fn)
         for s in self.schemas:  # trim descriptions to conserve tokens (tool names are self-explanatory)
@@ -167,6 +185,11 @@ class GroqAgent:
             try:
                 resp = await asyncio.to_thread(self._complete)
             except Exception as exc:  # noqa: BLE001
+                # rate-limited on the primary model → drop to the high-limit fallback and retry
+                if _is_rate_limit(exc) and self.config.brain == "groq" and self.model != self.fallback_model:
+                    self.model = self.fallback_model
+                    self._on_fallback = True
+                    continue
                 salvaged = _parse_calls(_failed_gen(exc) or "")  # rescue a malformed tool call
                 if not salvaged:
                     return f"[groq error] {exc}"

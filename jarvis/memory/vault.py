@@ -7,6 +7,7 @@ change so nothing the model does is unrecoverable.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from datetime import date
 from pathlib import Path
@@ -97,6 +98,10 @@ def ensure_vault(vault: Path, user_name: str = "you") -> bool:
     created = not vault.exists()
     for sub in SUBDIRS:
         (vault / sub).mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(vault, 0o700)  # Security: shield long-term memory vault from unauthorized local users
+    except OSError:
+        pass
     _seed_files(vault, user_name)
     if not is_git_repo(vault):
         _git(vault, "init", "-q")

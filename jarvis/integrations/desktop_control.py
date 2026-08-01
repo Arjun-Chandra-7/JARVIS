@@ -11,6 +11,7 @@ coordinates up to screen coordinates — see screenshot.scale_note().
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 
@@ -122,3 +123,66 @@ def press_keys(combo: str) -> bool:
         seq = [f"{c}:1" for c in codes] + [f"{c}:0" for c in reversed(codes)]
         return _run(["ydotool", "key", *seq])
     return False
+
+
+def scroll(direction: str = "down", amount: int = 5) -> bool:
+    """Scroll up or down on the screen."""
+    tool = available()
+    d = direction.lower()
+    if tool == "xdotool":
+        btn = "4" if "up" in d else "5"
+        return _run(["xdotool", "click", "--repeat", str(max(1, amount)), btn])
+    if tool == "ydotool":
+        key = "pageup" if "up" in d else "pagedown"
+        code = _KEYS.get(key, 109)
+        ok = True
+        for _ in range(max(1, amount // 2)):
+            ok = _run(["ydotool", "key", f"{code}:1", f"{code}:0"]) and ok
+        return ok
+    return False
+
+
+def find_and_click(target: str, button: str = "left", double: bool = False, config=None) -> str:
+    """Automatically find a visual element or text on screen using vision and click it."""
+    from ..vision import analyze, screenshot
+    if available() is None:
+        return "Desktop control isn't ready — run scripts/enable-control.sh once."
+    path = screenshot.capture()
+    if not path:
+        return "Failed to capture screenshot for visual targeting."
+
+    prompt = (
+        f"Locate the GUI element, button, icon, or text matching '{target}' on this screen. "
+        "Return ONLY a valid JSON object with the exact pixel center coordinates in this image, strictly in this format: {\"x\": 350, \"y\": 500}"
+    )
+    ans = analyze.describe(path, prompt, config)
+    if not ans or "vision error" in str(ans).lower():
+        return f"Could not analyze screenshot to locate '{target}': {ans or 'no vision provider'}"
+
+    x_val, y_val = None, None
+    m_json = re.search(r'\{\s*"x"\s*:\s*(\d+)\s*,\s*"y"\s*:\s*(\d+)\s*\}', str(ans))
+    if m_json:
+        x_val, y_val = int(m_json.group(1)), int(m_json.group(2))
+    else:
+        m_tuple = re.search(r'\(?(\d{2,4})\s*[,x]\s*(\d{2,4})\)?', str(ans))
+        if m_tuple:
+            x_val, y_val = int(m_tuple.group(1)), int(m_tuple.group(2))
+
+    if x_val is None or y_val is None:
+        return f"Could not pinpoint exact coordinates for '{target}' on screen. Vision reported: {ans}"
+
+    geom = getattr(screenshot, "_last_geom", {})
+    real = geom.get("real")
+    img = geom.get("img")
+    if real and img and img[0] > 0:
+        scale_x = real[0] / img[0]
+        scale_y = real[1] / img[1]
+        real_x = int(x_val * scale_x)
+        real_y = int(y_val * scale_y)
+    else:
+        real_x, real_y = x_val, y_val
+
+    ok = move_click(real_x, real_y, button=button, double=double)
+    if ok:
+        return f"Located '{target}' at real screen coordinates ({real_x}, {real_y}) and clicked {button}."
+    return f"Located '{target}' at ({real_x}, {real_y}), but mouse click failed to execute."

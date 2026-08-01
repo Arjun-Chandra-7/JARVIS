@@ -51,7 +51,9 @@ _DESTRUCTIVE = [
     r"\bsudo\b", r"(^|\s)su\s", r"\btee\b",
     r"\bgit\s+push\b", r"\bgit\s+reset\s+--hard\b", r"\bgit\s+clean\b",
     r"\bnpm\s+publish\b", r"\bpip\s+uninstall\b", r"\bapt(-get)?\s+(remove|purge)\b",
-    r"\|\s*(sudo\s+)?(sh|bash)\b",          # curl ... | sh
+    r"\b(curl|wget|nc|netcat|ssh|scp|sftp|rsync)\b",  # data transmission & exfiltration
+    r"\b(eval|exec)\b", r"base64\s+-d", r"\b(sh|bash|python|python3|perl|ruby)\s+-c\b",  # obfuscated execution
+    r"\|\s*(sudo\s+)?(sh|bash|zsh|python|python3)\b", # curl ... | sh
     r":\(\)\s*\{",                            # fork bomb
     r"(?<![0-9&])>(?![>&])",                  # overwrite redirection (not >>, 2>&1, &>)
 ]
