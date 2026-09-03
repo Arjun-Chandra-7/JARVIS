@@ -102,3 +102,84 @@ body.text .msg { display: block; }
   background: var(--glass); border: 1px solid var(--accent); color: var(--accent2); padding: 10px 20px; border-radius: 10px;
   font-size: 14px; letter-spacing: 1px; opacity: 0; transition: .3s; pointer-events: none; backdrop-filter: blur(12px); }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* Spotify Widget */
+.spotify-widget {
+  position: fixed;
+  bottom: 80px;
+  right: 20px;
+  width: 320px;
+  background: #0a0f19;
+  border: 1px solid rgba(55, 231, 255, 0.3);
+  border-radius: 12px;
+  display: flex;
+  padding: 12px;
+  gap: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  backdrop-filter: blur(10px);
+  opacity: 0;
+  transform: translateY(20px);
+  transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  pointer-events: none;
+}
+.spotify-widget.show {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: all;
+}
+.spotify-widget img {
+  width: 80px;
+  height: 80px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+.sp-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+.sp-title {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sp-artist {
+  font-size: 12px;
+  color: #aaa;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sp-lyric {
+  font-size: 13px;
+  color: var(--accent);
+  margin-top: 4px;
+  min-height: 18px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-style: italic;
+}
+.sp-controls {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+.sp-controls button {
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.2s;
+}
+.sp-controls button:hover {
+  color: var(--accent);
+}

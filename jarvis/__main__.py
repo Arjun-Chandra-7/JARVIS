@@ -394,6 +394,17 @@ def _run_index() -> None:
     print(f"\nDone: {stats}")
 
 
+
+async def _run_whatsapp() -> None:
+    CONFIG.require_claude_cli()
+    ensure_vault(CONFIG.vault_path, CONFIG.user_name)
+    from .bridges.whatsapp import WhatsAppBridge
+
+    print(BANNER, "· whatsapp bridge\n")
+    print("Message yourself on WhatsApp to talk to Jarvis. Ctrl-C to stop.")
+    async with make_agent(CONFIG, mode="text", confirm_fn=None, on_tool=lambda n, d: None) as agent:
+        await WhatsAppBridge(CONFIG).run(agent)
+
 async def _run_telegram() -> None:
     CONFIG.require_claude_cli()
     if not CONFIG.telegram_bot_token:
@@ -545,6 +556,7 @@ def main() -> None:
     parser.add_argument("--daemon", action="store_true", help="run proactive routines (morning brief, monitors)")
     parser.add_argument("--brief", action="store_true", help="run the morning briefing once, now")
     parser.add_argument("--task", metavar="DESC", help="dispatch one background task and wait for the result")
+    parser.add_argument("--whatsapp", action="store_true", help="Run the WhatsApp remote-control bridge")
     parser.add_argument("--telegram", action="store_true", help="remote access via a Telegram bot")
     parser.add_argument("--meeting", action="store_true", help="capture a meeting and summarize it")
     parser.add_argument("--google-auth", action="store_true", help="one-time Google (Calendar/Gmail/Tasks) auth")
@@ -592,6 +604,11 @@ def main() -> None:
             asyncio.run(_run_brief())
         elif args.daemon:
             asyncio.run(_run_daemon())
+        elif args.whatsapp:
+            try:
+                asyncio.run(_run_whatsapp())
+            except KeyboardInterrupt:
+                pass
         elif args.telegram:
             asyncio.run(_run_telegram())
         elif args.meeting:

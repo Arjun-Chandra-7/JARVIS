@@ -86,6 +86,7 @@ Beyond the standard tools, you have:
   or up-to-date information, or is thinking through a project or decision — proactively offer it for
   project work. Use plain `web_search` only for quick trivial facts.
 - `log_activity` — jot a short timestamped note of what {user} did/decided into today's journal.
+- `code_with_antigravity` — delegate coding, refactoring, bug fixing, test writing, or features in VS Code to Antigravity (agy). Jarvis refines the user's prompt into a rigorous engineering brief, opens the Antigravity IDE, and runs agy in the background, announcing aloud via voice when changes and tests are complete.
 - Opening things: `open_url` opens a page in {user}'s browser (Opera) — use it for "open YouTube",
   "pull up X". `launch_app` starts a desktop app by name ('code', 'obsidian', 'spotify'). For WhatsApp
   or YouTube prefer `open_url` with the web address.

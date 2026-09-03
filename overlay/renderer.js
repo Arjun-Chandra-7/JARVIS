@@ -131,6 +131,7 @@ function onEvent(kind, text) {
   else if (kind === "reply") { addMsg("jarvis", text); setState("speaking"); setTimeout(() => setState(null), Math.min(6000, 1600 + text.length * 28)); }
   else if (kind === "phone") { addMsg("sys", "📱 " + text); toast("📱 " + text); }
   else if (kind === "sleep") setState(null);
+  else if (kind === "sports_toggle") { window.jarvis.sportsToggle(text); }
 }
 
 // ---------- live subsystem health → header dots + mini line ----------
@@ -159,9 +160,22 @@ async function pollStats() {
 pollHealth(); setInterval(pollHealth, 8000);
 pollStats(); setInterval(pollStats, 3000);
 
-// ---------- webcam (also feeds hand-gestures) ----------
-navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
-  .then((s) => { document.getElementById("cam").srcObject = s; }).catch(() => {});
+// ---------- webcam (feeds face detection + hand-gestures) ----------
+async function initCamera(retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: "user" } });
+      document.getElementById("cam").srcObject = stream;
+      console.log("[camera] ✓ webcam stream active");
+      return;
+    } catch (e) {
+      console.warn(`[camera] attempt ${i + 1}/${retries} failed:`, e.name, e.message);
+      if (i < retries - 1) await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+  console.error("[camera] could not access webcam — face detection disabled");
+}
+initCamera();
 
 // ---------- clock ----------
 function tick() { document.getElementById("clock").textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
@@ -183,3 +197,4 @@ window.jarvis.onToast(toast);
   setState(null);
   addMsg("sys", "JARVIS online · always listening · scroll the orb for text");
 })();
+

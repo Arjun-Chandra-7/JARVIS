@@ -128,9 +128,10 @@ async function start() {
       const text = extractText(m.message);
       dbg(`  from=${m.key.remoteJid} fromMe=${m.key.fromMe} keys=${Object.keys(m.message || {})} text=${JSON.stringify(text)}`);
       recordContact(m.key.remoteJid, m.pushName);
-      if (m.key.fromMe) continue;
+      const meJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+      if (m.key.fromMe && m.key.remoteJid !== meJid) continue;
       if (!text) continue;
-      inbox.push({ from: m.key.remoteJid, name: m.pushName || m.key.remoteJid, text, ts: Date.now() });
+      inbox.push({ from: m.key.remoteJid, name: m.pushName || m.key.remoteJid, text, ts: Date.now(), fromMe: !!m.key.fromMe });
       if (inbox.length > 100) inbox.shift();
       dbg(`  -> stored (inbox size ${inbox.length})`);
     }

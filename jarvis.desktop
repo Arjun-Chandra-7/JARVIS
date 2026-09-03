@@ -1,0 +1,42 @@
+[Desktop Entry]
+Version=1.5
+Type=Application
+Name=JARVIS
+GenericName=AI Assistant
+Comment=Voice-first AI assistant with Iron Man HUD, memory and computer control
+Icon=jarvis
+Exec=jarvis --gui %u
+Terminal=false
+Categories=Utility;
+Keywords=jarvis;ai;assistant;voice;hud;chat;claude;gemini;ironman;
+StartupNotify=true
+StartupWMClass=jarvis-overlay
+Actions=GUI;Headless;WebHUD;Voice;Text;Status;Stop;
+
+[Desktop Action GUI]
+Name=Launch JARVIS (HUD Overlay)
+Exec=jarvis --gui
+
+[Desktop Action Headless]
+Name=Launch JARVIS (Headless Background)
+Exec=jarvis --headless
+
+[Desktop Action WebHUD]
+Name=Open WebGL HUD (Browser)
+Exec=jarvis --hud
+
+[Desktop Action Voice]
+Name=Voice Assistant Mode
+Exec=jarvis --voice
+
+[Desktop Action Text]
+Name=Terminal Chat Mode
+Exec=jarvis --text
+
+[Desktop Action Status]
+Name=Check System Status
+Exec=jarvis --status
+
+[Desktop Action Stop]
+Name=Stop All JARVIS Services
+Exec=jarvis --stop

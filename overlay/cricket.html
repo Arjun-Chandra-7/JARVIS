@@ -1,0 +1,180 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600&family=Orbitron:wght@600;800&display=swap" rel="stylesheet" />
+    <style>
+      body { margin: 0; padding: 0; overflow: hidden; font-family: 'Chakra Petch', sans-serif; }
+      body { -webkit-app-region: drag; }\n      .cricket-widget {
+        width: 340px;
+        height: 160px;
+        background: #0a0f19;
+        border: 1px solid rgba(55, 231, 255, 0.3);
+        border-radius: 12px;
+        display: flex;
+        flex-direction: column;
+        padding: 14px;
+        gap: 8px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        backdrop-filter: blur(10px);
+        box-sizing: border-box;
+        color: #fff;
+        -webkit-app-region: drag;
+      }
+      .cr-title {
+        font-family: 'Orbitron', sans-serif;
+        font-size: 14px;
+        font-weight: 800;
+        color: #37e7ff;
+        text-transform: uppercase;
+        border-bottom: 1px solid rgba(55, 231, 255, 0.3);
+        padding-bottom: 6px;
+        display: flex;
+        justify-content: space-between;
+      }
+      .cr-title span { font-size: 10px; color: #aaa; padding-top: 2px; }
+      
+      .cr-team-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 6px;
+      }
+      .cr-team-name { font-size: 15px; font-weight: 600; }
+      .cr-team-score { font-size: 17px; font-weight: 800; color: #fff; text-align: right; }
+      .cr-team-score.active { color: #37e7ff; }
+      
+      .cr-status { font-size: 11px; color: #aaa; margin-top: auto; font-style: italic; }
+      .cr-controls { position: absolute; right: 14px; top: 12px; display: flex; gap: 8px; -webkit-app-region: no-drag; }
+      .cr-btn { background: none; border: none; color: #aaa; cursor: pointer; font-size: 12px; }
+      .cr-btn:hover { color: #fff; }
+    </style>
+  </head>
+  <body>
+    <div id="cricket-widget" class="cricket-widget">
+      <div class="cr-title">LIVE SCORE <span id="cr-up" style="margin-right: 25px;">rss sync</span></div>
+      
+      <div class="cr-team-row">
+        <div id="t1-name" class="cr-team-name">Loading...</div>
+        <div id="t1-score" class="cr-team-score"></div>
+      </div>
+      <div class="cr-team-row">
+        <div id="t2-name" class="cr-team-name"></div>
+        <div id="t2-score" class="cr-team-score active"></div>
+      </div>
+      
+      <div id="cr-status" class="cr-status">Fetching data from cricinfo...</div>
+      
+      <div class="cr-controls">
+        <button class="cr-btn" onclick="nextMatch()" title="Next Match">▼</button>
+        <button class="cr-btn" onclick="hideCricket()" title="Close" style="font-size: 16px; margin-top: -2px;">×</button>
+      </div>
+    </div>
+    <script>
+      const https = require("https");
+      
+      let matches = [];
+      let currentIdx = 0;
+
+      function decodeEnt(s) {
+        return s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#039;/g, "'").trim();
+      }
+
+      function parseMatch(titleStr) {
+        // e.g. "Middlesex 92/1 & 249/10 * v Kent 350/10 & 254/10"
+        let parts = titleStr.split(" v ");
+        if (parts.length !== 2) return null;
+        
+        let t1 = parts[0].trim();
+        let t2 = parts[1].trim();
+        
+        // Extract team name and score
+        let t1match = t1.match(/^([a-zA-Z\s]+)(.*)/);
+        let t2match = t2.match(/^([a-zA-Z\s]+)(.*)/);
+        
+        let team1 = t1, score1 = "", team2 = t2, score2 = "";
+        
+        if (t1match) { team1 = t1match[1].trim(); score1 = t1match[2].trim(); }
+        if (t2match) { team2 = t2match[1].trim(); score2 = t2match[2].trim(); }
+        
+        return { team1, score1, team2, score2, raw: titleStr };
+      }
+
+      function renderMatch() {
+        if (matches.length === 0) return;
+        const m = parseMatch(matches[currentIdx]);
+        if (!m) {
+          document.getElementById("t1-name").innerText = matches[currentIdx];
+          document.getElementById("t2-name").innerText = "";
+          document.getElementById("t1-score").innerText = "";
+          document.getElementById("t2-score").innerText = "";
+          return;
+        }
+        
+        document.getElementById("t1-name").innerText = m.team1;
+        document.getElementById("t1-score").innerText = m.score1;
+        document.getElementById("t1-score").className = "cr-team-score" + (m.score1.includes("*") ? " active" : "");
+        
+        document.getElementById("t2-name").innerText = m.team2;
+        document.getElementById("t2-score").innerText = m.score2;
+        document.getElementById("t2-score").className = "cr-team-score" + (m.score2.includes("*") ? " active" : "");
+        
+        document.getElementById("cr-status").innerText = "Match " + (currentIdx + 1) + " of " + matches.length;
+      }
+
+      
+      window.hideCricket = function() {
+        require("electron").ipcRenderer.send("sports_toggle", "off");
+        // fallback if ipc fails
+        document.body.style.display = 'none';
+      }
+      window.nextMatch = function() {
+        if (matches.length > 0) {
+          currentIdx = (currentIdx + 1) % matches.length;
+          renderMatch();
+        }
+      }
+
+      function fetchCricket() {
+        https.get("https://static.cricinfo.com/rss/livescores.xml", (res) => {
+          let body = '';
+          res.on('data', d => body += d);
+          res.on('end', () => {
+            const items = body.split('<item>');
+            
+            let parsed = [];
+            const keepers = ["india", "australia", "england", "south africa", "new zealand", "pakistan", "sri lanka", "bangladesh", "west indies", "afghanistan", "zimbabwe", "ireland", "scotland", "netherlands", "ipl", "delhi premier league", "dpl"];
+            
+            for (let i = 1; i < items.length; i++) {
+              if (items[i].includes('<title>')) {
+                const title = decodeEnt(items[i].split('<title>')[1].split('</title>')[0]);
+                
+                // Filter matches
+                let keep = false;
+                const lower = title.toLowerCase();
+                for (let k of keepers) {
+                  if (lower.includes(k)) { keep = true; break; }
+                }
+                if (keep) {
+                  parsed.push(title);
+                }
+              }
+            }
+
+            if (parsed.length > 0) {
+              matches = parsed;
+              renderMatch();
+            } else {
+              document.getElementById("t1-name").innerText = "No live matches.";
+            }
+          });
+        }).on('error', () => {
+          document.getElementById("cr-status").innerText = "Network Error";
+        });
+      }
+      
+      setInterval(fetchCricket, 30000);
+      fetchCricket();
+    </script>
+  </body>
+</html>

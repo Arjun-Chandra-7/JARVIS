@@ -180,12 +180,21 @@ def weather() -> dict | None:
     return data
 
 
+def _ai_researcher_health() -> dict:
+    from .agent import ai_researcher
+    st = ai_researcher.get_agent_status()
+    cnt = st.get("reports_count", 0)
+    label = f"{cnt} report{'s' if cnt != 1 else ''}" if cnt else "monitoring"
+    return {"name": "AI Researcher", "label": label, "ok": st.get("running", True)}
+
+
 def health() -> dict:
     """Full subsystem snapshot for the HUD SYSTEMS panel + header."""
     systems = [
         _brain_health(),
         _vault_health(),
         _voice_health(),
+        _ai_researcher_health(),
         _google_health(),
         _phone_health(),
         _whatsapp_health(),

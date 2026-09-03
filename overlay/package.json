@@ -8,5 +8,8 @@
   },
   "devDependencies": {
     "electron": "^32.2.0"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^1.0.1"
   }
 }

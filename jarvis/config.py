@@ -9,13 +9,20 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 try:
     from dotenv import load_dotenv
 
-    load_dotenv(Path(__file__).resolve().parent.parent / ".env")  # always the repo's .env, any CWD
+    if getattr(sys, "frozen", False):
+        bundle_dir = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+        load_dotenv(bundle_dir / ".env")
+        load_dotenv(Path.cwd() / ".env")
+        load_dotenv(Path.home() / ".config" / "jarvis" / ".env")
+    else:
+        load_dotenv(Path(__file__).resolve().parent.parent / ".env")  # always the repo's .env, any CWD
 except ImportError:  # dotenv is optional; env vars still work without it
     pass
 
@@ -47,7 +54,7 @@ class Config:
     # --- Groq (OpenAI-compatible) ---
     groq_api_key: str = field(default_factory=lambda: os.environ.get("GROQ_API_KEY", ""))
     groq_model: str = field(
-        default_factory=lambda: os.environ.get("JARVIS_GROQ_MODEL", "llama-3.1-8b-instant")
+        default_factory=lambda: os.environ.get("JARVIS_GROQ_MODEL", "qwen/qwen3.6-27b")
     )
     # Set true only if the chosen Groq model accepts images (e.g. a llama-4 vision model). The
     # default text model can't see screenshots, so we skip image injection to avoid API errors.
@@ -140,6 +147,11 @@ class Config:
 
     # --- phone (KDE Connect) ---
     kde_device_id: str = field(default_factory=lambda: os.environ.get("JARVIS_KDE_DEVICE_ID", ""))
+
+    # --- automation (n8n workflow platform) ---
+    n8n_webhook_url: str = field(
+        default_factory=lambda: os.environ.get("N8N_WEBHOOK_URL", "http://localhost:5678/webhook")
+    )
 
     def brief_hm(self) -> tuple[int, int]:
         try:

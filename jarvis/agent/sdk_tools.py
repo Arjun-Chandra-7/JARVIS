@@ -57,6 +57,25 @@ def build_tool_server(config: Config, job_runner: JobRunner):
         return _text(job_runner.status_report())
 
     @tool(
+        "code_with_antigravity",
+        "Refine the user's coding prompt and delegate the task to Antigravity (agy) to write code and verify tests in the background.",
+        {"task": str},
+    )
+    async def code_with_antigravity(args):
+        from pathlib import Path
+        from ..integrations import coding
+        folder = coding.active_folder()
+        if not folder:
+            return _text("No VS Code project is open to work on.")
+        task = args.get("task", "")
+        job_id = job_runner.dispatch_antigravity(task, folder=folder, open_gui=True)
+        proj = Path(folder).name
+        return _text(
+            f"Dispatched Antigravity task {job_id} on {proj}. The IDE is open and agy is working "
+            "autonomously. I will announce when finished."
+        )
+
+    @tool(
         "capture_screen",
         "Take a screenshot of the user's screen, then use your Read tool on the returned path to "
         "see what they're looking at.",

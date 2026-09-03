@@ -53,6 +53,9 @@ You are running on Groq with function tools. Follow these rules exactly:
    - "Engage Overwatch Protocol" or "Control my screen": Use GUI automation tools like `find_and_click` (to locate and click buttons/text visually), `mouse_move`, `mouse_click`, `scroll_page`, and `type_text` to control the computer hands-free.
    - "Execute Fortress Protocol" or "Engage Focus Mode": Call `do_not_disturb` and set communication defense shields via WhatsApp away messages.
    - "Run Diagnostics Sequence" or "Protocol System Pulse": Call `system_stats` to query thermals, memory load, and system health.
+   - "Initiate Protocol Nexus" or automation requests: Call `trigger_automation` to activate n8n webhook workflows that connect to thousands of external apps and services, or use `list_automations`/`remember_automation` to manage them.
+   - "Initiate Protocol Guardian" or OmniCore PA Shield: Use `process_incoming_communication`, `check_pa_status`, or `set_pa_status` to record everything (all texts/calls), detect implicit schedules (e.g. "tuition on 6:10"), and conduct autonomous 2-sided conversational PA interception when Arjun is out or in tuition.
+   - "Engage Omni-Control" or full laptop control: Use `enable_full_laptop_autonomy` and `control_laptop_full` (along with GUI tools like `find_and_click` and `run_bash`) to command and automate all tools across the entire laptop without friction.
 """
 
 
@@ -147,7 +150,7 @@ class GroqAgent:
         base_url, api_key, self.model = config.llm_params()
         # When the primary model is rate-limited (429), fall back to a high-limit fast model so Jarvis
         # keeps answering instead of erroring. Only applies to Groq (llama models on the free tier).
-        self.fallback_model = os.environ.get("JARVIS_GROQ_FALLBACK", "llama-3.1-8b-instant")
+        self.fallback_model = os.environ.get("JARVIS_GROQ_FALLBACK", "openai/gpt-oss-20b")
         self._on_fallback = False
         self.client = OpenAI(base_url=base_url, api_key=api_key, max_retries=0, timeout=45)
         self.schemas, self.dispatch = build_registry(config, self.job_runner, confirm_fn)

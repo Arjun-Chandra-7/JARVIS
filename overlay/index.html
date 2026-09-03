@@ -27,6 +27,21 @@
         </div>
       </section>
 
+      <!-- Spotify Widget -->
+      <div id="spotify-widget" class="spotify-widget">
+        <img id="sp-art" src="" alt="Album Art">
+        <div class="sp-info">
+          <div id="sp-title" class="sp-title"></div>
+          <div id="sp-artist" class="sp-artist"></div>
+          <div id="sp-lyric" class="sp-lyric"></div>
+          <div class="sp-controls">
+            <button onclick="spCmd('previous')">⏮</button>
+            <button onclick="spCmd('play-pause')" id="sp-play">⏸</button>
+            <button onclick="spCmd('next')">⏭</button>
+          </div>
+        </div>
+      </div>
+
       <!-- console bar (always visible) -->
       <section class="bar">
         <div class="eye" title="optics">
@@ -60,6 +75,5 @@
     <div id="toast" class="toast"></div>
     <script src="renderer.js"></script>
     <script type="module" src="gestures.js"></script>
-    <script type="module" src="presence.js"></script>
   </body>
 </html>

@@ -5,3 +5,10 @@ __pycache__/
 *.log
 .jarvis/
 .DS_Store
+node_modules/
+*/node_modules/
+build/
+dist/
+.git_backup/
+.claude/
+.ruff_cache/

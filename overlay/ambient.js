@@ -93,45 +93,7 @@ whatsapp(); setInterval(whatsapp, 6000);
 
 // ---------- PROXIMITY radar (real nearby devices) ----------
 function hashAngle(str) { let h = 0; for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) & 0xffff; return (h % 360) * Math.PI / 180; }
-function place(el, angle, radiusPct) {
-  const R = 50, r = Math.min(46, radiusPct * 0.46);
-  el.style.left = (R + Math.cos(angle) * r) + "%";
-  el.style.top = (R + Math.sin(angle) * r) + "%";
-}
-async function nearby() {
-  try {
-    const n = await (await fetch(API + "/nearby")).json();
-    if (n.error) return;
-    const c = n.counts || { wifi: 0, lan: 0, bt: 0 };
-    $("lgwifi").textContent = c.wifi; $("lglan").textContent = c.lan; $("lgbt").textContent = c.bt;
-    $("nearcount").textContent = (c.wifi + c.lan + c.bt) + " seen";
-    const frag = [];
-    // WiFi: radius from signal (strong = near centre); outer band
-    (n.wifi || []).forEach((w) => {
-      const rad = 100 - Math.min(95, w.signal);           // strong signal → small radius
-      frag.push(blip("wifi", hashAngle("w" + w.ssid), 40 + rad * 0.55, w.current ? w.ssid : ""));
-    });
-    // LAN devices: mid ring
-    (n.lan || []).forEach((d, i) => {
-      frag.push(blip("lan", hashAngle("l" + (d.mac || d.ip)), d.router ? 12 : 55, d.router ? "router" : ""));
-    });
-    // Bluetooth: inner if connected / by RSSI, phones bigger + labelled
-    (n.bt || []).forEach((b) => {
-      const rad = b.rssi != null ? Math.min(95, Math.max(10, 100 + b.rssi)) : (b.connected ? 20 : 70);
-      frag.push(blip("bt" + (b.icon === "phone" ? " phone" : ""), hashAngle("b" + b.mac), rad, b.connected || b.icon === "phone" ? b.name : ""));
-    });
-    $("blips").innerHTML = frag.join("");
-    document.querySelectorAll("#blips .blip").forEach((el) => {
-      place(el, parseFloat(el.dataset.a), parseFloat(el.dataset.r));
-    });
-    if (people) setPeople(people);   // re-apply person blips after the rebuild
-  } catch (e) {}
-}
-function blip(cls, angle, radiusPct, label) {
-  const tag = label ? `<span class="tag">${esc(label)}</span>` : "";
-  return `<div class="blip ${cls}" data-a="${angle}" data-r="${radiusPct}">${tag}</div>`;
-}
-nearby(); setInterval(nearby, 12000);
+
 
 // ---------- state reactions from the live event stream ----------
 function state(s) {
@@ -148,23 +110,124 @@ try {
     else if (d.kind === "reply") { state("speaking"); setTimeout(() => state(null), Math.min(6000, 1600 + (d.text || "").length * 28)); }
     else if (d.kind === "sleep" || d.kind === "ready") state(null);
     else if (d.kind === "phone") whatsapp();   // refresh feed on new phone/WA event
-    else if (d.kind === "presence") setPeople(parseInt(d.text, 10) || 0);
+    else if (d.kind === "presence_data") updateHumanRadar(d.text);
+    else if (d.kind === "presence_status") updateRadarStatus(d.text);
   };
 } catch (e) {}
 
-// ---------- people nearby (from webcam face detection in the interactive window) ----------
-let people = 0;
-function setPeople(n) {
-  people = n;
-  document.querySelectorAll("#blips .blip.person").forEach((el) => el.remove());
-  const host = $("blips");
-  if (!host) return;
-  for (let i = 0; i < Math.min(n, 6); i++) {
-    const a = (i / Math.max(1, n)) * Math.PI * 2;
-    const el = document.createElement("div");
-    el.className = "blip person";
-    el.innerHTML = i === 0 ? '<span class="tag">' + n + ' nearby</span>' : "";
-    host.appendChild(el);
-    place(el, a, 24);
+// ---------- ACOUSTIC ACTIVE SONAR & HUMAN PROXIMITY RADAR ----------
+// Transmits inaudible ultrasound chirps (18.5kHz-20kHz) from speakers and captures
+// acoustic reflections / Doppler shifts off human bodies via microphone in real-time.
+
+function stringToHue(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = (hash * 31 + str.charCodeAt(i)) & 0xffff;
+  return hash;
+}
+
+async function refreshRadar() {
+  try {
+    // 1. Fetch physical acoustic sonar echoes (real human bodies in room)
+    const sonarData = await (await fetch(API + "/sonar")).json().catch(() => null);
+    const targets = [];
+
+    if (sonarData && sonarData.humans && sonarData.humans.length > 0) {
+      sonarData.humans.forEach((h, idx) => {
+        targets.push({
+          id: h.id || `body_${idx}`,
+          name: `HUMAN ${idx + 1}`,
+          type: "PHYSICAL BODY",
+          dist: h.distance,
+          angle: h.angle_deg || 0.0,
+          x_m: h.x_m || 0.0,
+          y_m: h.y_m || h.distance,
+          source: "sonar",
+          conf: h.confidence || 0.8
+        });
+      });
+    }
+
+    targets.sort((a, b) => a.dist - b.dist);
+    const count = targets.length;
+
+    if (count === 0) {
+      $("nearcount").textContent = "SCANNING";
+    } else if (count === 1) {
+      $("nearcount").textContent = "1 PERSON";
+    } else {
+      $("nearcount").textContent = `${count} PEOPLE`;
+    }
+
+    const host = $("hblips");
+    if (!host) return;
+
+    // Track blip elements by persistent Target ID
+    if (!window._blipMap) window._blipMap = new Map();
+    const blipMap = window._blipMap;
+    const activeIds = new Set(targets.map(t => t.id));
+
+    // Remove old tracks
+    for (const [id, el] of blipMap.entries()) {
+      if (!activeIds.has(id)) {
+        el.remove();
+        blipMap.delete(id);
+      }
+    }
+
+    for (let i = 0; i < targets.length; i++) {
+      const t = targets[i];
+      let el = blipMap.get(t.id);
+      if (!el) {
+        el = document.createElement("div");
+        el.className = "hblip";
+        el.innerHTML = '<span class="htag"></span><span class="hdist"></span>';
+        host.appendChild(el);
+        blipMap.set(t.id, el);
+      }
+
+      // Exact Azimuth angle mapping to X axis (-45° left to +45° right -> 10% to 90% width)
+      const clampedAngle = Math.max(-42, Math.min(42, t.angle));
+      const xPct = 50 + (clampedAngle / 42) * 38;
+
+      // Anchored directly on the central horizontal Y-axis (50%)
+      const yPct = 50;
+
+      el.style.left = xPct.toFixed(1) + "%";
+      el.style.top = yPct + "%";
+
+      // Glowing Cyan/Teal HUD Target marker with proximity glow
+      el.style.background = "var(--accent)";
+      el.style.borderColor = "var(--accent2)";
+      el.style.boxShadow = "0 0 14px var(--accent), 0 0 28px var(--accent)";
+
+      // Size scales with physical distance: closer = larger (18px at 0.5m -> 9px at 3.5m)
+      const size = Math.max(9, Math.min(18, 20 - (t.dist / 3.5) * 11));
+      el.style.width = size + "px";
+      el.style.height = size + "px";
+
+      const tagEl = el.querySelector(".htag");
+      if (tagEl) {
+        if (count === 1) {
+          tagEl.textContent = t.dist < 1.8 ? "YOU" : "PERSON";
+        } else {
+          tagEl.textContent = `PERSON ${i + 1}`;
+        }
+      }
+
+      const distEl = el.querySelector(".hdist");
+      if (distEl) {
+        const angleStr = Math.abs(t.angle) >= 2 ? ` (${t.angle > 0 ? '+' : ''}${Math.round(t.angle)}°)` : "";
+        distEl.textContent = `${t.dist}m${angleStr}`;
+      }
+    }
+  } catch (e) {
+    $("nearcount").textContent = "SONAR ACTIVE";
   }
 }
+
+// 400ms polling for smooth continuous locked-target tracking
+refreshRadar();
+setInterval(refreshRadar, 400);
+
+
+

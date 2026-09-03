@@ -543,10 +543,11 @@ class VoiceSession:
         self._events: asyncio.Queue = asyncio.Queue()
         await self._setup_phone()
 
-        from ..jobs import reminders, timers  # speak timer/reminder alerts aloud in voice mode
+        from ..jobs import notify, reminders, timers  # speak timer/reminder alerts aloud in voice mode
 
         timers.set_announcer(self._speak)
         reminders.set_announcer(self._speak)
+        notify.set_announcer(self._speak)
         asyncio.create_task(reminders.run_checker(self.config.vault_path))
         asyncio.create_task(self._watch_screen())  # proactive alerts during live screen-share
         asyncio.create_task(self._watch_afk(agent))  # welcome-back brief after a long idle gap
@@ -583,6 +584,136 @@ class VoiceSession:
                     continue
                 while transcript:
                     self.on_event("heard", transcript)
+                    t_lower = transcript.lower().strip()
+
+                    # Executive Wake Briefing: "wake up jarvis", "wake up", "clap", "status report", "system pulse", "subsystems"
+                    if any(phrase in t_lower for phrase in ("wake up", "wake up jarvis", "clapped", "clap", "status report", "subsystems", "system report", "pulse")):
+                        from ..integrations import system_stats
+                        from ..agent import ai_researcher
+                        from .. import hud_state
+
+                        # 1. Hardware stats
+                        st = system_stats.snapshot()
+                        cpu_p = round(st.get("cpu_percent", 0))
+                        mem_total = st.get("mem", {}).get("total_gb", 16)
+                        mem_used = st.get("mem", {}).get("used_gb", 8)
+                        mem_free = round(mem_total - mem_used, 1)
+                        gpu_info = f", GPU load is at {st['gpu']['util']} percent" if st.get("gpu") else ""
+                        
+                        # 2. Detailed subsystems status (which are online and which are offline)
+                        h = hud_state.health()
+                        systems = h.get("systems", [])
+                        online_names = [s["name"] for s in systems if s.get("ok")]
+                        offline_names = [s["name"] for s in systems if not s.get("ok")]
+
+                        if offline_names:
+                            subsys_msg = f"Subsystems: {len(online_names)} online including {', '.join(online_names[:4])}. Notice: {', '.join(offline_names)} {'is' if len(offline_names) == 1 else 'are'} currently offline."
+                        else:
+                            subsys_msg = f"All {len(online_names)} subsystems are online and fully operational: {', '.join(online_names)}."
+
+                        # 3. AI Research Agent status & reports
+                        ai_st = ai_researcher.get_agent_status()
+                        rep_cnt = ai_st.get("reports_count", 0)
+                        last_rep = ai_st.get("last_report")
+                        if rep_cnt > 0:
+                            ai_msg = f"The 24/7 AI Research Agent is active and has submitted {rep_cnt} breakthrough report{'s' if rep_cnt != 1 else ''} to your Documents folder"
+                            if last_rep:
+                                ai_msg += f", with the latest on {last_rep}."
+                            else:
+                                ai_msg += "."
+                        else:
+                            ai_msg = "The 24/7 AI Research Agent is running in the background, continuously monitoring arXiv and Hugging Face."
+
+                        # 4. Message queues check
+                        wa_msg = ""
+                        try:
+                            from ..integrations import whatsapp
+                            unread = [m for m in whatsapp.inbox() if not m.get("read", True)]
+                            if unread:
+                                wa_msg = f" You have {len(unread)} unread message{'s' if len(unread) != 1 else ''}."
+                        except Exception:
+                            pass
+
+                        reply = (
+                            f"Online and ready, {self.config.user_name}. "
+                            f"Computer stats: CPU is at {cpu_p} percent with {mem_free} gigabytes of memory free{gpu_info}. "
+                            f"{subsys_msg} "
+                            f"{ai_msg}"
+                            f"{wa_msg}"
+                        )
+                        
+                        self.on_event("reply", reply)
+                        self._speak(reply)
+                        break
+
+                    # Instant Phone Command Intercept: "open my phone", "open phone", "mirror phone", "show my phone"
+                    if any(phrase in t_lower for phrase in ("open my phone", "open phone", "mirror my phone", "mirror phone", "show my phone", "show phone", "screen my phone")):
+                        from ..integrations import apps
+                        ok, msg = apps.phone_mirror()
+                        reply = "Opening your phone on screen now, sir." if ok else msg
+                        self.on_event("reply", reply)
+                        self._speak(reply)
+                        break
+
+                    # Instant Ring Phone Intercept: "ring my phone", "find my phone", "where is my phone"
+                    if any(phrase in t_lower for phrase in ("ring my phone", "find my phone", "where is my phone", "call my phone")):
+                        from ..integrations import apps
+                        ok = apps.phone_ring(self.config.kde_device_id or None)
+                        reply = "Ringing your phone now, sir." if ok else "Couldn't reach your phone over KDE Connect."
+                        self.on_event("reply", reply)
+                        self._speak(reply)
+                        break
+
+                    # Instant Coding / Antigravity Voice Intercept
+                    from ..integrations import coding
+                    v_ctx = coding.active_context()
+                    is_code_explicit = any(
+                        phrase in t_lower
+                        for phrase in (
+                            "code this", "code for me", "code ", "in vs code", "in vscode",
+                            "on vs code", "on vscode", "antigravity", "agy", "fix the code",
+                            "refactor the code", "open antigravity", "launch antigravity",
+                        )
+                    )
+                    is_vs_active = v_ctx.get("is_vscode_active", False)
+                    has_coding_intent = any(
+                        t_lower.startswith(verb) or f" {verb}" in t_lower
+                        for verb in (
+                            "fix ", "implement ", "refactor ", "create ", "add ", "debug ",
+                            "write a test", "change the code", "build "
+                        )
+                    )
+
+                    if is_code_explicit or (is_vs_active and has_coding_intent):
+                        target_folder = v_ctx.get("folder")
+                        target_file = v_ctx.get("file")
+                        target_path = v_ctx.get("file_path")
+                        proj_name = v_ctx.get("project_name") or "your project"
+                        target_label = target_file or proj_name
+                        if not target_folder:
+                            reply = "I couldn't detect an active project or file in VS Code for agy, sir."
+                        else:
+                            runner = getattr(agent, "job_runner", None)
+                            if runner is None:
+                                if not hasattr(self, "_job_runner"):
+                                    from ..jobs.runner import JobRunner
+                                    self._job_runner = JobRunner(self.config)
+                                runner = self._job_runner
+
+                            job_id = runner.dispatch_antigravity(
+                                raw_prompt=transcript,
+                                folder=target_folder,
+                                active_file=target_file,
+                                active_file_path=target_path,
+                            )
+                            reply = (
+                                f"On it, sir. Refining prompt and running agy on {target_label}. "
+                                "I'll tell you when it's done."
+                            )
+                        self.on_event("reply", reply)
+                        self._speak(reply)
+                        break
+
                     start = time.monotonic()
                     try:
                         reply = await agent.send(self._augment(transcript))

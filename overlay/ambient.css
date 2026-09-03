@@ -84,28 +84,176 @@ html, body { width: 100vw; height: 100vh; overflow: hidden; background: transpar
 .tbar i.hot { background: linear-gradient(90deg, #ffb15a, var(--bad)); box-shadow: 0 0 10px var(--bad); }
 .trow b { font-family: "Orbitron"; font-size: 12px; width: 58px; text-align: right; color: var(--accent2); }
 
-/* PROXIMITY radar — real nearby devices */
-.radar { position: relative; width: 218px; height: 218px; margin: 6px auto 2px; }
-.radar > span { position: absolute; border-radius: 50%; border: 1px solid rgba(120,220,240,.22); }
-.radar > span:nth-child(1) { inset: 0; } .radar > span:nth-child(2) { inset: 17%; } .radar > span:nth-child(3) { inset: 34%; }
-.radar .sweep { position: absolute; inset: 0; border-radius: 50%;
-  background: conic-gradient(from 0deg, transparent 0 68%, color-mix(in srgb, var(--accent) 55%, transparent) 90%, transparent);
-  -webkit-mask: radial-gradient(circle, transparent 3%, #000 4%); animation: spin 3.4s linear infinite; transition: background .6s; }
-.radar .rc { position: absolute; inset: 48%; border-radius: 50%; background: var(--accent); box-shadow: 0 0 18px var(--accent); animation: pulse 2.4s ease-in-out infinite; }
+/* ===== MAP-STYLE HUMAN RADAR (horizontal proximity display) ===== */
+.hmap {
+  position: relative;
+  width: 220px;
+  height: 140px;
+  margin: 6px auto 2px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: rgba(5, 12, 18, 0.6);
+  border: 1px solid rgba(55, 231, 255, 0.12);
+}
+
+/* grid lines — 5 vertical range lines across the map */
+.hgrid {
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent,
+      transparent calc(20% - 0.5px),
+      rgba(55, 231, 255, 0.08) calc(20% - 0.5px),
+      rgba(55, 231, 255, 0.08) calc(20% + 0.5px),
+      transparent calc(20% + 0.5px)
+    ),
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent calc(33.3% - 0.5px),
+      rgba(55, 231, 255, 0.06) calc(33.3% - 0.5px),
+      rgba(55, 231, 255, 0.06) calc(33.3% + 0.5px),
+      transparent calc(33.3% + 0.5px)
+    );
+}
+
+/* range labels */
+.hlabel {
+  position: absolute;
+  font-family: "Orbitron";
+  font-size: 7px;
+  letter-spacing: 2px;
+  color: var(--dim);
+  opacity: 0.5;
+}
+.hl-near { bottom: 3px; left: 50%; transform: translateX(-50%); }
+.hl-mid  { bottom: 3px; left: 18%; }
+.hl-far  { bottom: 3px; left: 4%; }
+
+/* centre horizontal axis — the "ground line" everyone sits on */
+.haxis {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 2%, rgba(55, 231, 255, 0.25) 15%, rgba(55, 231, 255, 0.3) 50%, rgba(55, 231, 255, 0.25) 85%, transparent 98%);
+  transform: translateY(-0.5px);
+}
+
+/* YOU marker at center */
+.hyou {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  z-index: 5;
+}
+.hyou-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 14px var(--accent), 0 0 30px color-mix(in srgb, var(--accent) 40%, transparent);
+  border: 2px solid var(--accent2);
+  animation: pulse 2.4s ease-in-out infinite;
+}
 @keyframes pulse { 0%,100% { opacity: .6; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.15); } }
-.blips { position: absolute; inset: 0; }
-.blip { position: absolute; width: 9px; height: 9px; border-radius: 50%; transform: translate(-50%,-50%);
-  animation: ping 2.6s ease-out infinite; }
-.blip.wifi { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
-.blip.lan  { background: #8f6dff; box-shadow: 0 0 10px #8f6dff; }
-.blip.bt   { background: var(--good); box-shadow: 0 0 10px var(--good); }
-.blip.phone { width: 12px; height: 12px; }
-.blip.person { width: 13px; height: 13px; background: var(--accent2); box-shadow: 0 0 12px var(--accent2); border: 2px solid var(--accent); }
-.blip .tag { position: absolute; left: 13px; top: -4px; font-size: 9px; letter-spacing: .5px; white-space: nowrap;
-  color: var(--accent2); opacity: .8; text-shadow: 0 0 6px #000; }
-@keyframes ping { 0% { box-shadow: 0 0 0 0 currentColor; } 70%,100% { box-shadow: 0 0 0 10px transparent; } }
+.hyou-label {
+  font-family: "Orbitron";
+  font-size: 7px;
+  letter-spacing: 3px;
+  color: var(--accent);
+  margin-top: 3px;
+  text-shadow: 0 0 8px var(--accent);
+}
+
+/* blip container */
+.hblips {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+}
+
+/* each detected person blip */
+.hblip {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--accent2);
+  box-shadow: 0 0 10px var(--accent), 0 0 20px color-mix(in srgb, var(--accent) 30%, transparent);
+  border: 1.5px solid var(--accent);
+  transition: left 0.45s cubic-bezier(0.25, 1, 0.5, 1), top 0.45s cubic-bezier(0.25, 1, 0.5, 1), width 0.3s ease, height 0.3s ease, opacity 0.4s ease;
+}
+/* pulsing ring around each blip */
+.hblip::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+  opacity: 0.6;
+  animation: hblip-ping 2s ease-out infinite;
+}
+@keyframes hblip-ping {
+  0%   { transform: scale(0.6); opacity: 0.7; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+/* person label next to each blip */
+.hblip .htag {
+  position: absolute;
+  top: -16px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: "Orbitron";
+  font-size: 7px;
+  letter-spacing: 1px;
+  white-space: nowrap;
+  color: var(--accent2);
+  opacity: 0.85;
+  text-shadow: 0 0 6px #000;
+}
+/* distance sub-label */
+.hblip .hdist {
+  position: absolute;
+  bottom: -13px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 7px;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  color: var(--dim);
+  opacity: 0.7;
+}
+
+/* horizontal sweep animation (like a real sensor scan) */
+.hsweep {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 25%, transparent) 60%, transparent);
+  animation: hsweep-lr 3.5s linear infinite;
+  z-index: 2;
+  pointer-events: none;
+}
+@keyframes hsweep-lr {
+  0%   { left: -40px; }
+  100% { left: calc(100% + 40px); }
+}
+
+/* legend tweaks */
 .legend { display: flex; justify-content: space-around; margin-top: 8px; }
 .legend em { font-style: normal; font-size: 11px; letter-spacing: 1px; color: var(--dim); display: flex; align-items: center; gap: 5px; }
-.legend b { color: var(--accent2); }
+.legend b { color: var(--accent2); font-size: 10px; letter-spacing: 1px; }
 .lg { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-.lg.wifi { background: var(--accent); } .lg.lan { background: #8f6dff; } .lg.bt { background: var(--good); }
+.lg.wifi { background: var(--accent); }
+

@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# =============================================================================
+# JARVIS — Master Application Launcher
+# =============================================================================
+# Works as:
+# 1. Native Linux desktop application launcher (via .desktop or double-click)
+# 2. Universal CLI command: jarvis [--gui|--headless|--hud|--voice|--text|--status|--stop]
+# =============================================================================
+set -uo pipefail
+
+# Resolve canonical repository directory through any symlinks
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+    DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+BIN_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+REPO="$(cd -P "$BIN_DIR/.." && pwd)"
+
+# Drop snap/conda library pollution so desktop tools, audio, and graphics don't crash
+unset LD_LIBRARY_PATH LD_PRELOAD || true
+
+# Guarantee desktop session variables
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export DISPLAY="${DISPLAY:-:0}"
+export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+
+if [ -n "${WAYLAND_DISPLAY:-}" ] || [ -n "${DISPLAY:-}" ]; then
+    systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE DBUS_SESSION_BUS_ADDRESS XAUTHORITY XDG_RUNTIME_DIR 2>/dev/null || true
+fi
+
+PY="$REPO/.venv/bin/python"
+
+show_help() {
+    cat <<EOF
+JARVIS — Voice-first AI Assistant with Iron Man HUD & Memory
+
+Usage:
+  jarvis [command|options]
+
+Quick Start:
+  jarvis                  Launch full JARVIS with GUI HUD overlay (default)
+  jarvis --gui            Launch with floating Electron HUD overlay
+  jarvis --headless       Launch in background (no overlay window)
+  jarvis --hud            Open WebGL HUD console in dedicated browser window
+
+Control & Diagnostics:
+  jarvis --status         Check running status of all subsystems
+  jarvis --stop           Stop all running JARVIS processes
+  jarvis --check          Run system preflight checks (audio, keys, dependencies)
+  jarvis --selftest       Run audio round-trip test (TTS -> mic -> STT)
+
+Direct Modes:
+  jarvis --voice          Start voice assistant loop directly
+  jarvis --text           Start interactive terminal chat session
+  jarvis --task "..."     Execute a background task and wait for result
+  jarvis --web            Run WebGL backend server on :8770
+
+Installation & Packaging:
+  jarvis --install        Install as native Linux desktop application & add to PATH
+  jarvis --build-exe      Build standalone binary executable with PyInstaller
+
+EOF
+}
+
+# If no arguments provided, default to starting full application with GUI overlay
+if [ $# -eq 0 ]; then
+    exec "$REPO/scripts/start.sh" --gui
+fi
+
+case "$1" in
+    -h|--help|help)
+        show_help
+        exit 0
+        ;;
+    --gui|--overlay|gui)
+        shift || true
+        exec "$REPO/scripts/start.sh" --gui "$@"
+        ;;
+    --headless|--daemon|headless)
+        shift || true
+        exec "$REPO/scripts/start.sh" --headless "$@"
+        ;;
+    --hud|--web-hud|hud)
+        shift || true
+        exec "$REPO/scripts/hud.sh" "$@"
+        ;;
+    --status|status)
+        shift || true
+        exec "$REPO/scripts/start.sh" --status "$@"
+        ;;
+    --stop|stop)
+        shift || true
+        exec "$REPO/scripts/start.sh" --stop "$@"
+        ;;
+    --install|--install-desktop|install)
+        shift || true
+        exec "$REPO/scripts/install-app.sh" "$@"
+        ;;
+    --build|--build-exe|--build-bin|build)
+        shift || true
+        exec "$REPO/scripts/build-executable.sh" "$@"
+        ;;
+    --voice|voice)
+        [ -x "$PY" ] || { echo "❌ No virtual environment found at $PY"; exit 1; }
+        cd "$REPO"
+        shift || true
+        exec "$PY" -m jarvis --voice "$@"
+        ;;
+    --text|text)
+        [ -x "$PY" ] || { echo "❌ No virtual environment found at $PY"; exit 1; }
+        cd "$REPO"
+        shift || true
+        exec "$PY" -m jarvis --text "$@"
+        ;;
+    *)
+        # Forward any standard jarvis backend flags (e.g. --check, --selftest, --task, etc.)
+        [ -x "$PY" ] || { echo "❌ No virtual environment found at $PY"; exit 1; }
+        cd "$REPO"
+        exec "$PY" -m jarvis "$@"
+        ;;
+esac

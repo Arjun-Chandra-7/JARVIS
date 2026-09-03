@@ -42,7 +42,7 @@
       </section>
     </aside>
 
-    <!-- RIGHT: diagnostics + PROXIMITY radar (real nearby devices) -->
+    <!-- RIGHT: diagnostics + HUMAN RADAR (real map-style proximity display) -->
     <aside class="right-col">
       <section class="card">
         <div class="clabel">DIAGNOSTICS</div>
@@ -52,16 +52,24 @@
         <div class="trow"><label>NET</label><div class="tbar"><i id="netbar"></i></div><b id="net">--</b></div>
       </section>
       <section class="card">
-        <div class="clabel">PROXIMITY SCAN <b id="nearcount">—</b></div>
-        <div class="radar" id="radar">
-          <span></span><span></span><span></span>
-          <div class="sweep"></div><div class="rc"></div>
-          <div class="blips" id="blips"></div>
+        <div class="clabel">HUMAN RADAR <b id="nearcount">—</b></div>
+        <div class="hmap" id="hmap">
+          <!-- range grid lines -->
+          <div class="hgrid"></div>
+          <!-- range labels -->
+          <span class="hlabel hl-far">FAR</span>
+          <span class="hlabel hl-mid">MID</span>
+          <span class="hlabel hl-near">NEAR</span>
+          <!-- centre Y axis line -->
+          <div class="haxis"></div>
+          <!-- detected blips go here -->
+          <div class="hblips" id="hblips"></div>
+          <!-- scan sweep line (left-to-right) -->
+          <div class="hsweep"></div>
         </div>
         <div class="legend">
-          <em><i class="lg wifi"></i>WiFi <b id="lgwifi">0</b></em>
-          <em><i class="lg lan"></i>LAN <b id="lglan">0</b></em>
-          <em><i class="lg bt"></i>BT <b id="lgbt">0</b></em>
+          <em><i class="lg wifi" style="background:var(--accent);"></i>PHYSICAL BODY (ACOUSTIC)</em>
+          <em><b id="hradar-range">~4.5 m range</b></em>
         </div>
       </section>
     </aside>

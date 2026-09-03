@@ -17,6 +17,8 @@ from .permissions import is_destructive
 
 
 def _obj(props: dict, required: list[str] | None = None) -> dict:
+    if not props:
+        props = {"_dummy": {"type": "string", "description": "Ignore this field, leave empty."}}
     return {"type": "object", "properties": props, "required": required or []}
 
 
@@ -226,19 +228,40 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
 
     @tool(
         "code_with_antigravity",
-        "Hand the VS Code project to Antigravity (agentic coder) to do a task. Describe the task in "
-        "'task'. Use after understanding what the user wants.",
-        {"task": {"type": "string"}}, ["task"],
+        "Refine the user's coding prompt and delegate the task to the Antigravity CLI (agy) to write code and verify tests. Executes in the background on the active VS Code file/workspace, announcing when finished.",
+        {"task": {"type": "string"}, "folder": {"type": "string"}}, ["task"],
     )
     async def code_with_antigravity(a):
+        from pathlib import Path
         from ..integrations import coding
-        folder = coding.active_folder()
+        ctx = coding.active_context()
+        folder = a.get("folder") or ctx.get("folder")
         if not folder:
-            return "No VS Code project is open to work on."
-        if coding.open_antigravity(folder):
-            return (f"Opened {folder} in Antigravity for: {a.get('task','')}. It's an agentic IDE — "
-                    "approve its prompts and it'll make the changes.")
-        return "Couldn't launch Antigravity."
+            return "No VS Code or project folder is open to work on."
+        task = a.get("task", "")
+        target_label = ctx.get("file") or ctx.get("project_name") or Path(folder).name
+        if job_runner:
+            job_id = job_runner.dispatch_antigravity(
+                task,
+                folder=folder,
+                active_file=ctx.get("file"),
+                active_file_path=ctx.get("file_path"),
+            )
+            return (
+                f"I have refined your prompt and dispatched agy CLI ({job_id}) on {target_label}. "
+                "It is running autonomously in the background and I will announce when finished."
+            )
+        return "No task runner available."
+
+    @tool(
+        "check_coding_tasks",
+        "Check status and results of background coding tasks running in Antigravity.",
+        {},
+    )
+    async def check_coding_tasks(a):
+        if not job_runner:
+            return "No task runner available."
+        return job_runner.status_report()
 
     @tool("catch_up", "Sweep unread email + recent WhatsApp + today's calendar.", {})
     async def catch_up(a):
@@ -488,7 +511,188 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         from ..integrations.google import tasks
         return tasks.complete_task(config, a.get("title", "")) or "Google not connected."
 
-    schemas = [s for s, _ in reg.values()]
+    # ---------------- n8n Automation Engine (thousands of app connectors) ----------------
+    @tool("trigger_automation", "Trigger an n8n automation workflow via webhook alias or URL. Pass extra JSON fields in 'payload_json'.",
+          {"workflow": {"type": "string"}, "payload_json": {"type": "string"}}, ["workflow"])
+    async def trigger_automation(a):
+        from ..integrations import n8n
+        import json
+        data = {}
+        if a.get("payload_json"):
+            try:
+                data = json.loads(a["payload_json"])
+            except Exception:
+                data = {"data": a["payload_json"]}
+        return n8n.trigger_workflow(a.get("workflow", ""), data, config=config)
+
+    @tool("remember_automation", "Save an n8n webhook ID/URL under an easy alias (e.g. alias='notion-sync') so you can trigger it anytime.",
+          {"alias": {"type": "string"}, "url_or_id": {"type": "string"}, "description": {"type": "string"}}, ["alias", "url_or_id"])
+    async def remember_automation(a):
+        from ..integrations import n8n
+        return n8n.register_workflow(a.get("alias", ""), a.get("url_or_id", ""), a.get("description", ""), config=config)
+
+    @tool("list_automations", "List all remembered n8n automations and workflows.", {})
+    async def list_automations(a):
+        from ..integrations import n8n
+        return n8n.list_workflows(config=config)
+
+    # ---------------- OmniCore (Universal Recorder & 2-Sided PA Guardian Shield) ----------------
+    @tool("get_activity_recordings", "Retrieve recent recorded text messages, calls, schedule alerts, and system activities.",
+          {"limit": {"type": "integer"}, "category": {"type": "string"}})
+    async def get_activity_recordings(a):
+        from . import omnicore
+        return omnicore.list_recent_recordings(limit=_i(a.get("limit", 15), 15), category_filter=a.get("category"), config=config)
+
+    @tool("check_pa_status", "Check Arjun's real-time computed schedule/busy status and whether 2-sided PA conversational defense is armed.", {})
+    async def check_pa_status(a):
+        from . import omnicore
+        status = omnicore.get_current_status(config=config)
+        return f"Current Status: {'BUSY / AWAY (' + status.get('reason','') + ') until ' + str(status.get('until','')) if status.get('busy') else 'AVAILABLE'}. [Source: {status.get('source','Normal')}]"
+
+    @tool("set_pa_status", "Set Arjun's status manually (e.g., 'I am going out for 2 hours', 'In a meeting') or mark 'available'.",
+          {"status_reason": {"type": "string"}, "is_busy": {"type": "boolean"}}, ["status_reason"])
+    async def set_pa_status(a):
+        from . import away, omnicore
+        if not _b(a.get("is_busy", True)) or a.get("status_reason", "").strip().lower() in ("available", "free", "back", "off"):
+            away.set_available()
+            omnicore.record_event("Status Change", "User", "Marked AVAILABLE / back at desk", config=config)
+            return "Status updated to AVAILABLE. Welcome back, sir!"
+        reason = a.get("status_reason", "Away from desk").strip()
+        away.set_away(reason)
+        omnicore.record_event("Status Change", "User", f"Marked AWAY/BUSY: {reason}", config=config)
+        return f"Status set to BUSY / AWAY ({reason}). Protocol Guardian 2-sided PA conversational shield is armed!"
+
+    @tool("add_user_schedule", "Register a scheduled activity or event (like tuition or classes) with start and end ISO timestamps.",
+          {"title": {"type": "string"}, "start": {"type": "string"}, "end": {"type": "string"}}, ["title", "start", "end"])
+    async def add_user_schedule(a):
+        from . import omnicore
+        return omnicore.add_schedule_event(a.get("title", ""), a.get("start", ""), a.get("end", ""), source="Agent Tool", config=config)
+
+    @tool("process_incoming_communication", "Process an incoming text message or phone call into OmniCore (records everything, detects schedules like 'tuition on 6:10', and initiates 2-sided PA chat if busy).",
+          {"type": {"type": "string"}, "sender": {"type": "string"}, "id": {"type": "string"}, "content": {"type": "string"}}, ["type", "sender", "content"])
+    async def process_incoming_communication(a):
+        import json
+        from . import omnicore
+        c_type = a.get("type", "text").lower()
+        if "call" in c_type:
+            res = await omnicore.handle_incoming_call(a.get("sender", "Caller"), a.get("id", "") or a.get("sender", ""), config=config)
+        else:
+            res = await omnicore.handle_incoming_text(a.get("sender", "Unknown"), a.get("id", "") or a.get("sender", ""), a.get("content", ""), config=config)
+        return f"Processed {c_type.upper()}: {json.dumps(res)}"
+
+    # ---------------- Full Laptop Mastery & Omni-Control ----------------
+    @tool("enable_full_laptop_autonomy", "Unlock unconfirmed shell execution and full computer automation permissions so Jarvis can control all tools and the whole laptop fully.",
+          {"enable": {"type": "boolean"}})
+    async def enable_full_laptop_autonomy(a):
+        val = _b(a.get("enable", True))
+        config.allow_unconfirmed_shell = val
+        from . import omnicore
+        omnicore.record_event("System Autonomy", "Jarvis", f"Full laptop autonomy set to: {val}", config=config)
+        return f"Full laptop autonomy is now {'ENABLED (Unrestricted machine mastery)' if val else 'DISABLED (Standard safety confirmation gate active)'}."
+
+    @tool("control_laptop_full", "Execute advanced system, GUI, or machine operations to manage any application, tool, window, or hardware parameter on the laptop.",
+          {"command_or_script": {"type": "string"}, "explanation": {"type": "string"}}, ["command_or_script"])
+    async def control_laptop_full(a):
+        cmd = a.get("command_or_script", "")
+        from . import omnicore
+        omnicore.record_event("Laptop Control", "Jarvis", f"Executing: {cmd} ({a.get('explanation','')})", config=config)
+        try:
+            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
+            out = (r.stdout or "") + (r.stderr or "")
+            return f"[Omni-Control Execution Result] Return Code {r.returncode}:\n{out.strip()[:6000] or '(Command executed successfully, no terminal output)'}"
+        except Exception as exc:
+            return f"[Omni-Control Error]: {exc}"
+
+    # ---------------- PA Guardian & Meet Bot ----------------
+
+    @tool("start_pa_daemon", "Activate the PA guardian shield: monitors WhatsApp messages and phone calls while you're away, auto-replies on your behalf, and gives you a full debrief when you're back.", {})
+    async def start_pa_daemon(a):
+        from . import pa_daemon
+        pa_daemon.start(config)
+        return "PA Guardian armed, sir. I'll handle all incoming messages and calls while you're out. I'll brief you the moment you're back."
+
+    @tool("stop_pa_daemon", "Deactivate the PA guardian and get a summary of what happened while you were away.", {})
+    async def stop_pa_daemon(a):
+        from . import pa_daemon
+        brief = pa_daemon.stop()
+        return brief
+
+    @tool("whatsapp_scan", "Scan and analyse all WhatsApp contacts and recent chat history from the bridge.", {})
+    async def whatsapp_scan(a):
+        import httpx, os
+        base = f"http://127.0.0.1:{os.environ.get('WA_PORT', '8765')}"
+        try:
+            status = httpx.get(f"{base}/status", timeout=3).json().get("connected", False)
+            if not status:
+                return "WhatsApp bridge is not connected. Start it with: cd ~/Dev/Jarvis/whatsapp && node wa_service.js"
+            contacts_list = httpx.get(f"{base}/contacts", timeout=5).json()
+            inbox_list = httpx.get(f"{base}/inbox", timeout=5).json()
+        except Exception as exc:  # noqa: BLE001
+            return f"Could not reach WhatsApp bridge: {exc}"
+        by_sender: dict = {}
+        for msg in inbox_list:
+            name = msg.get("name") or msg.get("from", "?")
+            by_sender.setdefault(name, []).append(msg.get("text", ""))
+        lines = [f"WhatsApp Bridge — {len(contacts_list)} contacts known, {len(inbox_list)} recent messages.\n"]
+        lines.append("Recent conversations:")
+        for sender, texts in list(by_sender.items())[-10:]:
+            last = texts[-1][:80] if texts else ""
+            lines.append(f"  {sender} ({len(texts)} msg): \"{last}\"")
+        if not by_sender:
+            lines.append("  (No recent incoming messages in the bridge buffer.)")
+        lines.append(f"\nTop contacts: {', '.join(c['name'] for c in contacts_list[:20] if c.get('name'))}")
+        return "\n".join(lines)
+
+    @tool("join_meet_and_take_notes",
+          "Join a Google Meet silently (mic+camera off), take live notes, reply in chat if anyone asks where Arjun is. URL is optional — auto-detected from the active browser tab.",
+          {"url": {"type": "string"}, "return_time": {"type": "string"}})  # url not required — auto-detected
+    async def join_meet_and_take_notes(a):
+        from ..integrations import meet_bot
+        url = a.get("url", "") or ""
+        return_time = a.get("return_time", "soon")
+        notes_path = await meet_bot.join_meet(url, return_time, config)
+        if notes_path.startswith("I couldn't"):
+            return notes_path  # error message from auto-detect
+        return (f"On it — joined the Meet (mic + camera off). Taking notes silently. "
+                f"If anyone asks where you are, I'll tell them you'll be back in {return_time}. "
+                f"Notes being saved to: {notes_path}")
+
+    @tool("stop_meet_notes", "Stop the Google Meet bot and retrieve the full meeting notes transcript.", {})
+    async def stop_meet_notes(a):
+        from ..integrations import meet_bot
+        return await meet_bot.stop_meet()
+
+    @tool("toggle_sports_widget",
+          "Opens or closes the live cricket sports widget on the screen.",
+          {"state": {"type": "string", "description": "Must be exactly one of: on, off, toggle."}},
+          ["state"])
+    def toggle_sports_widget(a):
+        """Toggles the sports widget visibility."""
+        import urllib.request
+        import json
+        state = a.get("state", "toggle")
+        try:
+            # emit to the webserver so the overlay picks it up
+            data = json.dumps({"kind": "sports_toggle", "text": state}).encode()
+            req = urllib.request.Request("http://127.0.0.1:8770/emit", data=data, headers={'Content-Type': 'application/json'})
+            urllib.request.urlopen(req, timeout=2)
+            return f"Sports widget {state}."
+        except Exception as e:
+            return f"Failed to toggle sports widget: {e}"
+
+    schemas = []
+    has_google = (config.vault_path / "credentials.json").exists() or Path.home().joinpath(".credentials", "credentials.json").exists()
+    for s, _ in reg.values():
+        f = s.get("function", {})
+        name = f.get("name", "")
+        # Drop inactive tool suites to save thousands of tokens!
+        if not has_google and name.startswith("google_"):
+            continue
+            
+        f.pop("description", None)
+        for p_val in f.get("parameters", {}).get("properties", {}).values():
+            p_val.pop("description", None)
+        schemas.append(s)
 
     async def dispatch(name: str, args: dict) -> str:
         entry = reg.get(name)

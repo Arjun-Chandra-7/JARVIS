@@ -1,0 +1,139 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600&family=Orbitron:wght@600;800&display=swap" rel="stylesheet" />
+    <style>
+      body { margin: 0; padding: 0; overflow: hidden; font-family: 'Chakra Petch', sans-serif; }
+      .spotify-widget {
+        width: 320px;
+        height: 80px;
+        background: #0a0f19;
+        border: 1px solid rgba(55, 231, 255, 0.3);
+        border-radius: 12px;
+        display: flex;
+        padding: 8px;
+        gap: 12px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        backdrop-filter: blur(10px);
+        opacity: 0;
+        transition: opacity 0.3s;
+        box-sizing: border-box;
+      }
+      .spotify-widget.show { opacity: 1; }
+      .spotify-widget img {
+        width: 62px;
+        height: 62px;
+        border-radius: 8px;
+        object-fit: cover;
+      }
+      .sp-info {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        min-width: 0;
+      }
+      .sp-title {
+        font-family: 'Orbitron', sans-serif;
+        font-size: 13px;
+        font-weight: 600;
+        color: #fff;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .sp-lyric {
+        font-size: 12px;
+        color: #37e7ff;
+        margin-top: 2px;
+        min-height: 16px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-style: italic;
+      }
+      .sp-controls {
+        display: flex;
+        gap: 12px;
+        margin-top: 4px;
+        align-items: center;
+      }
+      .sp-controls button {
+        background: none;
+        border: none;
+        color: #fff;
+        font-size: 14px;
+        cursor: pointer;
+        padding: 0;
+        transition: color 0.2s;
+        -webkit-app-region: no-drag;
+      }
+      .sp-controls button:hover { color: #37e7ff; }
+      .drag-region { -webkit-app-region: drag; flex: 1; display: flex; flex-direction: column; }
+    </style>
+  </head>
+  <body>
+    <div id="spotify-widget" class="spotify-widget">
+      <img id="sp-art" src="" alt="">
+      <div class="sp-info">
+        <div class="drag-region">
+          <div id="sp-title" class="sp-title"></div>
+          <div id="sp-lyric" class="sp-lyric"></div>
+        </div>
+        <div class="sp-controls">
+          <button onclick="spCmd('previous')">⏮</button>
+          <button onclick="spCmd('play-pause')" id="sp-play">⏸</button>
+          <button onclick="spCmd('next')">⏭</button>
+        </div>
+      </div>
+    </div>
+    <script>
+      const API = "http://127.0.0.1:" + (process.env.JARVIS_WEB_PORT || "8770");
+      let currentLyrics = [];
+      
+      async function spCmd(cmd) {
+        try {
+          await fetch(API + "/spotify/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: cmd }) });
+          updateSpotify();
+        } catch (e) {}
+      }
+
+      async function updateSpotify() {
+        try {
+          const res = await fetch(API + "/spotify");
+          const data = await res.json();
+          
+          const w = document.getElementById("spotify-widget");
+          if (!data.playing && !data.title) { w.classList.remove("show"); return; }
+          w.classList.add("show");
+          
+          document.getElementById("sp-title").innerText = data.title + " • " + data.artist;
+          
+          let artUrl = data.art || "";
+          if (artUrl.includes("open.spotify.com/image/")) {
+            artUrl = artUrl.replace("open.spotify.com/image/", "i.scdn.co/image/");
+          }
+          const img = document.getElementById("sp-art");
+          if (img.src !== artUrl && artUrl) img.src = artUrl;
+          
+          currentLyrics = data.lyrics || [];
+          let activeLyric = "";
+          if (currentLyrics.length > 0 && data.position !== undefined) {
+            for (let i = currentLyrics.length - 1; i >= 0; i--) {
+              if (data.position >= currentLyrics[i].time) {
+                activeLyric = currentLyrics[i].text;
+                break;
+              }
+            }
+          }
+          document.getElementById("sp-lyric").innerText = activeLyric || data.artist;
+          document.getElementById("sp-play").innerText = data.playing ? "⏸" : "▶";
+        } catch (e) {
+          document.getElementById("spotify-widget").classList.remove("show");
+        }
+      }
+      setInterval(updateSpotify, 500);
+    </script>
+  </body>
+</html>

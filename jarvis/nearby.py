@@ -91,8 +91,11 @@ def _lan() -> list[dict]:
 
 
 def _bt() -> list[dict]:
-    # kick a short discovery so RSSI/new devices show up, then read the list
-    _run(["bluetoothctl", "--timeout", "5", "scan", "on"], 7)
+    # Ensure bluetooth is unblocked and powered
+    _run(["rfkill", "unblock", "bluetooth"], 2)
+    _run(["bluetoothctl", "power", "on"], 2)
+    # short discovery scan
+    _run(["bluetoothctl", "--timeout", "4", "scan", "on"], 5)
     out = _run(["bluetoothctl", "devices"], 4)
     devs = []
     for line in out.splitlines():
@@ -110,10 +113,8 @@ def _bt() -> list[dict]:
                     rssi = int(il.split(":")[1].strip().split()[0])
                 except (ValueError, IndexError):
                     pass
-        # phones/audio are the interesting ones; keep everything but flag type
-        icon = "phone" if any(k in name.lower() for k in ("phone", "pixel", "iphone", "galaxy", "nothing", "oneplus")) else "device"
+        icon = "phone" if any(k in name.lower() for k in ("phone", "pixel", "iphone", "galaxy", "nothing", "oneplus", "watch", "band", "airpod", "buds", "ear", "headset")) else "device"
         devs.append({"mac": mac, "name": name, "rssi": rssi, "connected": connected, "icon": icon})
-    # connected + strong signal first
     devs.sort(key=lambda d: (not d["connected"], -(d["rssi"] or -200)))
     return devs[:16]
 

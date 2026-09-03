@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -17,7 +18,11 @@ from .config import CONFIG
 from . import hud_state
 from .memory.vault import ensure_vault
 
-WEBUI = Path(__file__).resolve().parent.parent / "webui"
+if getattr(sys, "frozen", False):
+    bundle_dir = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    WEBUI = bundle_dir / "webui"
+else:
+    WEBUI = Path(__file__).resolve().parent.parent / "webui"
 
 _agent: dict = {"a": None}
 _lock = asyncio.Lock()
@@ -26,6 +31,8 @@ _lock = asyncio.Lock()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_vault(CONFIG.vault_path, CONFIG.user_name)
+    from .agent import ai_researcher
+    ai_researcher.start_research_agent()
     agent = make_agent(CONFIG, mode="text", confirm_fn=None, on_tool=None)
     await agent.__aenter__()
     _agent["a"] = agent
@@ -95,6 +102,77 @@ async def emit(e: Emit):
     return {"ok": True}
 
 
+@app.get("/spotify")
+async def spotify_status():
+    import subprocess
+    import urllib.request
+    import urllib.parse
+    
+    try:
+        # Check if spotify is running and get info
+        status = subprocess.check_output(["systemd-run", "--user", "--pipe", "--quiet", "playerctl", "-p", "spotify", "status"], text=True).strip()
+        if status not in ("Playing", "Paused"):
+            return {"playing": False}
+        
+        artist = subprocess.check_output(["systemd-run", "--user", "--pipe", "--quiet", "playerctl", "-p", "spotify", "metadata", "artist"], text=True).strip()
+        title = subprocess.check_output(["systemd-run", "--user", "--pipe", "--quiet", "playerctl", "-p", "spotify", "metadata", "title"], text=True).strip()
+        art = subprocess.check_output(["systemd-run", "--user", "--pipe", "--quiet", "playerctl", "-p", "spotify", "metadata", "mpris:artUrl"], text=True).strip()
+        
+        # Get position in seconds
+        pos_str = subprocess.check_output(["systemd-run", "--user", "--pipe", "--quiet", "playerctl", "-p", "spotify", "position"], text=True).strip()
+        position = float(pos_str)
+        
+        # Fetch synced lyrics from LRCLIB if we don't have them cached
+        # Simple cache on the title to avoid spamming the API
+        if getattr(spotify_status, "last_title", None) != title:
+            spotify_status.last_title = title
+            spotify_status.lyrics = []
+            
+            try:
+                url = f"https://lrclib.net/api/get?track_name={urllib.parse.quote(title)}&artist_name={urllib.parse.quote(artist)}"
+                req = urllib.request.Request(url, headers={'User-Agent': 'JarvisAssistant/1.0'})
+                with urllib.request.urlopen(req, timeout=2) as r:
+                    data = json.loads(r.read().decode())
+                    if data.get("syncedLyrics"):
+                        # Parse LRC format
+                        lines = data["syncedLyrics"].split('\n')
+                        parsed = []
+                        for line in lines:
+                            if line.startswith('[') and ']' in line:
+                                time_str = line[1:line.find(']')]
+                                text = line[line.find(']')+1:].strip()
+                                if text:
+                                    try:
+                                        m, s = time_str.split(':')
+                                        sec = int(m) * 60 + float(s)
+                                        parsed.append({"time": sec, "text": text})
+                                    except: pass
+                        spotify_status.lyrics = parsed
+            except Exception as e:
+                pass
+
+        return {
+            "playing": status == "Playing",
+            "artist": artist,
+            "title": title,
+            "art": art,
+            "position": position,
+            "lyrics": getattr(spotify_status, "lyrics", [])
+        }
+    except Exception:
+        return {"playing": False}
+        
+@app.post("/spotify/control")
+async def spotify_control(c: Chat):
+    import subprocess
+    cmd = c.message
+    if cmd in ("play", "pause", "play-pause", "next", "previous"):
+        try:
+            subprocess.run(["systemd-run", "--user", "--pipe", "--quiet", "playerctl", "-p", "spotify", cmd])
+        except Exception:
+            pass
+    return {"ok": True}
+
 @app.get("/health")
 async def health():
     try:
@@ -116,6 +194,17 @@ async def nearby():
 
     try:
         return _nb.snapshot()
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
+
+
+@app.get("/sonar")
+async def sonar():
+    """Live inaudible acoustic active radar / physical body sonar."""
+    from . import sonar as _sonar
+
+    try:
+        return _sonar.get_sonar_snapshot()
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
 

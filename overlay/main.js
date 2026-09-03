@@ -2,13 +2,15 @@
 // typing and buttons work like a normal window and the desktop stays usable around it.
 // The overlay also *is* Jarvis: it auto-starts the backend (:8770) and the always-listening
 // "Hey Jarvis" voice loop, so launching the overlay = a live, listening assistant.
-const { app, BrowserWindow, globalShortcut, ipcMain, screen } = require("electron");
+const { app, BrowserWindow, globalShortcut, ipcMain, screen, session } = require("electron");
 const { spawn } = require("child_process");
 const http = require("http");
 const path = require("path");
 const fs = require("fs");
 
 app.commandLine.appendSwitch("ozone-platform", "x11");
+// Grant camera/mic access automatically (frameless windows can't show permission prompts)
+app.commandLine.appendSwitch("enable-features", "WebRTCPipeWireCapturer");
 
 const REPO = path.resolve(__dirname, "..");
 const PY = path.join(REPO, ".venv", "bin", "python");
@@ -89,15 +91,62 @@ function place(size) {
 function toggleOverlay() {
   if (!win) return;
   visible = !visible;
-  if (visible) { win.show(); ambient && ambient.showInactive(); }
-  else { win.hide(); ambient && ambient.hide(); }
+  if (visible) { win.show(); ambient && ambient.showInactive(); spWin && spWin.showInactive(); }
+  else { win.hide(); ambient && ambient.hide(); spWin && spWin.hide(); }
 }
-function hideAll() { if (win) win.hide(); if (ambient) ambient.hide(); visible = false; }
+function hideAll() { if (win) win.hide(); if (ambient) ambient.hide(); if (spWin) spWin.hide(); if (crWin) crWin.hide(); visible = false; }
 process.on("SIGUSR2", toggleOverlay);
+
+
+let spWin = null;
+function createSpotify() {
+  const a = screen.getPrimaryDisplay().workArea;
+  const w = 340, h = 100;
+  spWin = new BrowserWindow({
+    width: w, height: h,
+    x: a.x + a.width - w - 40,
+    y: a.y + a.height - h - 40,
+    transparent: true, frame: false, resizable: false, movable: true, skipTaskbar: true,
+    hasShadow: false, fullscreenable: false, focusable: false, backgroundColor: "#00000000",
+    webPreferences: { contextIsolation: false, nodeIntegration: true },
+  });
+  spWin.setAlwaysOnTop(true, "screen-saver");
+  spWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  spWin.loadFile("spotify.html");
+}
+
+
+let crWin = null;
+function createCricket() {
+  const a = screen.getPrimaryDisplay().workArea;
+  const w = 340, h = 180;
+  crWin = new BrowserWindow({
+    width: w, height: h,
+    x: a.x + 40,
+    y: a.y + a.height - h - 145,
+    transparent: true, frame: false, resizable: false, movable: true, skipTaskbar: true,
+    hasShadow: false, fullscreenable: false, focusable: false, backgroundColor: "#00000000",
+    webPreferences: { contextIsolation: false, nodeIntegration: true },
+    show: false
+  });
+  crWin.setAlwaysOnTop(true, "screen-saver");
+  crWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  crWin.loadFile("cricket.html");
+}
+
+ipcMain.on("sports_toggle", (_e, state) => {
+  if (state === "on") crWin && crWin.showInactive();
+  else if (state === "off") crWin && crWin.hide();
+  else {
+    if (crWin && crWin.isVisible()) crWin.hide();
+    else if (crWin) crWin.showInactive();
+  }
+});
 
 function createWindow() {
   const a = screen.getPrimaryDisplay().workArea;
   win = new BrowserWindow({
+    icon: path.join(__dirname, "icon.png"),
     width: COMPACT.w, height: COMPACT.h,
     x: Math.round(a.x + (a.width - COMPACT.w) / 2),
     y: Math.round(a.y + a.height - COMPACT.h - 26),
@@ -154,13 +203,24 @@ function watchScreencast() {
 }
 
 app.whenReady().then(() => {
+  // Auto-grant camera + mic — frameless overlay windows can't show permission dialogs
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    const allowed = ["media", "mediaKeySystem", "display-capture", "accessibility-events"];
+    callback(allowed.includes(permission));
+  });
+  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+    return ["media", "mediaKeySystem", "display-capture"].includes(permission);
+  });
+
   createAmbient();
   createWindow();
+  createSpotify();
+  createCricket();
   ensureBackend();
   try { fs.writeFileSync("/tmp/jarvis-overlay.pid", String(process.pid)); } catch (e) {}
-  globalShortcut.register("Control+Super", toggleOverlay);
-  globalShortcut.register("Control+Alt+J", toggleOverlay);
-  globalShortcut.register("Control+Super+H", hideAll);
+  try { globalShortcut.register("Control+Super+Space", toggleOverlay); } catch (e) {}
+  try { globalShortcut.register("Control+Alt+J", toggleOverlay); } catch (e) {}
+  try { globalShortcut.register("Control+Super+H", hideAll); } catch (e) {}
   watchScreencast();
   app.on("activate", () => BrowserWindow.getAllWindows().length === 0 && createWindow());
 });
