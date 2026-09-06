@@ -26,7 +26,7 @@ def _rg_files(pattern: str, vault: Path, max_files: int) -> list[str]:
         return []
     try:
         out = subprocess.run(
-            [rg, "-i", "-l", "-g", "*.md", pattern, str(vault)],
+            [rg, "-i", "-l", "-g", "*.md", "-g", "!Jarvis/private/**", pattern, str(vault)],
             capture_output=True, text=True, timeout=10,
         ).stdout
     except Exception:  # noqa: BLE001
@@ -42,7 +42,7 @@ def _keyword_matches(query: str, vault: Path, max_files: int = 8) -> list[tuple[
     # Prefer a real rg binary if present (fast on large vaults).
     rg_hits = _rg_files("|".join(re.escape(t) for t in terms), vault, max_files)
     files = [Path(f) for f in rg_hits] if rg_hits else [
-        f for f in vault.rglob("*.md") if ".git" not in f.parts and ".jarvis" not in f.parts
+        f for f in vault.rglob("*.md") if ".git" not in f.parts and ".jarvis" not in f.parts and "private" not in f.parts
     ]
 
     results: list[tuple[str, str]] = []

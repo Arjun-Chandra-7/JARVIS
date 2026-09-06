@@ -9,7 +9,11 @@ class WhatsAppBridge:
         self.config = config
         self.port = os.environ.get('WA_PORT', '8765')
         self.api = f"http://127.0.0.1:{self.port}"
-        self.seen_ts = set()
+        self.seen_ids = set()
+
+    @staticmethod
+    def _id(msg: dict) -> str:
+        return str(msg.get("id") or msg.get("messageId") or f"{msg.get('from', '')}|{msg.get('ts', '')}|{msg.get('text', '')}")
 
     async def _send(self, client: httpx.AsyncClient, to: str, text: str) -> None:
         text = text or "(no reply)"
@@ -24,7 +28,7 @@ class WhatsAppBridge:
             try:
                 inbox = (await client.get(f"{self.api}/inbox", timeout=5)).json()
                 for m in inbox:
-                    self.seen_ts.add(m.get("ts", 0))
+                    self.seen_ids.add(self._id(m))
             except Exception:
                 pass
 
@@ -36,14 +40,14 @@ class WhatsAppBridge:
                     continue
 
                 for msg in inbox:
-                    ts = msg.get("ts", 0)
-                    if ts in self.seen_ts:
+                    mid = self._id(msg)
+                    if mid in self.seen_ids:
                         continue
-                    self.seen_ts.add(ts)
+                    self.seen_ids.add(mid)
                     
                     sender = msg.get("from", "")
                     text = msg.get("text", "")
-                    if not text or not sender:
+                    if not text or not sender or msg.get("isGroup") or msg.get("isNewsletter"):
                         continue
 
                     # Security: Only process commands sent from the user's OWN phone to themselves

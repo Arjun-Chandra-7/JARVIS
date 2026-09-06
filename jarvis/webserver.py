@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .agent.factory import make_agent
 from .config import CONFIG
@@ -36,13 +36,19 @@ async def lifespan(app: FastAPI):
     agent = make_agent(CONFIG, mode="text", confirm_fn=None, on_tool=None)
     await agent.__aenter__()
     _agent["a"] = agent
+    from .agent import pa_daemon
+    pa_daemon.start(CONFIG)
     try:
         yield
     finally:
+        pa_daemon.stop(CONFIG)
         await agent.__aexit__(None, None, None)
 
 
 app = FastAPI(lifespan=lifespan)
+from .mobile import authorize, router as mobile_router
+app.middleware("http")(authorize)
+app.include_router(mobile_router)
 
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
@@ -56,7 +62,8 @@ app.add_middleware(
 
 
 class Chat(BaseModel):
-    message: str
+    message: str = Field(min_length=1, max_length=30000)
+    session_id: str = Field(default="local", max_length=80)
 
 
 @app.post("/chat")
@@ -67,11 +74,51 @@ async def chat(c: Chat):
     hud_state.log_turn("you", c.message)
     async with _lock:
         try:
+            agent.command_session = c.session_id
             reply = await agent.send(c.message)
         except Exception as exc:  # noqa: BLE001
             reply = f"[error] {exc}"
     hud_state.log_turn("jarvis", reply)
     return {"reply": reply}
+
+
+@app.get("/coding/jobs")
+async def coding_jobs():
+    from .integrations.coding_jobs import list_jobs
+    return {"jobs": list_jobs()}
+
+
+class CodingEvent(BaseModel):
+    id: str = Field(max_length=100)
+    provider: str = "codex"
+    workspace: str = ""
+    status: str = "running"
+    output: str = Field("", max_length=12000)
+
+
+@app.post("/coding/events")
+async def coding_event(event: CodingEvent):
+    from .integrations.coding_jobs import get_manager
+    from fastapi import HTTPException
+    manager = get_manager()
+    try:
+        if not manager.get_job(event.id):
+            manager.create_external("External editor prompt", event.workspace, event.provider, external_id=event.id)
+        return manager.record_event(event.id, event.status, output=event.output)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.get("/meet/status")
+async def meet_status():
+    from .integrations.meet_bot import status
+    return status()
+
+
+@app.get("/notifications")
+async def notification_status():
+    from .preferences import notifications_enabled
+    return {"enabled": notifications_enabled()}
 
 
 # --- live event stream (voice/phone events → browser HUD) ---

@@ -371,14 +371,15 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
 
     @tool("set_away", "Away mode ON — auto-reply to messages/calls.", {"reason": {"type": "string"}})
     async def set_away(a):
-        from . import away
-        away.set_away(a.get("reason", ""))
+        from . import away, pa_daemon
+        away.set_away(a.get("reason", ""), config)
+        pa_daemon.start(config)
         return "away mode on."
 
     @tool("set_available", "Away mode OFF.", {})
     async def set_available(a):
         from . import away
-        away.set_available()
+        away.set_available(config)
         return "away mode off."
 
     # ---------------- system / media / apps ----------------
@@ -408,6 +409,8 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     @tool("do_not_disturb", "Silence notifications. on = 'true' or 'false'.", {"on": {"type": "string"}}, ["on"])
     async def dnd(a):
         from ..integrations import system_control as sc
+        from ..preferences import set_notifications
+        set_notifications(not _b(a.get("on", True)))
         sc.do_not_disturb(_b(a.get("on", True)))
         return "done."
 
@@ -552,15 +555,18 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     @tool("set_pa_status", "Set Arjun's status manually (e.g., 'I am going out for 2 hours', 'In a meeting') or mark 'available'.",
           {"status_reason": {"type": "string"}, "is_busy": {"type": "boolean"}}, ["status_reason"])
     async def set_pa_status(a):
-        from . import away, omnicore
+        # Single owner: away state + the WhatsApp auto-reply daemon are driven the same way
+        # everywhere (voice command router, set_away tool, here).
+        from . import away, omnicore, pa_daemon
         if not _b(a.get("is_busy", True)) or a.get("status_reason", "").strip().lower() in ("available", "free", "back", "off"):
-            away.set_available()
+            away.set_available(config)
             omnicore.record_event("Status Change", "User", "Marked AVAILABLE / back at desk", config=config)
             return "Status updated to AVAILABLE. Welcome back, sir!"
         reason = a.get("status_reason", "Away from desk").strip()
-        away.set_away(reason)
+        away.set_away(reason, config)
+        pa_daemon.start(config)
         omnicore.record_event("Status Change", "User", f"Marked AWAY/BUSY: {reason}", config=config)
-        return f"Status set to BUSY / AWAY ({reason}). Protocol Guardian 2-sided PA conversational shield is armed!"
+        return f"Status set to BUSY / AWAY ({reason}). I'll answer new WhatsApp messages as your assistant and brief you on return."
 
     @tool("add_user_schedule", "Register a scheduled activity or event (like tuition or classes) with start and end ISO timestamps.",
           {"title": {"type": "string"}, "start": {"type": "string"}, "end": {"type": "string"}}, ["title", "start", "end"])
@@ -568,17 +574,21 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         from . import omnicore
         return omnicore.add_schedule_event(a.get("title", ""), a.get("start", ""), a.get("end", ""), source="Agent Tool", config=config)
 
-    @tool("process_incoming_communication", "Process an incoming text message or phone call into OmniCore (records everything, detects schedules like 'tuition on 6:10', and initiates 2-sided PA chat if busy).",
+    @tool("process_incoming_communication", "Record an incoming text/call for the away-mode debrief. Does NOT auto-reply — the away-mode daemon is the sole WhatsApp auto-responder.",
           {"type": {"type": "string"}, "sender": {"type": "string"}, "id": {"type": "string"}, "content": {"type": "string"}}, ["type", "sender", "content"])
     async def process_incoming_communication(a):
-        import json
-        from . import omnicore
-        c_type = a.get("type", "text").lower()
-        if "call" in c_type:
-            res = await omnicore.handle_incoming_call(a.get("sender", "Caller"), a.get("id", "") or a.get("sender", ""), config=config)
-        else:
-            res = await omnicore.handle_incoming_text(a.get("sender", "Unknown"), a.get("id", "") or a.get("sender", ""), a.get("content", ""), config=config)
-        return f"Processed {c_type.upper()}: {json.dumps(res)}"
+        # Passive recorder only. Automatic replies to incoming WhatsApp/calls are owned
+        # exclusively by jarvis.agent.pa_daemon so there is never a second responder.
+        from . import away
+        c_type = "call" if "call" in a.get("type", "text").lower() else "whatsapp"
+        away.record_event(config, {
+            "id": a.get("id", "") or f"{c_type}:{a.get('sender', '')}",
+            "type": c_type, "sender": a.get("sender", "Unknown"),
+            "jid": a.get("id", "") or a.get("sender", ""),
+            "text": a.get("content", "") or ("Incoming call" if c_type == "call" else ""),
+            "status": "recorded",
+        })
+        return f"Recorded {c_type} from {a.get('sender', 'Unknown')} for your away-mode debrief."
 
     # ---------------- Full Laptop Mastery & Omni-Control ----------------
     @tool("enable_full_laptop_autonomy", "Unlock unconfirmed shell execution and full computer automation permissions so Jarvis can control all tools and the whole laptop fully.",
@@ -595,6 +605,9 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     async def control_laptop_full(a):
         cmd = a.get("command_or_script", "")
         from . import omnicore
+        if is_destructive(cmd) and not config.allow_unconfirmed_shell:
+            if not await _confirm(f"run this system command:\n    {cmd}"):
+                return "User declined the command."
         omnicore.record_event("Laptop Control", "Jarvis", f"Executing: {cmd} ({a.get('explanation','')})", config=config)
         try:
             r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
@@ -644,18 +657,14 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         return "\n".join(lines)
 
     @tool("join_meet_and_take_notes",
-          "Join a Google Meet silently (mic+camera off), take live notes, reply in chat if anyone asks where Arjun is. URL is optional — auto-detected from the active browser tab.",
+          "Join Google Meet with mic/camera off, record captions and participant changes. Omitted URL uses twa-pgjz-gss. Admission can require host approval; check status before claiming joined.",
           {"url": {"type": "string"}, "return_time": {"type": "string"}})  # url not required — auto-detected
     async def join_meet_and_take_notes(a):
         from ..integrations import meet_bot
         url = a.get("url", "") or ""
         return_time = a.get("return_time", "soon")
         notes_path = await meet_bot.join_meet(url, return_time, config)
-        if notes_path.startswith("I couldn't"):
-            return notes_path  # error message from auto-detect
-        return (f"On it — joined the Meet (mic + camera off). Taking notes silently. "
-                f"If anyone asks where you are, I'll tell them you'll be back in {return_time}. "
-                f"Notes being saved to: {notes_path}")
+        return f"Meet request: {notes_path}. Status: {meet_bot.status()}"
 
     @tool("stop_meet_notes", "Stop the Google Meet bot and retrieve the full meeting notes transcript.", {})
     async def stop_meet_notes(a):

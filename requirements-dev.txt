@@ -1,0 +1,2 @@
+# Test runner for the repository's pytest-style tests.
+pytest>=8.0

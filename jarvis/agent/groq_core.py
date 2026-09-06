@@ -189,6 +189,10 @@ class GroqAgent:
             self.messages = [self.messages[0]] + self.messages[keep_from:]
 
     async def send(self, user_text: str) -> str:
+        from ..commands import handle
+        direct = await handle(user_text, self.config, getattr(self, "command_session", "local"))
+        if direct is not None:
+            return direct
         # episodic journal
         clean = " ".join(l for l in user_text.splitlines() if not l.strip().startswith("["))[:140].strip()
         if clean:

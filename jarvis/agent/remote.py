@@ -44,7 +44,7 @@ class RemoteAgent:
         # voice loop (which can't listen while it's waiting on a reply).
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=5.0)) as client:
-                r = await client.post(f"{self.base}/chat", json={"message": msg})
+                r = await client.post(f"{self.base}/chat", json={"message": msg, "session_id": self.mode})
                 return (r.json() or {}).get("reply", "") or "(no reply)"
         except httpx.TimeoutException:
             return "That one took too long, sir — let me know if you'd like me to try again."

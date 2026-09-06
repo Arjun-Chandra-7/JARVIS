@@ -63,7 +63,7 @@ class VaultIndex:
         return [
             p
             for p in self.vault.rglob("*.md")
-            if ".jarvis" not in p.parts and ".git" not in p.parts
+            if ".jarvis" not in p.parts and ".git" not in p.parts and "private" not in p.parts
         ]
 
     def build(self, embed_fn: Optional[EmbedFn] = None, progress: Optional[Callable] = None) -> dict:

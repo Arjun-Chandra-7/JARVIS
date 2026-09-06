@@ -6,6 +6,9 @@ The Node service must be running and linked (scan the QR once). Jarvis talks to 
 from __future__ import annotations
 
 import os
+import json
+from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 
@@ -33,6 +36,66 @@ def inbox() -> list[dict]:
         return httpx.get(f"{_BASE}/inbox", timeout=3).json()
     except Exception:  # noqa: BLE001
         return []
+
+
+def chats(limit: int = 2000) -> list[dict]:
+    """Read bridge history only. This endpoint never marks chats read or sends a message."""
+    try:
+        return httpx.get(f"{_BASE}/chats", params={"limit": max(1, min(int(limit), 5000))}, timeout=15).json()
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def import_context(config, limit: int = 2000) -> dict:
+    """Persist WhatsApp history as local private context, without mutating WhatsApp.
+
+    ``Jarvis/private/whatsapp-context.json`` is intentionally not surfaced in normal memory prompts;
+    callers must explicitly retrieve it for a user-authorized recall operation.
+    """
+    records = chats(limit)
+    if not isinstance(records, list):
+        records = []
+    target = Path(config.vault_path) / "Jarvis" / "private" / "whatsapp-context.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"source": "local WhatsApp bridge", "imported_at": datetime.now(timezone.utc).isoformat(), "records": records}
+    tmp = target.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        os.chmod(target.parent, 0o700)
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass
+    tmp.replace(target)
+    return {"ok": True, "count": len(records), "path": str(target)}
+
+
+def retrieve_imported_context(config, query: str, *, authorized: bool = False, limit: int = 20) -> list[dict]:
+    """Search the private imported mirror for an explicitly authorized local-user request.
+
+    This deliberately has no ambient access: callers must establish that the request came from the
+    local owner before setting ``authorized=True``. It never sends, reads from WhatsApp, or exposes
+    the full mirror by default.
+    """
+    if not authorized:
+        return []
+    terms = [term.lower() for term in str(query or "").split() if len(term) > 1][:8]
+    if not terms:
+        return []
+    path = Path(config.vault_path) / "Jarvis" / "private" / "whatsapp-context.json"
+    try:
+        records = json.loads(path.read_text(encoding="utf-8")).get("records", [])
+    except (OSError, ValueError, AttributeError):
+        return []
+    hits = []
+    for record in reversed(records if isinstance(records, list) else []):
+        if not isinstance(record, dict):
+            continue
+        haystack = " ".join(str(record.get(k, "")) for k in ("name", "from", "text")).lower()
+        if all(term in haystack for term in terms):
+            hits.append({k: record.get(k) for k in ("id", "name", "from", "text", "ts", "fromMe")})
+            if len(hits) >= max(1, min(int(limit), 50)):
+                break
+    return hits
 
 
 def contacts() -> list[dict]:

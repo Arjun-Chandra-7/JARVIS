@@ -86,7 +86,7 @@ def _seed_files(vault: Path, user_name: str) -> None:
         ),
         vault / "Jarvis" / "README.md": VAULT_README,
         vault / "Projects" / "README.md": PROJECTS_README,
-        vault / ".gitignore": ".jarvis/\n.trash/\n",
+        vault / ".gitignore": ".jarvis/\n.trash/\nJarvis/private/\n",
     }
     for path, content in seeds.items():
         if not path.exists():
@@ -103,9 +103,19 @@ def ensure_vault(vault: Path, user_name: str = "you") -> bool:
     except OSError:
         pass
     _seed_files(vault, user_name)
+    # Existing vaults predate private communication context. Keep it local even if ordinary notes
+    # are versioned or later pushed to a remote.
+    ignore = vault / ".gitignore"
+    try:
+        current = ignore.read_text()
+        if "Jarvis/private/" not in current.splitlines():
+            with ignore.open("a") as f:
+                f.write("\nJarvis/private/\n")
+    except OSError:
+        pass
     if not is_git_repo(vault):
         _git(vault, "init", "-q")
-        _git(vault, "add", "-A")
+        _git(vault, "add", "-A", "--", ".", ":(exclude)Jarvis/private")
         _git(vault, "commit", "-q", "-m", "jarvis: initialize memory vault")
     return created
 
@@ -150,6 +160,10 @@ def git_autocommit(vault: Path, message: str) -> bool:
     status = _git(vault, "status", "--porcelain")
     if not status.stdout.strip():
         return False
-    _git(vault, "add", "-A")
+    _git(vault, "add", "-A", "--", ".", ":(exclude)Jarvis/private")
+    # Private communication context may be the only change; in that case do not attempt an empty
+    # commit and report that no durable, shareable note was committed.
+    if _git(vault, "diff", "--cached", "--quiet").returncode == 0:
+        return False
     _git(vault, "commit", "-q", "-m", message)
     return True

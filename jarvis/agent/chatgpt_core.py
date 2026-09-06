@@ -96,9 +96,19 @@ class ChatGPTAgent:
         self.schemas, self.dispatch = build_registry(config, self.job_runner, confirm_fn)
         self.session = ChatGPTSession()
         self._primed = False
+        self._away_responder = None
 
     async def __aenter__(self) -> "ChatGPTAgent":
         await self.session.start()
+        # Away mode gets a fresh, no-tool temporary tab from this same browser context. It cannot
+        # call this agent's send()/dispatch loop or inherit the primary Jarvis conversation.
+        from . import away
+
+        async def away_responder(messages: list[dict[str, str]]) -> str:
+            return await self.session.ask_isolated(messages, timeout_s=60)
+
+        self._away_responder = away_responder
+        away.set_responder(away_responder)
         try:
             await self._prime()   # prime at boot so the first real message isn't slow
         except Exception:  # noqa: BLE001
@@ -106,6 +116,10 @@ class ChatGPTAgent:
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
+        from . import away
+        # Do not leave a callback referring to a closed browser session behind.
+        if getattr(away, "_responder", None) is self._away_responder:
+            away.set_responder(None)
         await self.session.close()
 
     def _system(self) -> str:
@@ -125,6 +139,10 @@ class ChatGPTAgent:
         self._primed = True
 
     async def send(self, user_text: str) -> str:
+        from ..commands import handle
+        direct = await handle(user_text, self.config, getattr(self, "command_session", "local"))
+        if direct is not None:
+            return direct
         clean = " ".join(l for l in user_text.splitlines() if not l.strip().startswith("["))[:140].strip()
         if clean:
             try:

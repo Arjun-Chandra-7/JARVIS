@@ -44,6 +44,53 @@ let sock = null;
 let connected = false;
 const inbox = []; // recent incoming messages
 const contacts = new Map(); // jid -> best known name (for resolving "message <name>")
+const history = []; // private local mirror, exposed only over localhost /chats
+const HISTORY_FILE = path.join(AUTH_DIR, "history.json");
+const MAX_HISTORY = 5000;
+
+function messageId(m) {
+  return String(m?.key?.id || `${m?.key?.remoteJid || ""}|${m?.messageTimestamp || Date.now()}`);
+}
+function chatFlags(jid) {
+  const value = String(jid || "");
+  return { isGroup: value.endsWith("@g.us"), isNewsletter: value.includes("@newsletter"), isStatus: value === "status@broadcast" };
+}
+function normaliseMessage(m) {
+  const from = m?.key?.remoteJid || "";
+  const flags = chatFlags(from);
+  const rawTs = Number(m?.messageTimestamp || 0);
+  return {
+    id: messageId(m), from, name: m?.pushName || contacts.get(from) || from,
+    text: extractText(m?.message),
+    ts: rawTs > 100000000000 ? rawTs : (rawTs ? rawTs * 1000 : Date.now()),
+    fromMe: !!m?.key?.fromMe, ...flags,
+  };
+}
+function loadHistory() {
+  try {
+    const value = JSON.parse(fs.readFileSync(HISTORY_FILE, "utf8"));
+    if (Array.isArray(value)) history.push(...value.slice(-MAX_HISTORY));
+  } catch {}
+}
+let historyTimer = null;
+function saveHistory() {
+  clearTimeout(historyTimer);
+  historyTimer = setTimeout(() => {
+    try {
+      fs.mkdirSync(AUTH_DIR, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(HISTORY_FILE, JSON.stringify(history), { mode: 0o600 });
+    } catch {}
+  }, 1500);
+}
+function recordHistory(m) {
+  const item = normaliseMessage(m);
+  if (!item.id || history.some((x) => x.id === item.id)) return item;
+  history.push(item);
+  if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
+  saveHistory();
+  return item;
+}
+loadHistory();
 
 // --- persist contacts across restarts (WhatsApp only re-sends the address book occasionally) ---
 const CONTACTS_FILE = path.join(AUTH_DIR, "contacts.json");
@@ -96,7 +143,10 @@ async function start() {
   const ingest = (list) => (list || []).forEach((c) => recordContact(c.id, c.name || c.notify || c.verifiedName));
   sock.ev.on("contacts.upsert", ingest);
   sock.ev.on("contacts.update", ingest);
-  sock.ev.on("messaging-history.set", ({ contacts: cs }) => ingest(cs));
+  sock.ev.on("messaging-history.set", ({ contacts: cs, messages }) => {
+    ingest(cs);
+    (messages || []).forEach(recordHistory); // import-only local mirror; never sends or deletes
+  });
 
   sock.ev.on("connection.update", (u) => {
     const { connection, lastDisconnect, qr } = u;
@@ -128,10 +178,11 @@ async function start() {
       const text = extractText(m.message);
       dbg(`  from=${m.key.remoteJid} fromMe=${m.key.fromMe} keys=${Object.keys(m.message || {})} text=${JSON.stringify(text)}`);
       recordContact(m.key.remoteJid, m.pushName);
+      const item = recordHistory(m);
       const meJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
       if (m.key.fromMe && m.key.remoteJid !== meJid) continue;
       if (!text) continue;
-      inbox.push({ from: m.key.remoteJid, name: m.pushName || m.key.remoteJid, text, ts: Date.now(), fromMe: !!m.key.fromMe });
+      inbox.push(item);
       if (inbox.length > 100) inbox.shift();
       dbg(`  -> stored (inbox size ${inbox.length})`);
     }
@@ -165,6 +216,11 @@ http
     }
     if (req.url === "/status") return res.end(JSON.stringify({ connected }));
     if (req.url === "/inbox") return res.end(JSON.stringify(inbox.slice(-30)));
+    if (req.url.startsWith("/chats")) {
+      const url = new URL(req.url, "http://127.0.0.1");
+      const limit = Math.max(1, Math.min(Number(url.searchParams.get("limit")) || 2000, MAX_HISTORY));
+      return res.end(JSON.stringify(history.slice(-limit)));
+    }
     if (req.url === "/contacts") {
       return res.end(JSON.stringify([...contacts.entries()].map(([jid, name]) => ({ jid, name }))));
     }

@@ -1,6 +1,13 @@
-# Core brain — runs on your Antigravity (Gemini) CLI (no API key)
-google-antigravity
+# Core: ChatGPT web, or Gemini/Groq through an OpenAI-compatible API
 python-dotenv
+openai>=1.0
+claude-agent-sdk>=0.2          # autonomous background tasks + morning brief / rollup / monitors
+fastapi>=0.115
+uvicorn>=0.30
+pydantic>=2
+apscheduler>=3.10,<4
+scipy>=1.11
+dbus-next>=0.2.3
 
 # Voice (Phase 5). Also needs the system PortAudio lib:  sudo apt install libportaudio2
 pvporcupine        # wake word ("Jarvis")
@@ -8,6 +15,11 @@ pvrecorder         # microphone capture
 sounddevice        # audio playback
 numpy              # audio math / voice-activity detection
 httpx              # Deepgram (STT) + ElevenLabs (TTS) over HTTP
+
+# Default offline voice
+faster-whisper>=1.0
+openwakeword>=0.6
+piper-tts>=1.2
 
 # Phase 2b — local semantic search (install when you get there)
 #   Ollama is a separate system install: https://ollama.com  (then: ollama pull nomic-embed-text)

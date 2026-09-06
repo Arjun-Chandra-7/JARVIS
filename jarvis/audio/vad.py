@@ -8,6 +8,7 @@ assistant; swap in a neural VAD later if needed. Pure functions here are unit-te
 from __future__ import annotations
 
 from typing import Callable, Optional
+from collections import deque
 
 import numpy as np
 
@@ -67,6 +68,8 @@ def record_utterance(
     silent_run = 0
     waited = 0
     speech_frames = 0
+    # Preserve quiet consonants immediately before the energy threshold is crossed.
+    preroll = deque(maxlen=max(1, round(300 / frame_ms)))
 
     while True:
         frame = read_frame()
@@ -78,9 +81,11 @@ def record_utterance(
         if not started:
             if level >= threshold:
                 started = True
+                collected.extend(preroll)
                 collected.append(arr)
                 speech_frames += 1
             else:
+                preroll.append(arr.copy())
                 waited += 1
                 if waited >= wait_frames:
                     return None

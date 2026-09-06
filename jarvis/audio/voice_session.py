@@ -79,10 +79,10 @@ class VoiceSession:
                         continue
                     seen.add(key)
                     frm = str(m.get("from", ""))
-                    if "@newsletter" in frm or "@g.us" in frm:
+                    if "@newsletter" in frm or "@g.us" in frm or m.get("fromMe"):
                         continue
                     sender, text = m.get("name", "someone"), m.get("text", "")
-                    handled = await self._away_converse(frm, sender, text)
+                    handled = True  # Backend PA daemon exclusively owns WhatsApp auto-replies.
                     await self._events.put({
                         "type": "message", "app": "WhatsApp",
                         "title": sender, "text": text, "id": frm,
@@ -117,24 +117,6 @@ class VoiceSession:
         except Exception:  # noqa: BLE001
             pass
 
-    async def _away_converse(self, jid: str, sender: str, text: str) -> bool:
-        """While away, carry on a real conversation with the sender. Returns True if handled."""
-        from ..agent import away
-
-        if not away.is_away():
-            return False
-        reply = await away.respond(self.config, jid, sender, text)
-        if not reply:
-            return False
-        try:
-            from ..integrations import whatsapp
-
-            whatsapp.send(jid, reply)
-            self.on_event("phone", f"away: replied to {sender} — “{reply[:60]}”")
-        except Exception:  # noqa: BLE001
-            return False
-        return True
-
     async def _setup_phone(self) -> None:
         self._ensure_whatsapp_bridge()               # revive the bridge if it died
         asyncio.create_task(self._watch_whatsapp())  # WhatsApp alerts via the bridge
@@ -160,13 +142,18 @@ class VoiceSession:
 
     async def _handle_phone_event(self, event: dict, agent) -> None:
         from ..agent import away
+        from ..preferences import notifications_enabled
+        # Away state is set from another process (web /chat), so always read it from the shared file.
+        away_now = away.is_away(self.config)
+        if not notifications_enabled() and not away_now:
+            return
 
         if event.get("type") == "call":
             who = event.get("name") or event.get("number") or "an unknown number"
             number = event.get("number")
             if "missed" in (event.get("event") or "").lower():
                 self._speak(f"You missed a call from {who}.")
-            elif away.is_away() and number:
+            elif away_now and number:
                 # Auto-attendant: text the caller that the user is unavailable.
                 try:
                     if self._kc is not None:
@@ -185,7 +172,7 @@ class VoiceSession:
         msg = event.get("text", "")
         self.on_event("phone", f"{app} from {who}: {msg}")
         # Auto-attendant for repliable notifications (Instagram/SMS), unless already handled (WhatsApp).
-        if away.is_away() and event.get("repliable") and event.get("id") and not event.get("handled"):
+        if away_now and event.get("repliable") and event.get("id") and not event.get("handled"):
             try:
                 reply = await away.respond(self.config, str(event.get("id")), who, msg)
                 if self._kc is not None and reply:
@@ -200,7 +187,7 @@ class VoiceSession:
             "app": app, "who": who, "text": msg,
             "id": event.get("id"), "repliable": event.get("repliable"),
         }
-        if not away.is_away():  # while away Jarvis handles it silently; don't talk to an empty room
+        if not away_now and notifications_enabled():  # while away, handle silently; muted = no readout
             self._speak(f"{app} message from {who}. {msg}.")
 
     def _record_transcript(self, wait_s: float) -> Optional[str]:
@@ -230,7 +217,8 @@ class VoiceSession:
             from . import local_stt
 
             return local_stt.transcribe(
-                pcm, self.sample_rate, self.config.whisper_model, self.config.whisper_beam
+                pcm, self.sample_rate, self.config.whisper_model, self.config.whisper_beam,
+                self.config.stt_language, self.config.stt_vocabulary,
             )
         return stt.transcribe(pcm, self.config.deepgram_api_key, self.sample_rate, self.config.stt_model)
 
@@ -685,34 +673,12 @@ class VoiceSession:
                     )
 
                     if is_code_explicit or (is_vs_active and has_coding_intent):
-                        target_folder = v_ctx.get("folder")
-                        target_file = v_ctx.get("file")
-                        target_path = v_ctx.get("file_path")
-                        proj_name = v_ctx.get("project_name") or "your project"
-                        target_label = target_file or proj_name
-                        if not target_folder:
-                            reply = "I couldn't detect an active project or file in VS Code for agy, sir."
-                        else:
-                            runner = getattr(agent, "job_runner", None)
-                            if runner is None:
-                                if not hasattr(self, "_job_runner"):
-                                    from ..jobs.runner import JobRunner
-                                    self._job_runner = JobRunner(self.config)
-                                runner = self._job_runner
-
-                            job_id = runner.dispatch_antigravity(
-                                raw_prompt=transcript,
-                                folder=target_folder,
-                                active_file=target_file,
-                                active_file_path=target_path,
-                            )
-                            reply = (
-                                f"On it, sir. Refining prompt and running agy on {target_label}. "
-                                "I'll tell you when it's done."
-                            )
+                        # The shared backend owns the provider/model/effort dialogue and job.
+                        reply = await agent.send(transcript)
                         self.on_event("reply", reply)
                         self._speak(reply)
-                        break
+                        transcript = self._record_transcript(wait_s=max(12, self.config.follow_up_s))
+                        continue
 
                     start = time.monotonic()
                     try:

@@ -1,4 +1,4 @@
-"""Google Meet bot: join silently, take live notes, answer if asked where Arjun is.
+"""Google Meet bot: join silently and take continuous live notes.
 
 Usage (via Jarvis tool):
     await meet_bot.join_meet("meet.google.com/abc-defg-hij", "2 hours", config)
@@ -6,8 +6,8 @@ Usage (via Jarvis tool):
     notes = await meet_bot.stop_meet()
 
 The bot joins with mic + camera off, reads Google Meet's live captions, accumulates
-a transcript, and if anyone mentions "Arjun" in the captions or chat, it types a
-polite reply in the Meet chat panel.
+a transcript, and records participant arrivals and departures. It never sends chat
+messages or other unsolicited meeting communication.
 
 Notes are saved to ~/.local/share/jarvis/meet_notes_<timestamp>.txt every 2 minutes.
 """
@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger("jarvis.meet_bot")
+
+DEFAULT_MEET_URL = "https://meet.google.com/twa-pgjz-gss"
 
 
 def _detect_active_meet() -> Optional[str]:
@@ -107,6 +109,7 @@ _notes_path: Optional[Path]       = None
 _return_time: str                  = ""
 _transcript: list[str]             = []
 _stop_event: asyncio.Event         = asyncio.Event()
+_status: dict = {"state": "idle", "detail": "", "url": "", "started_at": None}
 
 
 def _ensure_profile() -> None:
@@ -119,12 +122,94 @@ def _notes_file() -> Path:
     return NOTES_DIR / f"meet_notes_{ts}.txt"
 
 
+def status() -> dict:
+    """Return a serialisable snapshot for a HUD/API without exposing transcript content."""
+    active = _bot_task is not None and not _bot_task.done()
+    return {
+        "active": active,
+        "state": _status["state"],
+        "detail": _status["detail"],
+        "url": _status["url"],
+        "started_at": _status["started_at"],
+        "notes_path": str(_notes_path) if _notes_path else None,
+    }
+
+
+def _admission_state(page) -> tuple[str, str]:
+    """Classify Meet UI state after requesting admission.
+
+    A Join-button click merely requests admission for many meetings.  We only call
+    the bot admitted once an in-call control is visible; waiting-room and rejection
+    states are intentionally kept distinct.
+    """
+    def visible(selector: str) -> bool:
+        try:
+            return page.locator(selector).first.is_visible(timeout=250)
+        except Exception:  # noqa: BLE001
+            return False
+
+    if any(visible(s) for s in (
+        "button[aria-label*='Leave call' i]",
+        "button[aria-label*='Leave meeting' i]",
+        "[data-tooltip*='Leave call' i]",
+    )):
+        return "admitted", "In call"
+    if any(visible(s) for s in (
+        "text=You'll join the call when someone lets you in",
+        "text=Asking to join",
+        "text=Waiting for someone to let you in",
+    )):
+        return "waiting", "Waiting for a host to admit the bot"
+    if any(visible(s) for s in (
+        "text=You can't join this video call",
+        "text=The meeting has ended",
+        "text=You were removed from the call",
+    )):
+        return "rejected", "Not admitted to the meeting"
+    return "unknown", "Admission has not been confirmed"
+
+
+def _participant_snapshot(page) -> set[str]:
+    """Best-effort visible participant names, robust to Meet's changing DOM classes."""
+    names: set[str] = set()
+    selectors = (
+        "[data-participant-id] [aria-label]",
+        "[data-requested-participant-id] [aria-label]",
+        "[role='listitem'][aria-label]",
+    )
+    for selector in selectors:
+        try:
+            for element in page.query_selector_all(selector):
+                label = (element.get_attribute("aria-label") or "").strip()
+                if label and len(label) <= 120:
+                    names.add(label)
+        except Exception:  # noqa: BLE001
+            continue
+    return names
+
+
+def _open_participant_panel(page) -> None:
+    """Expose Meet's roster once so membership changes remain available to polling."""
+    for selector in (
+        "button[aria-label*='Show everyone' i]",
+        "button[aria-label*='People' i]",
+        "[data-tooltip*='Show everyone' i]",
+    ):
+        try:
+            button = page.locator(selector).first
+            if button.is_visible(timeout=500):
+                button.click()
+                return
+        except Exception:  # noqa: BLE001
+            continue
+
+
 # --------------------------------------------------------------------------- sync playwright core
 
 def _join_meet_sync(url: str, return_time: str, notes_path: str, stop_flag_file: str) -> str:
-    """Runs in a thread. Joins the meet, watches captions, writes notes, replies if Arjun is mentioned."""
+    """Runs in a thread: requests entry, verifies admission, then records notes."""
     from playwright.sync_api import sync_playwright
-    import time, re
+    import time
 
     _ensure_profile()
 
@@ -135,31 +220,35 @@ def _join_meet_sync(url: str, return_time: str, notes_path: str, stop_flag_file:
     transcript_lines: list[str] = []
     seen_captions: set[str]     = set()
     last_save                   = time.time()
-    replied_to: set[str]        = set()  # dedup "Arjun" replies
-    replied_count               = 0
+    participants: set[str]      = set()
+    last_participant_poll       = 0.0
 
     def _save_notes():
-        with open(notes_path, "w", encoding="utf-8") as f:
-            f.write(f"Google Meet Notes\nJoined: {datetime.now():%Y-%m-%d %H:%M}\nURL: {url}\n")
-            f.write("=" * 60 + "\n\n")
-            f.write("\n".join(transcript_lines))
+        try:
+            Path(notes_path).parent.mkdir(parents=True, exist_ok=True)
+            with open(notes_path, "w", encoding="utf-8") as f:
+                f.write(f"Google Meet Notes\nJoined: {datetime.now():%Y-%m-%d %H:%M}\nURL: {url}\n")
+                f.write("=" * 60 + "\n\n")
+                f.write("\n".join(transcript_lines))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Meet bot: failed to save notes: %s", exc)
 
     with sync_playwright() as p:
-        MEET_PROFILE.mkdir(parents=True, exist_ok=True)
-        ctx = p.chromium.launch_persistent_context(
-            str(MEET_PROFILE),
-            channel="chrome",
-            headless=False,
-            viewport={"width": 1280, "height": 900},
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--use-fake-ui-for-media-stream",
-                "--use-fake-device-for-media-stream",
-            ]
-        )
-        page = ctx.pages[0] if ctx.pages else ctx.new_page()
-
+        ctx = None
         try:
+            MEET_PROFILE.mkdir(parents=True, exist_ok=True)
+            ctx = p.chromium.launch_persistent_context(
+                str(MEET_PROFILE),
+                channel="chrome",
+                headless=False,
+                viewport={"width": 1280, "height": 900},
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--use-fake-ui-for-media-stream",
+                    "--use-fake-device-for-media-stream",
+                ]
+            )
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
             logger.info(f"Meet bot: navigating to {url}")
             page.goto(url, timeout=60000)
             page.wait_for_timeout(4000)
@@ -207,9 +296,24 @@ def _join_meet_sync(url: str, return_time: str, notes_path: str, stop_flag_file:
                     continue
 
             if not joined:
+                _status.update(state="failed", detail="No Join button found")
                 return f"Could not find a Join button on {url}. The meet may require a Google sign-in or may not be live yet."
 
-            logger.info("Meet bot: joined the call, watching captions.")
+            # Meet can leave us in a waiting room after the button click.  Do not
+            # claim success or start a recording until an actual in-call control is visible.
+            admission = ("unknown", "Admission has not been confirmed")
+            for _ in range(30):
+                admission = _admission_state(page)
+                if admission[0] in {"admitted", "rejected"}:
+                    break
+                page.wait_for_timeout(1000)
+            if admission[0] != "admitted":
+                _status.update(state=admission[0], detail=admission[1])
+                transcript_lines.append(f"[{datetime.now():%H:%M}] -- {admission[1]} --")
+                return admission[1]
+
+            _status.update(state="recording", detail="Admitted; recording captions and attendance")
+            logger.info("Meet bot: admission confirmed; watching captions.")
             transcript_lines.append(f"[{datetime.now():%H:%M}] -- Jarvis joined the meeting (observing) --")
 
             # Enable captions (c shortcut)
@@ -218,6 +322,7 @@ def _join_meet_sync(url: str, return_time: str, notes_path: str, stop_flag_file:
                 page.wait_for_timeout(1000)
             except Exception:
                 pass
+            _open_participant_panel(page)
 
             # --- Main caption watching loop ---
             # --- Main caption watching loop ---
@@ -246,13 +351,16 @@ def _join_meet_sync(url: str, return_time: str, notes_path: str, stop_flag_file:
                     line = f"[{datetime.now():%H:%M}] {caption_text}"
                     transcript_lines.append(line)
 
-                    # Check if Arjun is mentioned
-                    if re.search(r"\barjun\b", caption_text, re.I):
-                        reply_key = caption_text[:60]
-                        if reply_key not in replied_to and replied_count < 10:
-                            replied_to.add(reply_key)
-                            replied_count += 1
-                            _send_chat_message(page, f"Arjun is not here right now — he'll be back in {return_time}.")
+                # Record membership changes continuously. Meet only exposes the
+                # roster while its people panel is available, so this is best-effort.
+                if now - last_participant_poll >= 5:
+                    current = _participant_snapshot(page)
+                    for name in sorted(current - participants):
+                        transcript_lines.append(f"[{datetime.now():%H:%M}] -- participant joined: {name} --")
+                    for name in sorted(participants - current):
+                        transcript_lines.append(f"[{datetime.now():%H:%M}] -- participant left: {name} --")
+                    participants = current
+                    last_participant_poll = now
 
                 # Save every 2 minutes
                 if now - last_save > 120:
@@ -264,43 +372,18 @@ def _join_meet_sync(url: str, return_time: str, notes_path: str, stop_flag_file:
         except Exception as exc:  # noqa: BLE001
             logger.error(f"Meet bot error: {exc}")
             transcript_lines.append(f"[ERROR] {exc}")
+            _status.update(state="error", detail=str(exc))
         finally:
             _save_notes()
-            try:
-                ctx.close()
-            except Exception:
-                pass
+            if ctx is not None:
+                try:
+                    ctx.close()
+                except Exception:
+                    pass
 
+    if _status["state"] == "recording":
+        _status.update(state="stopped", detail="Recording stopped")
     return "\n".join(transcript_lines[-30:])
-
-
-def _send_chat_message(page, text: str) -> None:
-    """Type a message in the Google Meet chat panel."""
-    try:
-        # Open chat sidebar
-        for label in ["Chat with everyone", "Chat", "Open chat"]:
-            try:
-                btn = page.get_by_label(label, exact=False).first
-                if btn and btn.is_visible(timeout=2000):
-                    btn.click()
-                    page.wait_for_timeout(800)
-                    break
-            except Exception:
-                pass
-        # Find the chat input and type
-        for sel in ["[aria-label='Send a message']", "textarea[placeholder]", "[contenteditable='true']"]:
-            try:
-                inp = page.wait_for_selector(sel, timeout=3000)
-                if inp:
-                    inp.click()
-                    inp.fill(text)
-                    page.keyboard.press("Enter")
-                    logger.info(f"Meet bot: sent chat '{text[:60]}'")
-                    return
-            except Exception:
-                pass
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(f"Meet bot: couldn't send chat message: {exc}")
 
 
 # --------------------------------------------------------------------------- async public API
@@ -308,23 +391,21 @@ def _send_chat_message(page, text: str) -> None:
 async def join_meet(url: str, return_time: str, config=None) -> str:
     """Join a Google Meet and start taking notes in the background.
 
-    If url is empty, auto-detects the active Meet from the browser.
+    If url is empty, uses the configured default Meet URL.
     Returns the path to the notes file, or an error string.
     """
-    global _bot_task, _notes_path, _return_time, _transcript, _stop_event
+    global _bot_task, _notes_path, _return_time, _transcript, _stop_event, _status
 
-    # --- Auto-detect URL if not provided ---
+    # A known default keeps voice requests predictable. The active-tab detector
+    # remains useful for callers that explicitly supply its result.
     if not url or not url.strip():
-        detected = await asyncio.to_thread(_detect_active_meet)
-        if not detected:
-            return ("I couldn't find an active Google Meet in your browser. "
-                    "Make sure the Meet tab is open, or copy the link and I'll pick it up from your clipboard.")
-        url = detected
+        url = DEFAULT_MEET_URL
 
     _return_time = return_time or "soon"
     _notes_path  = _notes_file()
     _stop_event  = asyncio.Event()
     _transcript  = []
+    _status = {"state": "starting", "detail": "Opening Meet", "url": url, "started_at": datetime.now().isoformat(timespec="seconds")}
 
     stop_flag = str(_notes_path) + ".stop"
     try:
@@ -356,6 +437,7 @@ async def stop_meet() -> str:
             pass
 
     if _bot_task and not _bot_task.done():
+        _status.update(state="stopping", detail="Waiting for recorder to save notes")
         try:
             await asyncio.wait_for(_bot_task, timeout=10)
         except (asyncio.TimeoutError, asyncio.CancelledError):

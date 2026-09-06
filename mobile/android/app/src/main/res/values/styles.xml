@@ -1,0 +1,6 @@
+<resources>
+    <style name="Theme.Jarvis" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#20d9ff</item>
+    </style>
+</resources>

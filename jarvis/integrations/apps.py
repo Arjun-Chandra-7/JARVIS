@@ -82,28 +82,48 @@ def phone_ring(device_id: str | None = None) -> bool:
 
 
 def adb_status() -> str:
-    """'ready' | 'unauthorized' | 'none' | 'no-adb' — whether a phone is reachable over ADB."""
+    """Return the ADB connection state without attempting to change the phone.
+
+    Values are ``ready``, ``unauthorized``, ``offline``, ``none``, ``server-error`` and
+    ``no-adb``.  Keeping a daemon-start failure distinct from "no phone" makes the
+    mirror error actionable (and avoids falsely asking the user to reconnect a phone).
+    """
     if not shutil.which("adb"):
         return "no-adb"
     try:
-        out = subprocess.run(["adb", "devices"], env=_env(), timeout=6, capture_output=True, text=True).stdout
+        result = subprocess.run(
+            ["adb", "devices"], env=_env(), timeout=6, capture_output=True, text=True
+        )
     except Exception:  # noqa: BLE001
-        return "none"
+        return "server-error"
+    if result.returncode != 0:
+        return "server-error"
+    out = result.stdout
     rows = [r for r in out.splitlines()[1:] if r.strip()]
     if any(r.endswith("\tdevice") for r in rows):
         return "ready"
     if any("unauthorized" in r for r in rows):
         return "unauthorized"
+    if any("\toffline" in r for r in rows):
+        return "offline"
     return "none"
 
 
 def phone_mirror() -> tuple[bool, str]:
-    """Mirror the phone via scrcpy. Returns (ok, message) — honest about connection problems."""
+    """Launch a controllable scrcpy mirror after validating the ADB transport.
+
+    This does not issue any command to the phone until ``scrcpy`` starts.  It is safe
+    to call as a connectivity check; scrcpy itself opens the normal mirror window.
+    """
     if not shutil.which("scrcpy"):
         return False, "scrcpy isn't installed (sudo apt install scrcpy)."
     st = adb_status()
     if st == "unauthorized":
         return False, "Your phone is showing a 'Allow USB debugging?' prompt — tap Allow, then try again."
+    if st == "offline":
+        return False, "Your phone is connected but ADB reports it offline. Reconnect the USB cable, unlock it, then try again."
+    if st == "server-error":
+        return False, "ADB could not start or connect to its local server. Run `adb kill-server && adb start-server`, then try again."
     if st != "ready":
         return False, ("No phone detected over USB. Plug it in, turn on USB debugging in Developer "
                        "options, and set the USB mode to File Transfer.")

@@ -9,6 +9,12 @@ node_modules/
 */node_modules/
 build/
 dist/
+mobile/android/.tooling/
+mobile/android/.gradle/
+mobile/android/build/
+mobile/android/app/build/
+mobile/android/app/src/main/assets/model-en-us/
+mobile/android/*.apk
 .git_backup/
 .claude/
 .ruff_cache/

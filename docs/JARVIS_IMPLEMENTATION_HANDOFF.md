@@ -1,0 +1,86 @@
+# JARVIS implementation handoff
+
+Continuation state for the multi-milestone work that resumed after Codex hit its rate limit.
+
+## Current milestone: B (coding orchestration) — starting
+
+## Milestone A — STABILIZE CODEX WORK ✅ committed
+
+Validated / repaired Codex's interrupted changes:
+
+- **One command router.** `jarvis/commands.py::handle()` is the single deterministic dispatch
+  path. Both brain cores (`chatgpt_core.send`, `groq_core.send`) and web `/chat` call it first;
+  it falls through to `coding_jobs.handle_message` then returns `None` → LLM. No recursion:
+  `coding_jobs.handle_message` never calls back into the agent/router.
+- **Notification preferences** (`jarvis/preferences.py`): merge-preserving writes,
+  `~/.local/share/jarvis/preferences.json`, cross-process. Categories are separate:
+  `notifications` (passive readouts), `job_alerts` (task completion), and `critical` always
+  speaks. `jobs/notify.py::notify(..., category=)` gates on the right one. Muting readouts no
+  longer silences Jarvis's direct answers or job-completion alerts.
+- **Voice/STT**: kept Codex's 16 kHz resample, vocabulary prompt, bad-segment filter
+  (`local_stt.py`), 300 ms VAD pre-roll (`vad.py`), `whisper_beam=5` + `stt_language`/
+  `stt_vocabulary` config. Tests cover resample + pre-roll.
+- **Away mode single owner**: `jarvis/agent/pa_daemon.py` is the ONLY automatic WhatsApp
+  auto-responder. Removed dead `VoiceSession._away_converse`. Voice process now reads away
+  state from the shared file (`away.is_away(self.config)`) so it stays silent while away even
+  when away was set from the web process. `groq_tools`: `set_available`/`set_pa_status` now
+  persist via `config` and start the daemon; `process_incoming_communication` is passive
+  (records only, never auto-replies); `control_laptop_full` now goes through the destructive-
+  command confirm gate like `run_bash`.
+- **Phone open**: `commands.handle` "open my phone" → `apps.phone_mirror()`; returns the
+  verbatim failure string on failure, "Opening your phone, sir." only on success. `apps.py`
+  distinguishes `offline` / `server-error` / `unauthorized` / `none` / `no-adb`.
+- **Sunshine**: `scripts/repair-sunshine.py` was already executed by Codex. Verified live:
+  ONE instance (`systemctl --user status sunshine` active, PID stable), autostart `.desktop`
+  is `Hidden=true`, unit is `enabled` + `Restart=on-failure`, ports 47984/47989/47990/48010
+  all owned by the single pid, portal restore token present (`~/.var/app/dev.lizardbyte.app.
+  Sunshine/config/sunshine/portal_token`) so no per-login dialog, and `sunshine.log` shows
+  `[portalgrab]` + pipewire + NVENC capture pipeline ready. Nothing to change.
+- **requirements.txt**: added `claude-agent-sdk` (was imported, unlisted). Kept Codex's
+  fastapi/uvicorn/pydantic/scipy/dbus-next/faster-whisper/openwakeword/piper-tts additions.
+- `RemoteAgent` now sends a stable `session_id` (`"voice"`) to `/chat` so voice coding
+  dialogue is isolated from the text REPL's `"local"` session.
+
+### Tests: `python -m pytest tests/ -q` → 40 passed
+New: `tests/test_commands_routing.py` (toggle variations + persistence + fresh-process +
+category gating + truthful phone + away enter/exit + plain-chat pass-through).
+
+### Known runtime state
+- Sunshine service healthy and capturing.
+- WhatsApp Node bridge / KDE Connect / Google OAuth not verified live this session (no creds
+  exercised); code paths import clean.
+
+### Deferred from A (non-blocking, noted for later)
+- Voice still has local fast-path intercepts (executive wake briefing, phone ring) that call
+  the same underlying helpers as `commands.handle`. Not double-execution; consolidate if it
+  ever drifts.
+- `omnicore.analyze_text_for_schedule` still writes `schedule.json` from unverified LLM JSON.
+  Not a WhatsApp-reply path; revisit under the security pass.
+- `away-state.json` has no cross-process write lock (voice + pa_daemon both write). Duplicate
+  *replies* are prevented by the `away-claims/` O_EXCL lock; only event-log races remain.
+
+## Milestone B — next steps
+1. `coding_jobs.py` is largely built (provider dialogue, detached worker, durable state,
+   `create_external`/`record_event`, `POST /coding/events`). Gaps to close:
+   - Wire `coding_jobs.subscribe()` → webserver `/events` SSE broadcast.
+   - On terminal status for a **Jarvis-initiated** job: speak completion + short summary
+     (`notify(category="job")`) and emit HUD event + a short sound. External jobs: sound +
+     HUD only.
+   - Broaden the "in VS Code" task regex (currently misses "in the VS Code project…").
+   - Optional: light `pgrep` poller to auto-register externally-started `claude`/`codex`/`agy`
+     processes as external jobs.
+   - Model/effort: try enumerating from `claude --help` / `codex --help` instead of only the
+     hardcoded `EFFORTS`.
+2. Add tests: subscribe→event fan-out, completion summary text, external pgrep registration.
+
+## Later milestones
+- C: WhatsApp PA + contact/conversation memory (incremental ingestion, rolling summaries,
+  targeted retrieval; reuse the vault). `whatsapp.import_context`/`retrieve_imported_context`
+  already exist as the local-only base.
+- D: Meet assistant state machine (`meet_bot.py` has `status()` + states; verify admission,
+  participants, captions, saved summary, `/meet/status`).
+- E: Android remote (`jarvis/mobile.py`, `scripts/pair-mobile.py`, `mobile/android/*`) over
+  Tailscale; scrutinise `mobile.authorize` middleware for auth bypass.
+
+## Commits
+- (Milestone A) `fix: stabilize voice commands, notifications, away mode, sunshine` — see git log.

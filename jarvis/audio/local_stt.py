@@ -28,16 +28,28 @@ def transcribe(
     sample_rate: int = 16000,
     model_name: str = "small.en",
     beam_size: int = 5,
+    language: str = "en",
+    vocabulary: str = "Jarvis, Arjun, WhatsApp, VS Code, Codex, Claude, Antigravity, Opera GX, Google Meet",
 ) -> str:
     if not pcm_bytes:
         return ""
     audio = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+    if sample_rate <= 0:
+        raise ValueError("sample_rate must be positive")
+    if sample_rate != 16000:
+        from scipy.signal import resample_poly
+        from math import gcd
+        divisor = gcd(sample_rate, 16000)
+        audio = resample_poly(audio, 16000 // divisor, sample_rate // divisor)
     model = _get_model(model_name)
     segments, _info = model.transcribe(
         audio,
-        language="en",
-        beam_size=beam_size,
+        language=None if language == "auto" else language,
+        initial_prompt=vocabulary,
+        beam_size=max(1, beam_size),
         vad_filter=True,  # faster-whisper's internal Silero VAD cleans non-speech
         condition_on_previous_text=False,
     )
-    return " ".join(seg.text.strip() for seg in segments).strip()
+    return " ".join(seg.text.strip() for seg in segments
+                    if getattr(seg, "no_speech_prob", 0) < 0.7
+                    and getattr(seg, "avg_logprob", 0) > -1.2).strip()

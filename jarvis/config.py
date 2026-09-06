@@ -111,7 +111,10 @@ class Config:
     # local (keyless) voice backend: openWakeWord + Whisper + Piper
     voice_backend: str = field(default_factory=lambda: os.environ.get("JARVIS_VOICE_BACKEND", "auto"))
     whisper_model: str = field(default_factory=lambda: os.environ.get("JARVIS_WHISPER_MODEL", "small.en"))
-    whisper_beam: int = field(default_factory=lambda: _int("JARVIS_WHISPER_BEAM", 1))  # 1=fast, 5=accurate
+    whisper_beam: int = field(default_factory=lambda: _int("JARVIS_WHISPER_BEAM", 5))
+    stt_language: str = field(default_factory=lambda: os.environ.get("JARVIS_STT_LANGUAGE", "en"))
+    stt_vocabulary: str = field(default_factory=lambda: os.environ.get(
+        "JARVIS_STT_VOCABULARY", "Jarvis, Arjun, WhatsApp, VS Code, Codex, Claude, Antigravity, agy, Opera GX, Google Meet"))
     piper_model: str = field(
         default_factory=lambda: os.environ.get(
             "JARVIS_PIPER_MODEL",
