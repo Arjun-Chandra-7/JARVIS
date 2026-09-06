@@ -683,10 +683,9 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
           {"url": {"type": "string"}, "return_time": {"type": "string"}})  # url not required — auto-detected
     async def join_meet_and_take_notes(a):
         from ..integrations import meet_bot
-        url = a.get("url", "") or ""
-        return_time = a.get("return_time", "soon")
-        notes_path = await meet_bot.join_meet(url, return_time, config)
-        return f"Meet request: {notes_path}. Status: {meet_bot.status()}"
+        msg = await meet_bot.join_meet(a.get("url", "") or "", a.get("return_time", "soon"), config)
+        st = meet_bot.status()
+        return f"{msg} (state: {st['state']})"
 
     @tool("stop_meet_notes", "Stop the Google Meet bot and retrieve the full meeting notes transcript.", {})
     async def stop_meet_notes(a):

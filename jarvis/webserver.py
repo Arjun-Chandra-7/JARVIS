@@ -168,6 +168,13 @@ async def meet_status():
     return status()
 
 
+@app.get("/meet/summary")
+async def meet_summary():
+    from .integrations.meet_bot import status
+    s = status()
+    return {"state": s["state"], "summary": s.get("summary", ""), "vault_note": s.get("vault_note")}
+
+
 @app.get("/notifications")
 async def notification_status():
     from .preferences import notifications_enabled

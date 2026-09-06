@@ -103,13 +103,26 @@ def _detect_active_meet() -> Optional[str]:
 MEET_PROFILE = Path("~/.config/jarvis/meet-profile").expanduser()
 NOTES_DIR    = Path("~/.local/share/jarvis").expanduser()
 
+# Canonical lifecycle states exposed by status(). Nothing else should be reported.
+STATES = ("idle", "opening", "waiting_for_admission", "joined", "recording_notes",
+          "disconnected", "completed", "failed")
+
 # Global bot state
 _bot_task: Optional[asyncio.Task] = None
 _notes_path: Optional[Path]       = None
 _return_time: str                  = ""
 _transcript: list[str]             = []
 _stop_event: asyncio.Event         = asyncio.Event()
-_status: dict = {"state": "idle", "detail": "", "url": "", "started_at": None}
+_status: dict = {"state": "idle", "detail": "", "url": "", "started_at": None,
+                 "summary": "", "vault_note": None}
+
+
+def _set_state(state: str, detail: str = "") -> None:
+    if state not in STATES:
+        state = "failed"
+    _status["state"] = state
+    if detail:
+        _status["detail"] = detail
 
 
 def _ensure_profile() -> None:
@@ -123,7 +136,7 @@ def _notes_file() -> Path:
 
 
 def status() -> dict:
-    """Return a serialisable snapshot for a HUD/API without exposing transcript content."""
+    """Serialisable lifecycle snapshot for the HUD / API. No transcript content."""
     active = _bot_task is not None and not _bot_task.done()
     return {
         "active": active,
@@ -132,7 +145,56 @@ def status() -> dict:
         "url": _status["url"],
         "started_at": _status["started_at"],
         "notes_path": str(_notes_path) if _notes_path else None,
+        "summary": _status.get("summary", ""),
+        "vault_note": _status.get("vault_note"),
     }
+
+
+def _summarize_transcript(lines: list[str], llm=None) -> str:
+    """A short meeting summary. Deterministic by default; one LLM call if provided."""
+    captions = [l for l in lines if "] --" not in l and "] [" not in l and l.strip().endswith("--") is False and "]" in l]
+    joins = [l.split("participant joined:", 1)[1].strip(" -") for l in lines if "participant joined:" in l]
+    body = "\n".join(l.split("] ", 1)[-1] for l in captions)[-4000:]
+    if llm and body.strip():
+        try:
+            out = llm("Summarise this meeting transcript in 3-5 sentences, then list decisions and "
+                      "action items as short bullets. Be factual.\n\n" + body)
+            if out and out.strip():
+                return out.strip()[:1500]
+        except Exception:  # noqa: BLE001
+            pass
+    parts = []
+    if joins:
+        parts.append("Participants seen: " + ", ".join(sorted(set(joins))[:12]) + ".")
+    parts.append(f"{len(captions)} caption line(s) captured.")
+    if captions:
+        parts.append("Last exchange — " + " / ".join(c.split("] ", 1)[-1] for c in captions[-3:]))
+    return " ".join(parts)
+
+
+def _save_vault_note(config, url: str, lines: list[str], summary: str) -> Optional[str]:
+    """Persist the meeting into the Obsidian vault (Meetings/) with a jarvis-authored note."""
+    if config is None or not getattr(config, "vault_path", None):
+        return None
+    try:
+        from ..memory import vault as vaultmod
+        folder = Path(config.vault_path) / "Meetings"
+        folder.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y-%m-%d_%H%M")
+        note = folder / f"{stamp}_meet.md"
+        note.write_text(
+            f"---\nauthor: jarvis\ntype: meeting\nurl: {url}\ndate: {datetime.now():%Y-%m-%d %H:%M}\n---\n\n"
+            f"# Meeting {stamp}\n\n## Summary\n\n{summary}\n\n## Transcript\n\n"
+            + "\n".join(lines) + "\n",
+            encoding="utf-8",
+        )
+        try:
+            vaultmod.git_autocommit(config.vault_path, f"meeting notes {stamp}")
+        except Exception:  # noqa: BLE001
+            pass
+        return str(note)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _admission_state(page) -> tuple[str, str]:
@@ -206,7 +268,7 @@ def _open_participant_panel(page) -> None:
 
 # --------------------------------------------------------------------------- sync playwright core
 
-def _join_meet_sync(url: str, return_time: str, notes_path: str, stop_flag_file: str) -> str:
+def _join_meet_sync(url: str, return_time: str, notes_path: str, stop_flag_file: str, config=None) -> str:
     """Runs in a thread: requests entry, verifies admission, then records notes."""
     from playwright.sync_api import sync_playwright
     import time
@@ -296,8 +358,9 @@ def _join_meet_sync(url: str, return_time: str, notes_path: str, stop_flag_file:
                     continue
 
             if not joined:
-                _status.update(state="failed", detail="No Join button found")
+                _set_state("failed", "No Join button found")
                 return f"Could not find a Join button on {url}. The meet may require a Google sign-in or may not be live yet."
+            _set_state("waiting_for_admission", "Join requested; waiting for confirmation")
 
             # Meet can leave us in a waiting room after the button click.  Do not
             # claim success or start a recording until an actual in-call control is visible.
@@ -306,13 +369,16 @@ def _join_meet_sync(url: str, return_time: str, notes_path: str, stop_flag_file:
                 admission = _admission_state(page)
                 if admission[0] in {"admitted", "rejected"}:
                     break
+                if admission[0] == "waiting":
+                    _set_state("waiting_for_admission", admission[1])
                 page.wait_for_timeout(1000)
             if admission[0] != "admitted":
-                _status.update(state=admission[0], detail=admission[1])
+                _set_state("failed" if admission[0] == "rejected" else "disconnected", admission[1])
                 transcript_lines.append(f"[{datetime.now():%H:%M}] -- {admission[1]} --")
                 return admission[1]
 
-            _status.update(state="recording", detail="Admitted; recording captions and attendance")
+            _set_state("joined", "Admission confirmed")
+            _set_state("recording_notes", "Recording captions and attendance")
             logger.info("Meet bot: admission confirmed; watching captions.")
             transcript_lines.append(f"[{datetime.now():%H:%M}] -- Jarvis joined the meeting (observing) --")
 
@@ -325,9 +391,20 @@ def _join_meet_sync(url: str, return_time: str, notes_path: str, stop_flag_file:
             _open_participant_panel(page)
 
             # --- Main caption watching loop ---
-            # --- Main caption watching loop ---
+            last_admission_check = 0.0
+            dropped_for = 0
             while not Path(stop_flag_file).exists():
                 now = time.time()
+
+                # Notice a mid-meeting drop (host ended it, or the bot was removed).
+                if now - last_admission_check >= 8:
+                    st = _admission_state(page)[0]
+                    dropped_for = dropped_for + 8 if st != "admitted" else 0
+                    last_admission_check = now
+                    if st == "rejected" or dropped_for >= 24:
+                        transcript_lines.append(f"[{datetime.now():%H:%M}] -- disconnected from the meeting --")
+                        _set_state("disconnected", "Left or removed from the meeting")
+                        break
 
                 # Read captions — Google Meet uses several class patterns over time
                 caption_text = ""
@@ -372,7 +449,7 @@ def _join_meet_sync(url: str, return_time: str, notes_path: str, stop_flag_file:
         except Exception as exc:  # noqa: BLE001
             logger.error(f"Meet bot error: {exc}")
             transcript_lines.append(f"[ERROR] {exc}")
-            _status.update(state="error", detail=str(exc))
+            _set_state("failed", str(exc))
         finally:
             _save_notes()
             if ctx is not None:
@@ -381,9 +458,24 @@ def _join_meet_sync(url: str, return_time: str, notes_path: str, stop_flag_file:
                 except Exception:
                     pass
 
-    if _status["state"] == "recording":
-        _status.update(state="stopped", detail="Recording stopped")
-    return "\n".join(transcript_lines[-30:])
+    # Wrap up: summarise, persist to the vault, and land on a terminal state.
+    llm = None
+    if config is not None and getattr(config, "brain", "") in {"gemini", "groq"}:
+        def llm(prompt: str) -> str:
+            from openai import OpenAI
+            base_url, key, model = config.llm_params()
+            if not key:
+                return ""
+            client = OpenAI(base_url=base_url, api_key=key, max_retries=0, timeout=30)
+            r = client.chat.completions.create(model=model, temperature=0.2, max_tokens=300,
+                                               messages=[{"role": "user", "content": prompt}])
+            return (r.choices[0].message.content or "").strip()
+    summary = _summarize_transcript(transcript_lines, llm)
+    _status["summary"] = summary
+    _status["vault_note"] = _save_vault_note(config, url, transcript_lines, summary)
+    if _status["state"] not in {"failed", "disconnected"}:
+        _set_state("completed", "Recording stopped")
+    return summary or "\n".join(transcript_lines[-30:])
 
 
 # --------------------------------------------------------------------------- async public API
@@ -401,11 +493,15 @@ async def join_meet(url: str, return_time: str, config=None) -> str:
     if not url or not url.strip():
         url = DEFAULT_MEET_URL
 
+    if _bot_task is not None and not _bot_task.done():
+        return f"Already in a meeting ({_status['state']}). Say 'stop the meet' first."
+
     _return_time = return_time or "soon"
     _notes_path  = _notes_file()
     _stop_event  = asyncio.Event()
     _transcript  = []
-    _status = {"state": "starting", "detail": "Opening Meet", "url": url, "started_at": datetime.now().isoformat(timespec="seconds")}
+    _status = {"state": "opening", "detail": "Opening Meet", "url": url,
+               "started_at": datetime.now().isoformat(timespec="seconds"), "summary": "", "vault_note": None}
 
     stop_flag = str(_notes_path) + ".stop"
     try:
@@ -415,13 +511,14 @@ async def join_meet(url: str, return_time: str, config=None) -> str:
 
     async def _run():
         result = await asyncio.to_thread(
-            _join_meet_sync, url, _return_time, str(_notes_path), stop_flag
+            _join_meet_sync, url, _return_time, str(_notes_path), stop_flag, config
         )
-        logger.info(f"Meet bot finished. Notes at {_notes_path}")
+        logger.info(f"Meet bot finished ({_status['state']}). Notes at {_notes_path}")
         return result
 
     _bot_task = asyncio.create_task(_run())
-    return str(_notes_path)
+    return (f"Opening the Meet now (mic and camera off). I'll confirm once I'm actually admitted "
+            f"and start taking notes — check status for progress. Notes: {_notes_path}")
 
 
 async def stop_meet() -> str:
@@ -437,12 +534,16 @@ async def stop_meet() -> str:
             pass
 
     if _bot_task and not _bot_task.done():
-        _status.update(state="stopping", detail="Waiting for recorder to save notes")
+        _status["detail"] = "Waiting for recorder to save notes"
         try:
-            await asyncio.wait_for(_bot_task, timeout=10)
+            result = await asyncio.wait_for(asyncio.shield(_bot_task), timeout=15)
+            if result:
+                return result
         except (asyncio.TimeoutError, asyncio.CancelledError):
             _bot_task.cancel()
 
+    if _status.get("summary"):
+        return _status["summary"]
     if _notes_path and Path(_notes_path).exists():
         try:
             return Path(_notes_path).read_text(encoding="utf-8")

@@ -2,7 +2,36 @@
 
 Continuation state for the multi-milestone work that resumed after Codex hit its rate limit.
 
-## Current milestone: D (Meet assistant) — next
+## Current milestone: E (Android remote) — next
+
+## Milestone D — STATEFUL GOOGLE MEET NOTE ASSISTANT ✅ committed
+
+Built on Codex's `meet_bot.py` (join mic/cam off, admission verification, caption +
+participant scraping with DOM fallbacks, never sends chat). Added:
+
+- **Canonical lifecycle** — `STATES = idle / opening / waiting_for_admission / joined /
+  recording_notes / disconnected / completed / failed`, driven by `_set_state()` (any
+  unknown value collapses to `failed`). Every old ad-hoc state string is mapped over.
+- **Mid-meeting disconnect detection** — the caption loop re-checks `_admission_state`
+  every 8 s; a `rejected` result or 24 s with no in-call control → `disconnected`,
+  notes saved up to that point.
+- **Meeting summary** — `_summarize_transcript()` (deterministic: participants seen,
+  caption count, last exchange; or one LLM call when a Gemini/Groq key is set). Exposed
+  in `status()["summary"]` and returned by `stop_meet()`.
+- **Vault persistence** — `_save_vault_note()` writes `<vault>/Meetings/<stamp>_meet.md`
+  with `author: jarvis` frontmatter + summary + transcript, then `git_autocommit`.
+- **Truthful join** — `join_meet()` no longer returns a bare path claiming success; it
+  returns "Opening the Meet now… I'll confirm once I'm actually admitted", refuses a
+  second concurrent meeting, and starts in state `opening`.
+- **Endpoints** — kept `GET /meet/status`; added `GET /meet/summary`
+  (`{state, summary, vault_note}`).
+- **Voice** — `VoiceSession._watch_meet()` announces once when a joined Meet reaches
+  `completed` / `disconnected` / `failed`, speaking the summary on completion.
+
+Tests: `python -m pytest tests/ -q` → 66 passed. New `tests/test_meet_states.py`;
+updated the return-contract assertion in `tests/test_phone_meet.py`.
+Not exercised live (needs a real meeting + Google-signed-in `meet-profile` + host
+admission) — DOM scrapers keep Codex's graceful fallbacks.
 
 ## Milestone C — WHATSAPP PA + CONTACT CONTEXT MEMORY ✅ committed
 

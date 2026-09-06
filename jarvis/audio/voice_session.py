@@ -525,6 +525,29 @@ class VoiceSession:
                                 f"returned on {where} with: {job.get('summary') or 'no notable output'}")
             first_pass = False
 
+    async def _watch_meet(self) -> None:
+        """Announce once when a Meet the bot joined finishes, with its summary."""
+        import httpx
+        from ..agent.remote import web_base
+
+        announced = ""
+        while True:
+            await asyncio.sleep(10)
+            try:
+                s = httpx.get(f"{web_base()}/meet/status", timeout=4).json()
+            except Exception:  # noqa: BLE001
+                continue
+            key = f"{s.get('started_at')}|{s.get('state')}"
+            if s.get("state") in {"completed", "disconnected", "failed"} and key != announced and s.get("started_at"):
+                announced = key
+                self.on_event("reply", f"Meet {s['state']}. {s.get('summary', '')[:160]}")
+                if s.get("state") == "completed":
+                    self._speak(f"The meeting has ended, sir. {s.get('summary') or 'Notes are saved.'}")
+                elif s.get("state") == "disconnected":
+                    self._speak("I was disconnected from the meeting, sir. I saved the notes up to that point.")
+                else:
+                    self._speak(f"I couldn't stay in the meeting, sir. {s.get('detail', '')}")
+
     def _augment(self, transcript: str) -> str:
         """Attach live context to a spoken turn: a fresh screenshot (if screen-share is on) and
         the last unanswered phone message (so "reply to him …" resolves without re-listening)."""
@@ -574,6 +597,7 @@ class VoiceSession:
         asyncio.create_task(self._watch_screen())  # proactive alerts during live screen-share
         asyncio.create_task(self._watch_afk(agent))  # welcome-back brief after a long idle gap
         asyncio.create_task(self._watch_coding_jobs())  # speak coding-job completions + chime
+        asyncio.create_task(self._watch_meet())  # announce when a joined Meet ends, with summary
 
         if self.config.screen_always:  # keep screen vision on from the start
             from ..vision import live

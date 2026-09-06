@@ -42,8 +42,11 @@ class PhoneAndMeetTests(unittest.TestCase):
                 result = await meet_bot.join_meet("", "soon")
             return result
 
-        self.assertEqual(asyncio.run(run()), "/tmp/test-meet-notes.txt")
+        result = asyncio.run(run())
+        self.assertIn("/tmp/test-meet-notes.txt", result)          # path is disclosed, not the whole reply
+        self.assertNotEqual(result, "/tmp/test-meet-notes.txt")     # truthful: not "joined", just "opening"
         self.assertEqual(meet_bot.status()["url"], meet_bot.DEFAULT_MEET_URL)
+        self.assertEqual(meet_bot.status()["state"], "opening")
         meet_bot._bot_task = None
 
     def test_admission_requires_an_in_call_control(self):
