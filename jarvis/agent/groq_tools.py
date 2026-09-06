@@ -343,6 +343,28 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         from ..integrations import contacts
         return contacts.remember(a.get("name", ""), a.get("number", ""), a.get("note", ""))["message"]
 
+    @tool("contact_context",
+          "What Jarvis knows about a person from past WhatsApp chats: frequency, recurring topics, "
+          "pending items, last interaction. Use before messaging or when the user asks about someone. "
+          "Compact derived summary only — not raw history.",
+          {"name": {"type": "string"}}, ["name"])
+    async def contact_context(a):
+        from ..memory import contacts_index
+        out = await asyncio.to_thread(contacts_index.recall, config, a.get("name", ""))
+        return out or f"No prior WhatsApp context for '{a.get('name', '')}'."
+
+    @tool("conversation_search",
+          "Search your own past WhatsApp conversations for a topic and return the matching lines "
+          "(who said what). Local, private. Use when the user asks 'what did X say about Y'.",
+          {"query": {"type": "string"}}, ["query"])
+    async def conversation_search(a):
+        from ..memory import contacts_index
+        rows = await asyncio.to_thread(
+            lambda: contacts_index.search(config, a.get("query", ""), authorized=True, limit=12))
+        if not rows:
+            return "Nothing in your local conversation index matches that."
+        return "\n".join(f"{r['name']}{' (you)' if r['from_me'] else ''}: {r['text']}" for r in rows)
+
     @tool("message_person",
           "Message someone by INTENT — you give the person's name and what the message is ABOUT, and "
           "Jarvis composes a natural, friendly WhatsApp message and sends it. Use this for requests like "

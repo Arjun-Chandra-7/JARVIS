@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import re
 from datetime import datetime
 from typing import Any, Optional
 
@@ -72,6 +73,11 @@ async def _handle_new_message(msg: dict, config) -> None:
         result = whatsapp.send(jid, reply)
         status = "sent" if result.get("ok") else "send_failed"
     away.record_event(config, {"id": mid, "type": "whatsapp", "sender": sender, "jid": jid, "text": text, "reply": reply or "", "status": status})
+    try:  # keep the local contact record current without a second WhatsApp fetch
+        from ..memory import contacts_index
+        contacts_index.note_reply(config, jid, sender, text, reply or "")
+    except Exception:  # noqa: BLE001
+        pass
     logger.info("away mode handled direct WhatsApp from %s (%s)", sender, status)
 
 
@@ -86,19 +92,43 @@ def events_for_debrief(config) -> list[dict]:
     return away.events(config)
 
 
+_NEEDS_YOU_RE = re.compile(r"\?|\b(?:can you|could you|please|need|asap|urgent|call me|send me|"
+                           r"let me know|when will|are you|will you|reminder|deadline)\b", re.I)
+
+
 def _generate_brief(config) -> str:
+    """Structured debrief: per person — what they wanted, whether Jarvis replied, what needs you."""
     entries = events_for_debrief(config)
     if not entries:
         return "All quiet while you were away — no direct messages or calls came in."
-    lines = [f"Away-mode debrief — {len(entries)} item(s):"]
-    for item in entries:
-        when = str(item.get("at", ""))[11:16] or "?"
-        if item.get("type") == "call":
-            lines.append(f"- [{when}] Call from {item.get('sender', 'unknown')}.")
+
+    calls = [e for e in entries if e.get("type") == "call"]
+    by_person: dict[str, list[dict]] = {}
+    for e in entries:
+        if e.get("type") != "call":
+            by_person.setdefault(str(e.get("sender") or "Unknown"), []).append(e)
+
+    lines = [f"Away-mode debrief — {len(by_person)} conversation(s)"
+             + (f", {len(calls)} call(s)" if calls else "") + "."]
+    for person, items in by_person.items():
+        first, last = items[0], items[-1]
+        wanted = str(first.get("text", "")).strip()[:200] or "(no message text)"
+        replied = [i for i in items if i.get("reply")]
+        lines.append(f"\n• {person} ({len(items)} msg{'s' if len(items) != 1 else ''})")
+        lines.append(f"  wanted: {wanted}")
+        if replied:
+            r = replied[-1]
+            lines.append(f"  Jarvis replied ({r.get('status', 'unknown')}): {str(r['reply']).strip()[:160]}")
         else:
-            lines.append(f"- [{when}] {item.get('sender', 'unknown')}: {str(item.get('text', ''))[:180]}")
-            if item.get("reply"):
-                lines.append(f"  Jarvis: {str(item['reply'])[:160]} ({item.get('status', 'unknown')})")
+            lines.append("  Jarvis did not reply.")
+        tail = str(last.get("text", "")).strip()
+        if tail and _NEEDS_YOU_RE.search(tail) and last is not first:
+            lines.append(f"  → needs you: {tail[:200]}")
+        elif _NEEDS_YOU_RE.search(wanted) and not replied:
+            lines.append("  → needs you: unanswered request above.")
+    for c in calls:
+        when = str(c.get("at", ""))[11:16] or "?"
+        lines.append(f"\n• Call from {c.get('sender', 'unknown')} at {when}.")
     return "\n".join(lines)
 
 

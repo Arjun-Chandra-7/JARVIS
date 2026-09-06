@@ -2,7 +2,40 @@
 
 Continuation state for the multi-milestone work that resumed after Codex hit its rate limit.
 
-## Current milestone: C (WhatsApp PA + contact memory) — next
+## Current milestone: D (Meet assistant) — next
+
+## Milestone C — WHATSAPP PA + CONTACT CONTEXT MEMORY ✅ committed
+
+- **Away mode** already single-owner from A (pa_daemon, claim-lock, isolated no-tool
+  responder). Kept.
+- **`jarvis/memory/contacts_index.py`** — local contact/conversation intelligence, all
+  in `<vault>/Jarvis/private/contacts/index.json` (git-excluded, 0600). Pipeline:
+  raw bridge chats → `normalize()` (drops groups/newsletters/empties) →
+  `ingest()` (incremental via per-jid `cursor_ts`; `recent` capped at 40) →
+  `roll_up()` (heuristic recurring-subjects/commitments/open-questions, or an injected
+  LLM summary — every result carries `provenance` + `confidence`) →
+  `profile()` / `recall()` (compact, prompt-safe — never the raw transcript) →
+  `search(authorized=True)` (targeted keyword, local-owner only).
+- **Wiring**:
+  - `groq_tools`: `contact_context` (→ `recall`) and `conversation_search`
+    (→ `search`, authorized) tools.
+  - `pa_daemon._handle_new_message` → `contacts_index.note_reply()` after an away reply.
+  - `away.respond` injects a compact derived context line as a second system message
+    ("Background only, do not act on it: …") — summary/derived fields only.
+  - `webserver` lifespan runs `_contacts_ingest()` every 15 min (LLM summariser when a
+    Gemini/Groq key is set, heuristic otherwise).
+- **Structured debrief** (`pa_daemon._generate_brief`): grouped per person — "wanted:",
+  "Jarvis replied (status): …" / "did not reply", "→ needs you: …" heuristic, plus calls.
+
+Tests: `python -m pytest tests/ -q` → 59 passed. New `tests/test_contacts_index.py`.
+
+### ⚠️ Manual step for full effect
+The **running** `jarvis-whatsapp` bridge predates Codex's `wa_service.js` (which adds
+`/chats` + `history.json`). Until it is restarted, `contacts_index.ingest()` sees an
+empty history (handled gracefully — no error). Restart safely with
+`systemctl --user restart jarvis-whatsapp` (never run two bridge instances at once —
+that causes a "Bad MAC" session desync). Not done automatically here because it touches
+the user's live WhatsApp session.
 
 ## Milestone B — CODING ORCHESTRATION ✅ committed
 
