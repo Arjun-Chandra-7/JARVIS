@@ -32,14 +32,25 @@ Tests: `python -m pytest tests/ -q` → 76 passed. New `tests/test_mobile_auth.p
 (token boundary, fail-closed, rate-limit, forwarded-header gating, control validation,
 transcribe body check).
 
-### Remaining for E
-- **APK build**: `scripts/build-android.sh` running in background (tooling pre-staged in
-  `mobile/android/.tooling/`). Check `app/build/outputs/apk/debug/app-debug.apk`.
-- **Physical steps (user)**: `adb install -r <apk>`; grant mic + notification perms;
-  in-app Settings → tailnet URL + token from `python scripts/pair-mobile.py --show`;
-  run `tailscale serve --bg 8770` on the PC once.
-- Wake word on the phone is Vosk `["jarvis","[unk]"]` in a foreground service, started
-  only from the in-app button (never at boot).
+### APK: BUILT ✅
+`mobile/android/app/build/outputs/apk/debug/app-debug.apk` (~83 MB, bundles the Vosk
+model + JNA native libs). `BUILD SUCCESSFUL` after adding a `kotlin-stdlib` resolution
+force + excluding the legacy `kotlin-stdlib-jdk7/jdk8` split modules (they collided with
+the 1.8.22 stdlib AndroidX pulls in). Rebuild any time with `scripts/build-android.sh`.
+The APK is git-excluded.
+
+### Physical steps for the user (unavoidable)
+1. `adb install -r mobile/android/app/build/outputs/apk/debug/app-debug.apk`
+2. On first launch grant **microphone** + **notifications** when prompted.
+3. `python scripts/pair-mobile.py` on the PC, then `python scripts/pair-mobile.py --show`
+   to read the token.
+4. `tailscale serve --bg 8770` on the PC (phone is already on the tailnet).
+5. App → **Settings**: URL `https://<machine>.<tailnet>.ts.net`, paste the token.
+6. Optional: tap **Start wake** for the on-phone Vosk wake word (foreground service,
+   never auto-starts at boot).
+
+## All milestones A–E committed & pushed to origin/main
+A `d1a4797` · B `2e2d971` · C `782c888` · D `20d9335` · E `3653037` (+ build.gradle fix)
 
 ## Milestone D — STATEFUL GOOGLE MEET NOTE ASSISTANT ✅ committed
 
