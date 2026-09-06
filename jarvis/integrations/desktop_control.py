@@ -76,6 +76,17 @@ def move(x: int, y: int) -> bool:
     return False
 
 
+def move_rel(dx: int, dy: int) -> bool:
+    """Relative pointer move — for a phone trackpad. Bounded so one gesture can't fling the cursor."""
+    dx, dy = max(-400, min(400, int(dx))), max(-400, min(400, int(dy)))
+    tool = available()
+    if tool == "ydotool":
+        return _run(["ydotool", "mousemove", "-x", str(dx), "-y", str(dy)])
+    if tool == "xdotool":
+        return _run(["xdotool", "mousemove_relative", "--", str(dx), str(dy)])
+    return False
+
+
 _YCLICK = {"left": "0xC0", "right": "0xC1", "middle": "0xC2"}
 _XBTN = {"left": "1", "middle": "2", "right": "3"}
 

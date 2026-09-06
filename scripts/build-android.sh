@@ -46,14 +46,16 @@ yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
 set -o pipefail
 "$SDK/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-if [ ! -f "$MODEL_DIR/uuid" ]; then
+# vosk-model-small-en-us-0.15 has no top-level `uuid`; validate on a real model file instead.
+if [ ! -f "$MODEL_DIR/conf/model.conf" ] && [ ! -f "$MODEL_DIR/am/final.mdl" ]; then
   download "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip" "$MODEL_ZIP"
-  rm -rf "$MODEL_DIR"
+  rm -rf "$MODEL_DIR" "$TOOLING/vosk-unpack"
   mkdir -p "$MODEL_DIR"
   unzip -q -o "$MODEL_ZIP" -d "$TOOLING/vosk-unpack"
   source_dir="$(find "$TOOLING/vosk-unpack" -maxdepth 1 -type d -name 'vosk-model-small-en-us-0.15*' | head -n 1)"
   [ -n "$source_dir" ] && cp -a "$source_dir"/. "$MODEL_DIR"/
-  [ -f "$MODEL_DIR/uuid" ] || { echo "Vosk model unpack did not provide uuid" >&2; exit 1; }
+  { [ -f "$MODEL_DIR/conf/model.conf" ] || [ -f "$MODEL_DIR/am/final.mdl" ]; } \
+    || { echo "Vosk model unpack failed (no conf/model.conf or am/final.mdl)" >&2; exit 1; }
 fi
 
 cd "$ANDROID_DIR"

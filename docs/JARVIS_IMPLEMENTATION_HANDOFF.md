@@ -2,7 +2,44 @@
 
 Continuation state for the multi-milestone work that resumed after Codex hit its rate limit.
 
-## Current milestone: E (Android remote) — next
+## Current milestone: E (Android remote) — in progress
+
+## Milestone E — SECURE ANDROID REMOTE (backend + app)
+
+- **`jarvis/mobile.py` hardened**:
+  - `/mobile/*` always token-gated (no localhost exemption); unset token → deny (fail
+    closed). Constant-time `hmac.compare_digest`. Case-insensitive `Bearer` prefix.
+  - Per-host rate limit: >10 bad tokens in 60 s → 429 (bearer-guessing throttle).
+  - `x-forwarded-host` / `forwarded` added to the "treat as remote" header set.
+  - `Control` model gained `dx`/`dy` (bounded relative move) and a `keys` alias;
+    `/mobile/control` "move" uses `desktop_control.move_rel()` when dx/dy present.
+  - New `GET /mobile/status` — one poll: `{ok, brain, online, away, meet,
+    coding_jobs[], cpu, mem}`.
+- **`desktop_control.move_rel(dx,dy)`** — clamped relative pointer move (ydotool /
+  xdotool) for the phone trackpad.
+- **Android app fixes** (`mobile/android/`):
+  - `ApiClient.transcribe()` was called by `WakeService` but missing → added (POSTs raw
+    PCM16 to `/mobile/transcribe`). Added `ApiClient.status()`.
+  - `MainActivity`: status bar polling `/mobile/status` on resume/tap; trackpad sends
+    `dx/dy`; key buttons send `keys`.
+  - Added `mobile/android/gradle.properties` (`android.useAndroidX=true` — the build
+    could not have worked without it).
+- **`scripts/build-android.sh`** — fixed the model-validation guard: vosk-model-small-
+  en-us-0.15 has no top-level `uuid`; now checks `conf/model.conf` / `am/final.mdl`.
+- **`scripts/pair-mobile.py`** — added `--show`; clearer Tailscale instructions.
+
+Tests: `python -m pytest tests/ -q` → 76 passed. New `tests/test_mobile_auth.py`
+(token boundary, fail-closed, rate-limit, forwarded-header gating, control validation,
+transcribe body check).
+
+### Remaining for E
+- **APK build**: `scripts/build-android.sh` running in background (tooling pre-staged in
+  `mobile/android/.tooling/`). Check `app/build/outputs/apk/debug/app-debug.apk`.
+- **Physical steps (user)**: `adb install -r <apk>`; grant mic + notification perms;
+  in-app Settings → tailnet URL + token from `python scripts/pair-mobile.py --show`;
+  run `tailscale serve --bg 8770` on the PC once.
+- Wake word on the phone is Vosk `["jarvis","[unk]"]` in a foreground service, started
+  only from the in-app button (never at boot).
 
 ## Milestone D — STATEFUL GOOGLE MEET NOTE ASSISTANT ✅ committed
 

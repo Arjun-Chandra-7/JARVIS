@@ -42,6 +42,29 @@ final class ApiClient {
         return c.getInputStream();
     }
 
+    /** POST raw mono PCM16 @ 16 kHz to the server's Whisper endpoint; returns the transcript. */
+    static String transcribe(Context context, byte[] pcm) throws Exception {
+        HttpURLConnection c = connection(context, "/mobile/transcribe", "POST");
+        c.setRequestProperty("Content-Type", "application/octet-stream");
+        c.setFixedLengthStreamingMode(pcm.length);
+        c.setDoOutput(true);
+        c.getOutputStream().write(pcm);
+        int status = c.getResponseCode();
+        InputStream stream = status >= 200 && status < 300 ? c.getInputStream() : c.getErrorStream();
+        String result = read(stream);
+        if (status < 200 || status >= 300) throw new IllegalStateException("Transcribe error " + status + ": " + result);
+        return new JSONObject(result.isEmpty() ? "{}" : result).optString("text", "");
+    }
+
+    static JSONObject status(Context context) throws Exception {
+        HttpURLConnection c = connection(context, "/mobile/status", "GET");
+        int status = c.getResponseCode();
+        InputStream stream = status >= 200 && status < 300 ? c.getInputStream() : c.getErrorStream();
+        String result = read(stream);
+        if (status < 200 || status >= 300) throw new IllegalStateException("Status error " + status + ": " + result);
+        return new JSONObject(result.isEmpty() ? "{}" : result);
+    }
+
     private static JSONObject post(Context context, String path, JSONObject body) throws Exception {
         HttpURLConnection c = connection(context, path, "POST");
         c.setDoOutput(true);

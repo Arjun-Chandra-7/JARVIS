@@ -27,6 +27,7 @@ import java.util.ArrayList;
 /** Text-first control surface. Android's recognizer is only a user-tapped dictation feature. */
 public final class MainActivity extends AppCompatActivity {
     private TextView transcript;
+    private TextView statusBar;
     private EditText input;
     private EditText remoteText;
     private ImageView screen;
@@ -45,6 +46,8 @@ public final class MainActivity extends AppCompatActivity {
         Button wake = button("Start wake", v -> requestWake());
         Button dictation = button("Dictate", v -> dictate());
         bar.addView(settings); bar.addView(wake); bar.addView(dictation); root.addView(bar);
+        statusBar = new TextView(this); statusBar.setText("Not connected — set the server URL and token in Settings.");
+        statusBar.setPadding(0, 8, 0, 8); statusBar.setOnClickListener(v -> refreshStatus()); root.addView(statusBar);
         transcript = new TextView(this); transcript.setText("Jarvis mobile ready. Configure your server URL and token.");
         ScrollView scroll = new ScrollView(this); scroll.addView(transcript); root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         LinearLayout compose = new LinearLayout(this); input = new EditText(this); input.setHint("Message Jarvis");
@@ -61,6 +64,27 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private Button button(String text, View.OnClickListener listener) { Button b = new Button(this); b.setText(text); b.setOnClickListener(listener); return b; }
+    @Override protected void onResume() { super.onResume(); refreshStatus(); }
+    private void refreshStatus() {
+        if (Prefs.baseUrl(this).isEmpty()) { statusBar.setText("Not connected — open Settings."); return; }
+        new Thread(() -> {
+            try {
+                JSONObject s = ApiClient.status(this);
+                StringBuilder line = new StringBuilder("● Online");
+                if (s.has("brain")) line.append("  ·  ").append(s.optString("brain"));
+                if (s.optBoolean("away", false)) line.append("  ·  AWAY");
+                if (!s.optString("meet", "idle").equals("idle")) line.append("  ·  Meet: ").append(s.optString("meet"));
+                org.json.JSONArray jobs = s.optJSONArray("coding_jobs");
+                if (jobs != null && jobs.length() > 0) {
+                    JSONObject j = jobs.getJSONObject(0);
+                    line.append("  ·  ").append(j.optString("provider").toUpperCase()).append(" ").append(j.optString("status"));
+                }
+                runOnUiThread(() -> statusBar.setText(line.toString()));
+            } catch (Exception e) {
+                runOnUiThread(() -> statusBar.setText("○ Offline — " + e.getMessage()));
+            }
+        }).start();
+    }
     private void requestWake() { if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) startWake(); else micPermission.launch(Manifest.permission.RECORD_AUDIO); }
     private void startWake() {
         if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS);
