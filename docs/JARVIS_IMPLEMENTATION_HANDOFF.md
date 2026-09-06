@@ -2,7 +2,42 @@
 
 Continuation state for the multi-milestone work that resumed after Codex hit its rate limit.
 
-## Current milestone: B (coding orchestration) — starting
+## Current milestone: C (WhatsApp PA + contact memory) — next
+
+## Milestone B — CODING ORCHESTRATION ✅ committed
+
+- `coding_jobs.py` already had the provider→model→effort dialogue, detached durable
+  worker, `create_external` / `record_event`, `POST /coding/events`. Added:
+  - `summarize(job)` — deterministic result line (git working-tree delta + ANSI-stripped
+    output tail; `failed — <last error>` on failure). Set on every terminal transition
+    in `_execute` and `record_event`.
+  - `scan_provider_processes()` + `manager.sync_external()` — pgrep-based detection of a
+    user-started `codex`/`claude`/`agy` run (skips IDE `app-server`/`mcp`/`.vscode/
+    extensions` plumbing), registers it as an `external` job, and marks it `completed`
+    when the pid is gone. Process instrumentation only.
+  - Broadened the VS Code trigger regex ("...in the VS Code project I'm working on"
+    now matches; casual "Claude vs Codex" chat still reaches the LLM).
+- `webserver.py`: lifespan subscribes to `coding_jobs` events and runs `_coding_watch()`
+  (3 s) → `sync_external()` + emits a `coding_job` SSE event on any status change.
+  Mounts `/assets` (serves `assets/sounds/task-complete.wav`).
+- `voice_session._watch_coding_jobs()` (6 s poll of `/coding/jobs`): soft chime on any
+  job finishing; for a **Jarvis-started** (non-external) job also speaks
+  "VS Code prompt finished, sir. <Provider> returned on <ws> with: <summary>".
+  External jobs: chime + HUD only (per spec).
+- `jarvis/jobs/sound.py::chime()` — canberra → pw-play/paplay/aplay/ffplay fallback.
+- HUD: new CODING panel in `webui/` (polls `/coding/jobs` every 5 s, renders
+  provider / Working|Completed / workspace / mm:ss; toast + `<audio>` on completion;
+  also driven live by the `coding_job` SSE event).
+
+Live-verified: `--web` up, `/coding/jobs` shows external detection, `/meet/status`,
+`/notifications`, `/assets/sounds/*.wav` (200), `POST /coding/events` populates summary.
+Tests: `python -m pytest tests/ -q` → 51 passed. New `tests/test_coding_orchestration.py`.
+
+### Deferred from B (non-blocking)
+- Model/effort still from the hardcoded `EFFORTS` tuple; CLI `--help` enumeration not
+  done (the dialogue already accepts any free-form model string).
+- This Claude Code session shows as a running external `claude` job while active — correct
+  per spec, clears when the pid exits.
 
 ## Milestone A — STABILIZE CODEX WORK ✅ committed
 

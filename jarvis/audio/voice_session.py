@@ -10,6 +10,7 @@ over it (heuristic; may false-trigger from speaker echo without AEC — disable 
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 import time
 from pathlib import Path
@@ -491,6 +492,39 @@ class VoiceSession:
                 self._speak(brief)
             prev_idle = idle
 
+    async def _watch_coding_jobs(self) -> None:
+        """Speak the result of a Jarvis-started coding job; a soft chime for any job finishing.
+
+        Manually-started (external) jobs get the chime + HUD state only — no spoken summary.
+        """
+        import httpx
+        from ..agent.remote import web_base
+        from ..jobs import sound
+
+        seen: dict[str, str] = {}
+        first_pass = True
+        while True:
+            await asyncio.sleep(6)
+            try:
+                jobs = httpx.get(f"{web_base()}/coding/jobs", timeout=4).json().get("jobs", [])
+            except Exception:  # noqa: BLE001
+                continue
+            terminal = {"completed", "failed", "cancelled"}
+            for job in jobs:
+                jid, status = job.get("id", ""), job.get("status", "")
+                was = seen.get(jid)
+                seen[jid] = status
+                if first_pass or was == status or status not in terminal:
+                    continue
+                sound.chime()
+                self.on_event("coding", f"{job.get('provider', 'coding').title()} {status}: {job.get('summary', '')[:120]}")
+                if not job.get("external"):
+                    where = os.path.basename(job.get("workspace", "").rstrip("/")) or "your project"
+                    verb = "finished" if status == "completed" else status
+                    self._speak(f"VS Code prompt {verb}, sir. {job.get('provider', 'The agent').title()} "
+                                f"returned on {where} with: {job.get('summary') or 'no notable output'}")
+            first_pass = False
+
     def _augment(self, transcript: str) -> str:
         """Attach live context to a spoken turn: a fresh screenshot (if screen-share is on) and
         the last unanswered phone message (so "reply to him …" resolves without re-listening)."""
@@ -539,6 +573,7 @@ class VoiceSession:
         asyncio.create_task(reminders.run_checker(self.config.vault_path))
         asyncio.create_task(self._watch_screen())  # proactive alerts during live screen-share
         asyncio.create_task(self._watch_afk(agent))  # welcome-back brief after a long idle gap
+        asyncio.create_task(self._watch_coding_jobs())  # speak coding-job completions + chime
 
         if self.config.screen_always:  # keep screen vision on from the start
             from ..vision import live

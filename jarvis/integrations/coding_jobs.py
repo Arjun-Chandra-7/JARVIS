@@ -26,9 +26,74 @@ PROVIDERS = ("codex", "claude", "agy")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 TERMINAL = {"completed", "failed", "cancelled"}
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _changed_files(before: dict[str, Any], after: dict[str, Any]) -> int:
+    """How many working-tree paths differ between two workspace_snapshot() calls."""
+    b = {line[3:] for line in (before.get("status") or []) if len(line) > 3}
+    a = {line[3:] for line in (after.get("status") or []) if len(line) > 3}
+    return len(a ^ b) or len(a)
+
+
+def summarize(job: "CodingJob") -> str:
+    """A short, deterministic, human-readable result line — no LLM call.
+
+    Prefers the tail of real CLI output; annotates with the git working-tree delta so
+    "Claude returned with: 3 files changed. <tail>" is meaningful even when output is noisy.
+    """
+    body = _ANSI_RE.sub("", (job.output or "").strip())
+    tail = " ".join(line.strip() for line in body.splitlines() if line.strip())[-360:].strip()
+    n = _changed_files(job.before or {}, job.after or {})
+    delta = f"{n} file{'s' if n != 1 else ''} changed. " if n else ""
+    if job.status == "failed":
+        err = _ANSI_RE.sub("", (job.error or "").strip()).splitlines()
+        why = (err[-1] if err else tail) or "no output"
+        return f"failed — {why[-300:]}"
+    if job.status == "cancelled":
+        return "cancelled before it finished"
+    return (delta + (tail or "no notable output")).strip()
+
+
+# Provider invocations that are editor/IDE plumbing or one-shot queries, not a coding task.
+_NOT_A_JOB = re.compile(r"\b(?:app-server|mcp|--mcp|lsp|--version|--help|completion|doctor|"
+                        r"config\s+(?:get|set|list)|whoami|login|logout|update|upgrade)\b")
+
+
+def scan_provider_processes() -> list[dict[str, Any]]:
+    """Best-effort list of running provider CLIs (a real task or interactive TUI) with a cwd.
+
+    Process instrumentation only — never infers state from a window appearing/closing. Skips
+    IDE background servers and one-shot subcommands so the HUD shows no phantom jobs.
+    """
+    if not shutil.which("pgrep"):
+        return []
+    try:
+        out = subprocess.run(["pgrep", "-a", "-f", r"(^|/)(codex|claude|agy)([[:space:]]|$)"],
+                             capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    found: list[dict[str, Any]] = []
+    for line in out.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) < 2 or not parts[0].isdigit():
+            continue
+        pid, cmdline = int(parts[0]), parts[1]
+        argv0 = cmdline.split(None, 1)[0].rsplit("/", 1)[-1]
+        provider = argv0 if argv0 in PROVIDERS else next(
+            (p for p in PROVIDERS if re.search(rf"(^|/){p}([ ]|$)", cmdline)), None)
+        if not provider or _NOT_A_JOB.search(cmdline) or ".vscode/extensions" in cmdline:
+            continue
+        try:
+            cwd = os.readlink(f"/proc/{pid}/cwd")
+        except OSError:
+            cwd = ""
+        found.append({"pid": pid, "provider": provider, "workspace": cwd, "cmdline": cmdline[:400]})
+    return found
 
 
 def _clean_env() -> dict[str, str]:
@@ -148,7 +213,9 @@ class CodingJob:
     after: dict[str, Any] = field(default_factory=dict)
     output: str = ""
     error: str = ""
+    summary: str = ""
     external: bool = False
+    announced: bool = False   # set once a completion has been spoken/sounded, so it fires once
     events: list[dict[str, str]] = field(default_factory=list)
 
 
@@ -344,8 +411,13 @@ class CodingJobManager:
             self._dirty_sessions.add(session_id)
             self._save()
             return self._selection_reply(selected)
-        # Only intercept an explicit VS Code task. Casual “Claude/Codex” discussion reaches the LLM.
-        task_match = re.search(r"\b(?:do|fix|build|implement|refactor|write|test|review|change|create)\b.+\b(?:in|on|with)\s+(?:vs\s*code|vscode)\b", low)
+        # Intercept an explicit VS Code task. Casual "Claude/Codex" discussion reaches the LLM.
+        verb = r"(?:do|fix|build|implement|refactor|write|test|review|change|create|add|debug|update|make|finish|clean up|sort out)"
+        mentions_vscode = re.search(r"\bvs\s?code\b", low)
+        task_match = (
+            re.search(rf"\b{verb}\b.+\b(?:in|on|with|inside|within)\s+(?:the\s+|my\s+|this\s+)?(?:vs\s?code|vscode|code editor|editor)\b", low)
+            or (mentions_vscode and re.search(rf"\b{verb}\b", low))
+        )
         if task_match:
             from . import coding
             context = coding.active_context()
@@ -446,7 +518,9 @@ class CodingJobManager:
             self._event(job, "failed", str(exc))
         finally:
             job.after, job.finished_at = workspace_snapshot(job.workspace), _now()
+            job.summary = summarize(job)
             job.updated_at = job.finished_at
+            self._event(job, job.status, job.summary[:200])
             self._save()
             self._tasks.pop(job_id, None)
 
@@ -495,9 +569,47 @@ class CodingJobManager:
                 job.finished_at, job.after = _now(), workspace_snapshot(job.workspace)
         if output is not None:
             job.output = output[-12000:]
-        self._event(job, "external", message or (status or "update"))
+        if job.status in TERMINAL:
+            job.summary = summarize(job)
+        self._event(job, "external", message or job.summary or (status or "update"))
         self._save()
         return asdict(job)
+
+    def sync_external(self) -> list[dict[str, Any]]:
+        """Reconcile jobs with the live provider processes on this machine.
+
+        Registers a user-started ``codex``/``claude``/``agy`` run as an external job and marks a
+        tracked external job completed once its process is gone. Returns the changed job dicts.
+        """
+        self.refresh()
+        managed = {j.pid for j in self.jobs.values() if j.pid and j.status not in TERMINAL and not j.external}
+        managed |= {j.worker_pid for j in self.jobs.values() if j.worker_pid and j.status not in TERMINAL}
+        ext_by_pid = {j.pid: j for j in self.jobs.values() if j.external and j.pid}
+        changed: list[dict[str, Any]] = []
+        live_pids: set[int] = set()
+        for proc in scan_provider_processes():
+            pid = proc["pid"]
+            live_pids.add(pid)
+            if pid in managed or pid in ext_by_pid:
+                continue
+            job = CodingJob(
+                id=f"ext-{proc['provider']}-{pid}", prompt=f"External {proc['provider']} session",
+                workspace=proc["workspace"] or str(Path.home()), provider=proc["provider"],
+                status="running", external=True, pid=pid, started_at=_now(),
+                before=workspace_snapshot(proc["workspace"] or str(Path.home())),
+            )
+            self.jobs[job.id] = job
+            self._event(job, "registered", f"Detected external {proc['provider']} (pid {pid})")
+            changed.append(asdict(job))
+        for pid, job in ext_by_pid.items():
+            if pid not in live_pids and job.status == "running":
+                job.finished_at, job.after = _now(), workspace_snapshot(job.workspace)
+                job.status, job.summary = "completed", summarize(job)
+                self._event(job, "completed", "External process exited")
+                changed.append(asdict(job))
+        if changed:
+            self._save()
+        return changed
 
 
 # Convenience API for the command router and web process.  Tests and alternate processes can
@@ -518,6 +630,10 @@ async def handle_message(text: str, session_id: str = "local") -> str | None:
 
 def list_jobs(limit: int = 25) -> list[dict[str, Any]]:
     return get_manager().list_jobs(limit)
+
+
+def sync_external() -> list[dict[str, Any]]:
+    return get_manager().sync_external()
 
 
 def subscribe(callback: Callable[[dict[str, Any]], Any]) -> Callable[[], None]:

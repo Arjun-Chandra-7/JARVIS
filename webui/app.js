@@ -229,6 +229,49 @@ async function pollWeather() {
 }
 pollWeather(); setInterval(pollWeather, 900000);
 
+// ---------- coding jobs (from /coding/jobs + coding_job SSE events) ----------
+const codingJobs = new Map();
+function elapsed(job) {
+  const start = Date.parse(job.started_at || job.created_at || "");
+  const end = ["completed", "failed", "cancelled"].includes(job.status) ? Date.parse(job.finished_at || job.updated_at || "") : Date.now();
+  if (!start || !end || end < start) return "";
+  const s = Math.floor((end - start) / 1000);
+  return `${pad(Math.floor(s / 60))}:${pad(s % 60)}`;
+}
+function renderCoding() {
+  const wrap = document.getElementById("coding");
+  const rows = document.getElementById("codingrows");
+  const jobs = [...codingJobs.values()].sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || "")).slice(0, 5);
+  wrap.classList.toggle("empty", jobs.length === 0);
+  document.getElementById("codingcount").textContent = jobs.length || "—";
+  rows.innerHTML = jobs.map((j) => {
+    const label = (j.status === "running" ? "Working" : j.status[0].toUpperCase() + j.status.slice(1));
+    const ws = (j.workspace || "").split("/").filter(Boolean).pop() || "—";
+    return `<div class="job ${j.status}"><div class="r1"><span class="prov">${(j.provider || "?").toUpperCase()}${j.external ? " ·ext" : ""}</span><span class="st">${label}</span></div>`
+         + `<div class="r2"><span>${ws}</span><span>${elapsed(j)}</span></div></div>`;
+  }).join("");
+}
+function ingestCodingJob(j) {
+  if (!j || !j.id) return;
+  const prev = codingJobs.get(j.id);
+  codingJobs.set(j.id, j);
+  const done = ["completed", "failed", "cancelled"].includes(j.status);
+  if (done && (!prev || prev.status !== j.status)) {
+    toast(`${(j.provider || "coding").toUpperCase()} ${j.status}${j.summary ? " — " + j.summary.slice(0, 80) : ""}`);
+    try { new Audio("/assets/sounds/task-complete.wav").play(); } catch {}
+  }
+  renderCoding();
+}
+async function pollCoding() {
+  try {
+    const jobs = (await (await fetch("/coding/jobs")).json()).jobs || [];
+    codingJobs.clear();
+    for (const j of jobs) codingJobs.set(j.id, j);
+    renderCoding();
+  } catch {}
+}
+pollCoding(); setInterval(pollCoding, 5000);
+
 // ---------- quick-action chips (from /suggestions) ----------
 async function loadQuick() {
   let items;
@@ -339,6 +382,8 @@ function onLiveEvent(kind, text) {
   else if (kind === "heard") { addMsg("you", text); setState("thinking"); }
   else if (kind === "reply") { addMsg("jarvis", text); setState("speaking"); setTimeout(() => setState("standby"), Math.min(6000, 1500 + text.length * 30)); }
   else if (kind === "phone") { addMsg("sys", "📱 " + text); toast("📱 " + text); }
+  else if (kind === "coding") { try { ingestCodingJob(JSON.parse(text)); } catch { addMsg("sys", "⌨ " + text); } }
+  else if (kind === "coding_job") { try { ingestCodingJob(JSON.parse(text)); } catch {} }
   else if (kind === "sleep") setState("standby");
   else if (kind === "ready") document.getElementById("substate").textContent = text;
 }

@@ -38,11 +38,38 @@ async def lifespan(app: FastAPI):
     _agent["a"] = agent
     from .agent import pa_daemon
     pa_daemon.start(CONFIG)
+    from .integrations import coding_jobs
+    loop = asyncio.get_running_loop()
+
+    def _on_coding(update: dict) -> None:  # subscriber callbacks may run off the loop thread
+        loop.call_soon_threadsafe(lambda: asyncio.ensure_future(_emit("coding_job", json.dumps(update.get("job", update)))))
+
+    _unsub = coding_jobs.subscribe(_on_coding)
+    watch = asyncio.create_task(_coding_watch())
     try:
         yield
     finally:
+        watch.cancel()
+        _unsub()
         pa_daemon.stop(CONFIG)
         await agent.__aexit__(None, None, None)
+
+
+async def _coding_watch() -> None:
+    """Emit a HUD event whenever any coding job (Jarvis-started or externally detected) changes state."""
+    from .integrations import coding_jobs
+    manager = coding_jobs.get_manager()
+    last: dict[str, str] = {}
+    while True:
+        try:
+            manager.sync_external()
+            for job in manager.list_jobs(50):
+                if last.get(job["id"]) != job["status"]:
+                    last[job["id"]] = job["status"]
+                    await _emit("coding_job", json.dumps(job))
+        except Exception:  # noqa: BLE001 - a HUD feed must never crash the server
+            pass
+        await asyncio.sleep(3)
 
 
 app = FastAPI(lifespan=lifespan)
@@ -322,5 +349,8 @@ async def events():
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
-# static HUD (index.html at /, app.js at /app.js) — mounted last so routes win
+# static assets (completion sound, icons) then the HUD — mounted last so API routes win
+_ASSETS = WEBUI.parent / "assets"
+if _ASSETS.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(_ASSETS)), name="assets")
 app.mount("/", StaticFiles(directory=str(WEBUI), html=True), name="webui")

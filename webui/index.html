@@ -54,6 +54,17 @@
     opacity:.9;margin-bottom:12px;display:flex;justify-content:space-between}
   .left{left:28px;top:96px}
   .right{right:28px;top:96px}
+  .coding{right:28px;top:300px}
+  .coding.empty{display:none}
+  .coding .job{display:flex;flex-direction:column;gap:2px;padding:7px 0;border-top:1px solid rgba(56,225,255,.10)}
+  .coding .job:first-of-type{border-top:0}
+  .coding .job .r1{display:flex;justify-content:space-between;font-family:'Orbitron';font-size:11px;letter-spacing:.14em}
+  .coding .job .prov{color:#cfe6f0}
+  .coding .job .st{opacity:.8}
+  .coding .job.completed .st{color:var(--green)}
+  .coding .job.failed .st{color:var(--red)}
+  .coding .job.running .st{color:var(--cyan)}
+  .coding .job .r2{font-family:'Rajdhani';font-size:11px;letter-spacing:.06em;opacity:.6;display:flex;justify-content:space-between}
   .bar{height:6px;border-radius:4px;background:rgba(56,225,255,.12);margin:9px 0;overflow:hidden;position:relative}
   .bar i{position:absolute;inset:0;transform-origin:left;transform:scaleX(0);transition:transform .6s cubic-bezier(.2,.8,.2,1);
     background:linear-gradient(90deg,var(--cyan),var(--violet));box-shadow:0 0 12px var(--cyan)}
@@ -145,6 +156,11 @@
     <div class="panel right">
       <h3>SYSTEMS <span id="syscount">—</span></h3>
       <div class="sys" id="sysrows"></div>
+    </div>
+
+    <div class="panel coding empty" id="coding">
+      <h3>CODING <span id="codingcount">—</span></h3>
+      <div id="codingrows"></div>
     </div>
 
     <div class="quick" id="quick"></div>
