@@ -76,12 +76,28 @@ def _chatgpt_ready() -> bool:
     return prof.exists() and any(prof.iterdir())
 
 
+def _ollama_ready() -> tuple[bool, str]:
+    """Is the local Ollama server up and does it have the configured model?"""
+    base = getattr(CONFIG, "ollama_base", "http://localhost:11434/v1")
+    model = getattr(CONFIG, "ollama_model", "qwen2.5:3b")
+    try:
+        import httpx
+        r = httpx.get(base.rsplit("/v1", 1)[0] + "/api/tags", timeout=2)
+        r.raise_for_status()
+        names = {m.get("name", "") for m in r.json().get("models", [])}
+        has = model in names or any(n.split(":")[0] == model.split(":")[0] for n in names)
+        return (has, f"Ollama · {model}" if has else f"Ollama · pull {model}")
+    except Exception:  # noqa: BLE001
+        return (False, "Ollama · not running")
+
+
 def _brain_health() -> dict:
     brain = CONFIG.brain
     label = {
         "chatgpt": "ChatGPT",
         "gemini": f"Gemini · {CONFIG.gemini_model}",
         "groq": f"Groq · {CONFIG.groq_model}",
+        "ollama": f"Ollama · {getattr(CONFIG, 'ollama_model', 'local')}",
     }.get(brain, brain)
     if brain == "chatgpt":
         ok = _chatgpt_ready()
@@ -90,6 +106,8 @@ def _brain_health() -> dict:
         ok = bool(CONFIG.gemini_api_key)
     elif brain == "groq":
         ok = bool(CONFIG.groq_api_key)
+    elif brain == "ollama":
+        ok, label = _ollama_ready()
     else:
         ok = False
     return {"name": "Brain", "label": label, "ok": ok}
