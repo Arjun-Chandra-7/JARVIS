@@ -98,10 +98,10 @@ def _push_to_hud(kind: str, text: str = "") -> None:
         import httpx
 
         port = os.environ.get("JARVIS_WEB_PORT", "8770")
-        httpx.post(f"http://127.0.0.1:{port}/emit", json={"kind": kind, "text": text}, timeout=0.3)
+        httpx.post(f"http://127.0.0.1:{port}/emit", json={"kind": kind, "text": text}, timeout=2.0)
         _hud_retry_after[0] = 0.0
-    except Exception:  # noqa: BLE001 - no HUD; back off so we don't stall every event
-        _hud_retry_after[0] = _t.time() + 30
+    except Exception:  # noqa: BLE001 - no HUD; short back-off so we don't drop a whole conversation
+        _hud_retry_after[0] = _t.time() + 5
 
 
 async def _run_voice() -> None:

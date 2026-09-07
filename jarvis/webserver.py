@@ -124,7 +124,10 @@ async def chat(c: Chat):
     agent = _agent["a"]
     if agent is None:
         return {"reply": "Brain still booting, sir — one moment."}
-    hud_state.log_turn("you", c.message)
+    from .commands import clean_text
+    shown = clean_text(c.message) or c.message.strip()[:400]
+    hud_state.log_turn("you", shown)
+    await _emit("heard", shown)          # every turn — typed, voice, phone, telegram — hits the HUD
     async with _lock:
         try:
             agent.command_session = c.session_id
@@ -132,6 +135,7 @@ async def chat(c: Chat):
         except Exception as exc:  # noqa: BLE001
             reply = f"[error] {exc}"
     hud_state.log_turn("jarvis", reply)
+    await _emit("reply", reply)
     return {"reply": reply}
 
 

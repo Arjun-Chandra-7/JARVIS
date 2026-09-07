@@ -319,14 +319,23 @@ function stamp(ts) {
   const d = ts ? new Date(ts * 1000) : new Date();
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+// keys of you/jarvis lines currently on screen — makes history reconcile idempotent and
+// collapses the local echo + the SSE echo of the same turn into one line.
+const _rendered = [];
+const _key = (who, text) => who + "|" + String(text).replace(/\s+/g, " ").trim();
 function addMsg(who, text, ts, animate = true) {
+  if (who !== "sys") {
+    const k = _key(who, text);
+    if (_rendered.includes(k)) return;
+    _rendered.push(k);
+  }
   const el = document.createElement("div");
   const cls = who === "you" ? "you" : who === "sys" ? "sys" : "jarvis";
   el.className = "msg " + cls;
   if (cls === "sys") el.innerHTML = fmt(text);
   else el.innerHTML = `<span class="who">${who === "you" ? "YOU" : "JARVIS"}</span><span class="tm">${stamp(ts)}</span><br>${fmt(text)}`;
   log.appendChild(el);
-  while (log.children.length > 40) log.removeChild(log.firstChild);
+  while (log.children.length > 200) { log.removeChild(log.firstChild); if (_rendered.length > 200) _rendered.shift(); }
   if (animate) gsap.to(el, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" });
   else { el.style.opacity = 1; el.style.transform = "none"; }
   log.scrollTop = log.scrollHeight;
@@ -395,7 +404,20 @@ if (SR) {
 try {
   const es = new EventSource("/events");
   es.onmessage = (ev) => { let d; try { d = JSON.parse(ev.data); } catch { return; } onLiveEvent(d.kind, d.text || ""); };
+  // Safety net: whenever the stream (re)connects, reconcile against the durable log so a
+  // dropped event can't leave a hole. EventSource auto-reconnects on any drop.
+  let firstOpen = true;
+  es.onopen = () => { if (firstOpen) { firstOpen = false; return; } reconcileHistory(); };
 } catch {}
+
+async function reconcileHistory() {
+  try {
+    const msgs = (await (await fetch("/history?limit=80")).json()).messages || [];
+    for (const m of msgs) addMsg(m.who, m.text, m.t, false);   // _isDup skips anything already shown
+  } catch {}
+}
+// belt-and-braces poll so the console can never drift more than ~20s from the transcript
+setInterval(reconcileHistory, 20000);
 function onLiveEvent(kind, text) {
   if (kind === "wake") setState("listening");
   else if (kind === "heard") { addMsg("you", text); setState("thinking"); }
@@ -413,7 +435,7 @@ async function boot() {
   loadQuick();
   let restored = false;
   try {
-    const msgs = (await (await fetch("/history?limit=12")).json()).messages || [];
+    const msgs = (await (await fetch("/history?limit=60")).json()).messages || [];
     for (const m of msgs) { addMsg(m.who, m.text, m.t, false); restored = true; }
   } catch {}
   if (!restored) addMsg("jarvis", "Systems online. How can I help, sir?");
