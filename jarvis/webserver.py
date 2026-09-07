@@ -181,6 +181,22 @@ async def notification_status():
     return {"enabled": notifications_enabled()}
 
 
+@app.get("/power")
+async def power_status():
+    from . import power
+    return {"asleep": power.asleep(), "since": power.since()}
+
+
+@app.post("/power")
+async def power_set(body: dict):
+    from . import power
+    action = str(body.get("action", "toggle"))
+    target = (not power.asleep()) if action == "toggle" else (action == "sleep")
+    power.set_asleep(target)
+    await _emit("power", "asleep" if target else "awake")
+    return {"asleep": target}
+
+
 # --- live event stream (voice/phone events → browser HUD) ---
 _subscribers: set = set()
 

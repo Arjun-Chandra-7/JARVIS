@@ -312,7 +312,11 @@ class VoiceSession:
         t = re.sub(r"[ \t]{2,}", " ", t)
         return t.strip()
 
-    def _speak(self, text: str) -> None:
+    def _speak(self, text: str, force: bool = False) -> None:
+        if not force:
+            from .. import power
+            if power.asleep():          # muted while asleep; wake/sleep lines pass force=True
+                return
         text = self._clean_for_speech(text)
         stop = threading.Event()
         monitor: Optional[threading.Thread] = None
@@ -586,6 +590,8 @@ class VoiceSession:
         self.mic.start()
         self._last_message = None
         self._events: asyncio.Queue = asyncio.Queue()
+        from .. import power
+        power.set_asleep(False)  # a fresh voice start means Jarvis is on
         await self._setup_phone()
 
         from ..jobs import notify, reminders, timers  # speak timer/reminder alerts aloud in voice mode
@@ -632,6 +638,26 @@ class VoiceSession:
                 while transcript:
                     self.on_event("heard", transcript)
                     t_lower = transcript.lower().strip()
+
+                    # --- soft on/off: while asleep, only a wake phrase gets through ---
+                    from .. import power as _power
+                    from ..commands import clean_text as _clean, _WAKE_RE, _SLEEP_RE
+                    _cmd = _clean(transcript).lower().rstrip(".!?")
+                    if _power.asleep():
+                        if _WAKE_RE.match(_cmd):
+                            _power.set_asleep(False)
+                            self.on_event("reply", "I'm back online, sir.")
+                            self._speak("I'm back online, sir.", force=True)
+                        # anything else: stay asleep, stay silent
+                        self.on_event("sleep")
+                        break
+                    if _SLEEP_RE.match(_cmd):
+                        msg = "Going to sleep, sir. Say “Jarvis, wake up” when you need me."
+                        self.on_event("reply", msg)
+                        self._speak(msg, force=True)
+                        _power.set_asleep(True)
+                        self.on_event("sleep")
+                        break
 
                     # Executive Wake Briefing: "wake up jarvis", "wake up", "clap", "status report", "system pulse", "subsystems"
                     if any(phrase in t_lower for phrase in ("wake up", "wake up jarvis", "clapped", "clap", "status report", "subsystems", "system report", "pulse")):

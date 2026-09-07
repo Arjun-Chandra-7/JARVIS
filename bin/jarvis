@@ -45,9 +45,15 @@ Quick Start:
   jarvis --headless       Launch in background (no overlay window)
   jarvis --hud            Open WebGL HUD console in dedicated browser window
 
+Turn on / off:
+  jarvis on               Start everything (backend + voice + overlay)
+  jarvis off              Stop all JARVIS processes
+  jarvis restart          Stop, then start again
+  jarvis sleep            Soft off — stay running but silent until woken
+  jarvis wake             Undo 'jarvis sleep'  (or say "Jarvis, wake up")
+
 Control & Diagnostics:
   jarvis --status         Check running status of all subsystems
-  jarvis --stop           Stop all running JARVIS processes
   jarvis --check          Run system preflight checks (audio, keys, dependencies)
   jarvis --selftest       Run audio round-trip test (TTS -> mic -> STT)
 
@@ -90,9 +96,26 @@ case "$1" in
         shift || true
         exec "$REPO/scripts/start.sh" --status "$@"
         ;;
-    --stop|stop)
+    on|--on|start)
+        shift || true
+        exec "$REPO/scripts/start.sh" --gui "$@"
+        ;;
+    off|--off|--stop|stop)
         shift || true
         exec "$REPO/scripts/start.sh" --stop "$@"
+        ;;
+    restart|--restart)
+        shift || true
+        "$REPO/scripts/start.sh" --stop || true
+        sleep 1
+        exec "$REPO/scripts/start.sh" --gui "$@"
+        ;;
+    sleep|--sleep|wake|--wake)
+        [ -x "$PY" ] || { echo "No virtualenv at $PY"; exit 1; }
+        case "$1" in *sleep) V=True; W="asleep";; *) V=False; W="awake";; esac
+        "$PY" -c "from jarvis.power import set_asleep; set_asleep($V)"
+        echo "Jarvis is now ${W}. (processes still running; use 'jarvis off' for a full stop)"
+        exit 0
         ;;
     --install|--install-desktop|install)
         shift || true

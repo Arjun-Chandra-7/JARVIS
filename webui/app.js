@@ -229,6 +229,25 @@ async function pollWeather() {
 }
 pollWeather(); setInterval(pollWeather, 900000);
 
+// ---------- power (sleep / wake) ----------
+const powerBtn = document.getElementById("powerbtn");
+function paintPower(asleep) {
+  powerBtn.textContent = asleep ? "○ ASLEEP" : "● ON";
+  powerBtn.style.color = asleep ? "var(--gold)" : "var(--green)";
+}
+async function pollPower() {
+  try { paintPower((await (await fetch("/power")).json()).asleep); } catch {}
+}
+powerBtn.onclick = async () => {
+  try {
+    const r = await fetch("/power", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "toggle" }) });
+    const d = await r.json();
+    paintPower(d.asleep);
+    toast(d.asleep ? "Jarvis is asleep — click to wake" : "Jarvis is awake");
+  } catch {}
+};
+pollPower(); setInterval(pollPower, 10000);
+
 // ---------- coding jobs (from /coding/jobs + coding_job SSE events) ----------
 const codingJobs = new Map();
 function elapsed(job) {
@@ -384,6 +403,7 @@ function onLiveEvent(kind, text) {
   else if (kind === "phone") { addMsg("sys", "📱 " + text); toast("📱 " + text); }
   else if (kind === "coding") { try { ingestCodingJob(JSON.parse(text)); } catch { addMsg("sys", "⌨ " + text); } }
   else if (kind === "coding_job") { try { ingestCodingJob(JSON.parse(text)); } catch {} }
+  else if (kind === "power") paintPower(text === "asleep");
   else if (kind === "sleep") setState("standby");
   else if (kind === "ready") document.getElementById("substate").textContent = text;
 }

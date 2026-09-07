@@ -572,10 +572,16 @@ def main() -> None:
                         help="one-time: sign in to ChatGPT so Jarvis can think through your account")
     parser.add_argument("--instagram-login", action="store_true",
                         help="one-time: sign in to Instagram so Jarvis can read your DMs")
+    parser.add_argument("--sleep", action="store_true", help="soft off: stay running but silent until woken")
+    parser.add_argument("--wake", action="store_true", help="undo --sleep")
     args = parser.parse_args()
 
     try:
-        if args.instagram_login:
+        if args.sleep or args.wake:
+            from .power import set_asleep
+            set_asleep(args.sleep)
+            print("Jarvis is now", "asleep." if args.sleep else "awake.")
+        elif args.instagram_login:
             from .integrations import instagram
             instagram.login()
         elif args.chatgpt_login:

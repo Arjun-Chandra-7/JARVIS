@@ -141,6 +141,18 @@ async def transcribe(request: Request):
     return {"text": text}
 
 
+class Power(BaseModel):
+    action: Literal["sleep", "wake", "toggle"]
+
+
+@router.post("/power")
+async def power(p: Power):
+    from . import power as pw
+    target = (not pw.asleep()) if p.action == "toggle" else (p.action == "sleep")
+    pw.set_asleep(target)
+    return {"asleep": target}
+
+
 @router.get("/status")
 async def mobile_status():
     """One call the phone can poll: connectivity, current work, and a little system state."""
@@ -159,6 +171,11 @@ async def mobile_status():
         out["away"] = away.is_away(CONFIG)
     except Exception:  # noqa: BLE001
         out["away"] = False
+    try:
+        from . import power as pw
+        out["asleep"] = pw.asleep()
+    except Exception:  # noqa: BLE001
+        out["asleep"] = False
     try:
         out["meet"] = meet_bot.status().get("state", "idle")
     except Exception:  # noqa: BLE001

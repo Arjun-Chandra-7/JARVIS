@@ -10,9 +10,31 @@ def clean_text(text: str) -> str:
     return re.sub(r"^(?:hey\s+)?jarvis[,.!:\s]*", "", " ".join(lines).strip(), flags=re.I).strip()
 
 
+_SLEEP_RE = re.compile(
+    r"^(?:go(?: to)? sleep|goodnight|good night|stand down|power down|power off|"
+    r"shut down|shutdown|that'?ll be all|that'?s all|dismissed|sleep mode|take a break|"
+    r"go(?: to)? sleep now|sleep now)$")
+_WAKE_RE = re.compile(
+    r"^(?:wake up|wake|come back|i need you|you (?:there|awake)|are you (?:there|awake)|"
+    r"resume|back online|power (?:on|up)|boot up|reactivate)$")
+
+
 async def handle(text: str, config, session_id: str = "local") -> str | None:
     raw = clean_text(text)
     command = raw.lower().rstrip(".!?")
+
+    from .power import asleep, set_asleep
+    if _WAKE_RE.match(command):
+        was = asleep()
+        set_asleep(False)
+        return "I'm back online, sir." if was else "I'm already here, sir."
+    if _SLEEP_RE.match(command):
+        set_asleep(True)
+        return "Going to sleep, sir. Say “Jarvis, wake up” when you need me."
+    # While asleep, ignore everything except the wake phrase above (voice also enforces this).
+    if asleep():
+        return "I'm asleep, sir. Say “Jarvis, wake up” to bring me back."
+
     from .preferences import set_notifications
     if re.search(r"\bnotifications?\b", command) and re.search(
         r"\b(?:turn|switch|set|mute|unmute|disable|enable|stop|start|silence|resume|read|reading)\b", command
