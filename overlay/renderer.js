@@ -160,8 +160,18 @@ async function pollStats() {
 pollHealth(); setInterval(pollHealth, 8000);
 pollStats(); setInterval(pollStats, 3000);
 
-// ---------- webcam (feeds face detection + hand-gestures) ----------
+// ---------- webcam ----------
+// Only one process can hold /dev/video0. The backend presence service (jarvis/presence)
+// is the owner by default: it runs headless, so the radar keeps working whether or not
+// this overlay window is open. Set JARVIS_OVERLAY_CAMERA=1 to hand the camera back to
+// the overlay instead (enables in-browser hand gestures, disables the backend radar).
+const OVERLAY_OWNS_CAMERA = window.jarvis?.overlayCamera === true;
+
 async function initCamera(retries = 3) {
+  if (!OVERLAY_OWNS_CAMERA) {
+    console.log("[camera] backend presence service owns the webcam (JARVIS_OVERLAY_CAMERA=1 to override)");
+    return;
+  }
   for (let i = 0; i < retries; i++) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: "user" } });
