@@ -152,6 +152,7 @@ class GroqAgent:
         # keeps answering instead of erroring. Only applies to Groq (llama models on the free tier).
         self.fallback_model = os.environ.get("JARVIS_GROQ_FALLBACK", "openai/gpt-oss-20b")
         self._on_fallback = False
+        self._on_local = False  # switched to local Ollama after a cloud rate-limit
         self.client = OpenAI(base_url=base_url, api_key=api_key, max_retries=0, timeout=45)
         self.schemas, self.dispatch = build_registry(config, self.job_runner, confirm_fn)
         for s in self.schemas:  # trim descriptions hard — tool names are self-explanatory, and every
@@ -176,6 +177,23 @@ class GroqAgent:
             temperature=0.4,
             max_tokens=512,
         )
+
+    def _try_local_fallback(self) -> bool:
+        """Repoint at a local Ollama model so chat survives an exhausted cloud rate limit."""
+        if self._on_local:
+            return False
+        import httpx
+        from openai import OpenAI
+
+        base = getattr(self.config, "ollama_base", "http://localhost:11434/v1")
+        model = getattr(self.config, "ollama_model", "qwen2.5:3b")
+        try:
+            httpx.get(base.rsplit("/v1", 1)[0] + "/api/tags", timeout=2).raise_for_status()
+        except Exception:  # noqa: BLE001 - no local Ollama, nothing to fall back to
+            return False
+        self.client = OpenAI(base_url=base, api_key="ollama", max_retries=0, timeout=120)
+        self.model, self._on_local = model, True
+        return True
 
     def _trim(self) -> None:
         # Keep the system message + a suffix that starts on a clean 'user' turn (never split a
@@ -210,21 +228,25 @@ class GroqAgent:
             try:
                 resp = await asyncio.to_thread(self._complete)
             except Exception as exc:  # noqa: BLE001
-                if _is_rate_limit(exc) and self.config.brain == "groq":
-                    # 1) first, switch to the high-limit fallback model (once)
-                    if self.model != self.fallback_model:
+                if _is_rate_limit(exc) and not self._on_local and self.config.brain in ("groq", "gemini"):
+                    # 1) Groq only: switch to the high-limit fallback model (once)
+                    if self.config.brain == "groq" and self.model != self.fallback_model:
                         self.model = self.fallback_model
                         self._on_fallback = True
                         continue
-                    # 2) already on fallback: if it's a short per-minute cap, wait it out and retry
+                    # 2) short per-minute cap → wait it out and retry
                     wait = _retry_after(exc)
-                    if wait is not None and wait <= 30 and rl_waits < 2:
+                    if wait is not None and wait <= 20 and rl_waits < 2:
                         rl_waits += 1
                         await asyncio.sleep(wait + 0.5)
                         continue
-                    # 3) genuinely exhausted (daily cap / long wait) → say so, don't error out
-                    return ("I've hit Groq's rate limit for the moment, sir. Give it "
-                            + (f"about {int(wait)}s" if wait else "a minute") + " and ask again.")
+                    # 3) genuinely exhausted → drop to the local Ollama model so chat continues
+                    if self._try_local_fallback():
+                        self.on_tool("brain", f"rate-limited — switched to local {self.model}")
+                        continue
+                    # 4) no local model available → say so instead of erroring out
+                    return (f"I've hit the {self.config.brain} rate limit, sir, and no local model is "
+                            "running. Start `ollama serve` or try again in a minute.")
                 salvaged = _parse_calls(_failed_gen(exc) or "")  # rescue a malformed tool call
                 if not salvaged:
                     return f"[groq error] {exc}"

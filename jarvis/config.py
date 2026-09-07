@@ -44,8 +44,9 @@ def _int(name: str, default: int) -> int:
 @dataclass
 class Config:
     # --- brain ---
-    # JARVIS_BRAIN = "chatgpt" (default — your ChatGPT account via the web app, no API key),
-    # "gemini" (API key), or "groq" (API key). Ollama and Claude have been removed.
+    # JARVIS_BRAIN = "chatgpt" (your ChatGPT account via the web app, no API key),
+    # "gemini" (API key, generous free tier), "groq" (API key, tight free tier), or
+    # "ollama" (LOCAL, no limits). Any API brain auto-falls back to local Ollama when rate-limited.
     brain: str = field(default_factory=lambda: os.environ.get("JARVIS_BRAIN", "chatgpt").lower())
     model: str = field(default_factory=lambda: os.environ.get("JARVIS_MODEL", "sonnet"))
     effort: str = field(default_factory=lambda: os.environ.get("JARVIS_EFFORT", "low"))
@@ -63,6 +64,11 @@ class Config:
     # --- Gemini (OpenAI-compatible endpoint; generous free tier + native vision) ---
     gemini_api_key: str = field(default_factory=lambda: os.environ.get("GEMINI_API_KEY", ""))
     gemini_model: str = field(default_factory=lambda: os.environ.get("JARVIS_GEMINI_MODEL", "gemini-2.0-flash"))
+
+    # --- Ollama (LOCAL, OpenAI-compatible, no rate limits) — also the auto-fallback when a
+    # cloud brain is rate-limited. Needs `ollama serve` + a tool-capable model pulled. ---
+    ollama_base: str = field(default_factory=lambda: os.environ.get("JARVIS_OLLAMA_BASE", "http://localhost:11434/v1"))
+    ollama_model: str = field(default_factory=lambda: os.environ.get("JARVIS_OLLAMA_MODEL", "qwen2.5:3b"))
 
     # --- image understanding (screen vision; optional) ---
     # "auto"/"gemini" use Gemini (needs GEMINI_API_KEY); the local moondream path stays as a
@@ -168,10 +174,12 @@ class Config:
         return self.model or None
 
     def llm_params(self) -> tuple[str, str, str]:
-        """(base_url, api_key, model) for the OpenAI-compatible API brains (gemini/groq)."""
+        """(base_url, api_key, model) for the OpenAI-compatible API brains (gemini/groq/ollama)."""
         if self.brain == "gemini":
             return ("https://generativelanguage.googleapis.com/v1beta/openai/",
                     self.gemini_api_key, self.gemini_model)
+        if self.brain == "ollama":
+            return (self.ollama_base, "ollama", self.ollama_model)
         return ("https://api.groq.com/openai/v1", self.groq_api_key, self.groq_model)
 
     def brain_has_vision(self) -> bool:
