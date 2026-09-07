@@ -32,6 +32,9 @@ need their own account, device, or desktop service configured before use.
   an isolated temporary ChatGPT tab with no tool access; it falls back to a neutral acknowledgement
   if unavailable.
 
+- Human radar: webcam face detection gives bearing + metric range, acoustic FMCW gives
+  range only, and paired devices give names. See `docs/HUMAN_RADAR.md`.
+
 ## Commands
 
 ```bash
