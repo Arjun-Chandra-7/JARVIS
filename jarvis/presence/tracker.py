@@ -35,6 +35,7 @@ class Track:
     distance_m: Optional[float] = None
     bearing_deg: Optional[float] = None
     label: Optional[str] = None
+    key: Optional[str] = None      # stable identity for contacts that carry no geometry
     moving: bool = False
     confidence: float = 0.4
     first_seen: float = field(default_factory=time.time)
@@ -138,18 +139,25 @@ class Tracker:
                 self._spawn(c, now)
 
     def _absorb_named(self, contacts: list[Contact], now: float) -> None:
+        """Contacts with neither range nor bearing. Matched on a stable identity.
+
+        A passive-audio contact has no label, so matching on label alone spawned a fresh
+        track every fusion tick and one talking person became ten contacts. Sensors that
+        emit a stable id (the audio sensor always uses "audio-voice") are keyed on that.
+        """
         for c in contacts:
-            existing = next((t for t in self._tracks.values() if c.label and t.label == c.label), None)
+            key = c.label or f"{c.source}:{c.id}"
+            existing = next((t for t in self._tracks.values() if t.key == key), None)
             if existing is not None:
                 self._apply(existing, c, now, geometric=False)
             else:
-                self._spawn(c, now)
+                self._spawn(c, now, key=key)
 
     # --- track maintenance -----------------------------------------------------
-    def _spawn(self, c: Contact, now: float) -> None:
-        prefix = {"camera": "p", "acoustic": "e", "network": "n"}.get(c.source, "t")
+    def _spawn(self, c: Contact, now: float, key: Optional[str] = None) -> None:
+        prefix = {"camera": "p", "acoustic": "e", "network": "n", "audio": "v"}.get(c.source, "t")
         track = Track(id=self._new_id(prefix), sources={c.source}, distance_m=c.distance_m,
-                      bearing_deg=c.bearing_deg, label=c.label, moving=c.moving,
+                      bearing_deg=c.bearing_deg, label=c.label, key=key, moving=c.moving,
                       confidence=c.confidence, first_seen=now, last_seen=now, detail=c.detail)
         self._tracks[track.id] = track
 

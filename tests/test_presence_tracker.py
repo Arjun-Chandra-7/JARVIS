@@ -116,3 +116,32 @@ def test_snapshot_serialises_unknown_bearing_safely():
     assert by_known[False]["x_m"] is None and by_known[False]["y_m"] is None
     assert by_known[True]["x_m"] is not None
     assert data["people"] == 1 and data["count"] == 2
+
+
+def voice(detail="voice heard"):
+    """The passive audio sensor: no range, no bearing, no label, but a stable id."""
+    return Contact(id="audio-voice", source="audio", confidence=0.65, detail=detail)
+
+
+def test_one_voice_stays_one_contact_across_many_ticks():
+    """Regression: bearingless contacts were matched by label only, so a label-less
+    audio contact spawned a fresh track on every fusion tick — one voice became ten."""
+    t = Tracker()
+    for i in range(10):
+        snap = t.update([voice()], now=i * 0.25)
+    assert len(snap.contacts) == 1, f"expected 1 contact, got {len(snap.contacts)}"
+    assert snap.contacts[0].source == "audio"
+
+
+def test_a_voice_and_a_named_device_stay_distinct():
+    t = Tracker()
+    snap = t.update([voice(), net("Maya")], now=0.0)
+    assert len(snap.contacts) == 2
+    snap = t.update([voice(), net("Maya")], now=0.3)
+    assert len(snap.contacts) == 2, "neither should duplicate on the second tick"
+
+
+def test_voice_track_retires_when_it_stops():
+    t = Tracker()
+    t.update([voice()], now=0.0)
+    assert t.update([], now=COAST_S + 1.0).contacts == []
