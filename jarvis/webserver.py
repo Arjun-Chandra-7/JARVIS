@@ -47,12 +47,21 @@ async def lifespan(app: FastAPI):
     _unsub = coding_jobs.subscribe(_on_coding)
     watch = asyncio.create_task(_coding_watch())
     contacts_task = asyncio.create_task(_contacts_ingest())
+    from .presence import service as presence
+    try:
+        presence.start(CONFIG)
+    except Exception:  # noqa: BLE001 - presence is optional, never block the server on it
+        pass
     try:
         yield
     finally:
         watch.cancel()
         contacts_task.cancel()
         _unsub()
+        try:
+            presence.service().stop()
+        except Exception:  # noqa: BLE001
+            pass
         pa_daemon.stop(CONFIG)
         await agent.__aexit__(None, None, None)
 
@@ -325,15 +334,21 @@ async def nearby():
         return {"error": str(exc)}
 
 
-@app.get("/sonar")
-async def sonar():
-    """Live inaudible acoustic active radar / physical body sonar."""
-    from . import sonar as _sonar
+@app.get("/radar")
+async def radar():
+    """Fused human presence: camera bearing+range, acoustic range-only, device identity."""
+    from .presence import service as presence
 
     try:
-        return _sonar.get_sonar_snapshot()
+        return presence.snapshot(CONFIG)
     except Exception as exc:  # noqa: BLE001
-        return {"error": str(exc)}
+        return {"error": str(exc), "contacts": [], "sensors": []}
+
+
+@app.get("/sonar")
+async def sonar():
+    """Deprecated alias for /radar, kept so older HUD builds keep working."""
+    return await radar()
 
 
 @app.get("/whatsapp/inbox")
