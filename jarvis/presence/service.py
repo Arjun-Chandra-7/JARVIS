@@ -2,13 +2,17 @@
 
 Which sensors run is opt-in through ``JARVIS_PRESENCE`` (comma separated):
 
-    camera    webcam face detection — bearing + metric range. Lights the webcam LED.
+    audio     passive listening — "someone is here and talking". No direction, no sound
+              emitted, works in the dark and with the lid shut. Reliable.
     network   Bluetooth/Wi-Fi device bindings — names, no position. Cheap, private.
-    acoustic  near-ultrasound ranging — range only. OFF by default: it holds the
-              speaker continuously, which fights text-to-speech and is audible to
-              some people and most pets.
+    camera    webcam face detection — the ONLY source of bearing. Lights the webcam LED
+              and needs light and line of sight.
+    acoustic  near-ultrasound ranging. OFF by default and not recommended: measured on
+              this hardware it cannot separate a moving person from room reverberation,
+              and it holds the speaker continuously.
 
-Default is ``camera,network``.
+Default is ``audio,network`` — the two that work with no camera and no line of sight.
+Add ``camera`` to get bearing and metric range.
 """
 from __future__ import annotations
 
@@ -20,7 +24,7 @@ from typing import Optional
 from .tracker import Tracker
 from .types import Contact, SensorStatus, Snapshot
 
-DEFAULT_SENSORS = "camera,network"
+DEFAULT_SENSORS = "audio,network"
 FUSE_HZ = 4.0
 
 
@@ -42,6 +46,7 @@ class PresenceService:
         self._sensors = enabled_sensors()
         self._camera = None
         self._acoustic = None
+        self._passive = None
         self._net_at = 0.0
         self._net_cache: tuple[list[Contact], SensorStatus] = ([], SensorStatus("network", False, "not scanned"))
 
@@ -57,13 +62,17 @@ class PresenceService:
             from . import acoustic
             self._acoustic = acoustic.sensor()
             self._acoustic.start()
+        if "audio" in self._sensors:
+            from . import passive
+            self._passive = passive.sensor()
+            self._passive.start()
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="presence-fusion", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
         self._stop.set()
-        for sensor in (self._camera, self._acoustic):
+        for sensor in (self._camera, self._acoustic, self._passive):
             if sensor is not None:
                 sensor.stop()
         if self._thread:
@@ -101,6 +110,10 @@ class PresenceService:
                 statuses.append(status)
             if self._acoustic is not None:
                 found, status = self._acoustic.snapshot()
+                contacts += found
+                statuses.append(status)
+            if self._passive is not None:
+                found, status = self._passive.snapshot()
                 contacts += found
                 statuses.append(status)
             if "network" in self._sensors:
@@ -160,6 +173,9 @@ def summary(config=None) -> str:
         parts.append(("One person: " if len(who) == 1 else f"{len(who)} people: ") + ", ".join(who))
     if named and not located:
         parts.append(", ".join(sorted(set(named))) + " nearby by device")
+    heard = [c for c in snap.contacts if c.source.startswith("audio")]
+    if heard and not located:
+        parts.append("I can hear someone talking, but I can't tell where from")
     if echoes:
         parts.append(f"{len(echoes)} moving contact{'s' if len(echoes) > 1 else ''} at "
                      + ", ".join(f"{c.distance_m:.1f} m" for c in echoes) + ", bearing unknown")

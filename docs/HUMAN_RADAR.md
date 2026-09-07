@@ -29,12 +29,23 @@ CFAR then detected as a near-range target.
 One fused track list, each track carrying **provenance and confidence** — never a
 fabricated position.
 
-| Source | Gives | Range | Limits |
-|---|---|---|---|
-| **Camera** (primary) | bearing ±2°, distance ±8%, count, identity | ~0.4–6 m, within FOV | needs light + line of sight |
-| **Acoustic FMCW** (secondary) | **distance only**, motion | ~0.3–3 m, 360° | no bearing; moving targets only |
-| **Passive audio** | "someone is speaking" | room | no bearing on this hardware |
-| **BT/Wi-Fi** | *identity* + room presence | whole home | no position; device-bound |
+| Source | Gives | Range | Limits | Verdict |
+|---|---|---|---|---|
+| **Passive audio** | "someone is here, talking" | room | no bearing, no range | **works** — measured +17 dB separation between a quiet room and speech |
+| **BT/Wi-Fi** | *identity* + room presence | whole home | no position; device-bound | **works** |
+| **Camera** | bearing ±2°, distance ±8%, count | ~0.4–6 m, within FOV | needs light + line of sight | **works when aimed and lit** |
+| **Acoustic FMCW** | distance + motion, in theory | ~0.3–4 m | no bearing | **does not work** — see below |
+
+### The acoustic channel does not detect people on this hardware
+
+Measured live: "stay still" and "wave your hand" produce statistically indistinguishable
+output — random contacts scattered between 0.6 m and 3.8 m in both cases. It is picking
+up room reverberation, not bodies. The link budget is the reason: a laptop speaker is
+heavily attenuated at 18–21.5 kHz, a human body is a poor reflector there, and the
+speaker-to-mic direct path is 60–80 dB stronger than any echo.
+
+It is left in the tree, off by default, as a motion hint only. It must not be presented
+as people-detection.
 
 Distance from the camera is anchored on interpupillary distance: human IPD is
 63 ± 3 mm across adults, so `distance = f_px · 0.063 / ipd_px` is metric without
@@ -63,7 +74,7 @@ Bind a device to a person once: *"remember that A0:11:22:33:44:55 is Maya's"*.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `JARVIS_PRESENCE` | `camera,network` | which sensors run; add `acoustic`, or `off` |
+| `JARVIS_PRESENCE` | `audio,network` | which sensors run; add `camera` for bearing, or `off` |
 | `JARVIS_CAM_HFOV_DEG` | `68` | camera horizontal FOV — set from `--calibrate` |
 | `JARVIS_PRESENCE_FPS` | `4` | camera detection rate |
 | `JARVIS_CAMERA_INDEX` | auto | pin a `/dev/videoN`; otherwise auto-discovered |
@@ -78,6 +89,17 @@ Only one process can hold the webcam. The backend presence service owns it so th
 works headless; the overlay no longer grabs it. The device nodes renumber whenever the
 camera re-enumerates (observed here: `video0/1` → `video1/2` → `video0/2`), so the node
 is discovered by testing which one actually delivers a frame, not assumed.
+
+### Working without a camera
+
+The default (`audio,network`) needs no webcam, no light and no line of sight. What you
+get is **presence and identity, not position**:
+
+- "I can hear someone talking, but I can't tell where from"
+- "Maya nearby by device"
+
+Adding `camera` is the only way to get a bearing or a distance. That is a hardware fact,
+not a limitation of the code.
 
 ### What it will not do
 

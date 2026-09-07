@@ -14,9 +14,17 @@ def _fresh(monkeypatch):
     svc._service = None
 
 
-def test_default_sensor_set_excludes_the_noisy_one():
-    assert svc.enabled_sensors() == {"camera", "network"}
+def test_default_sensor_set_works_without_a_camera():
+    """Defaults must sense something with no webcam, no light and the lid shut."""
+    assert svc.enabled_sensors() == {"audio", "network"}
     assert "acoustic" not in svc.enabled_sensors(), "sonar holds the speaker; must be opt-in"
+
+
+def test_audio_only_contact_admits_it_has_no_direction():
+    _service_with([Contact(id="a", source="audio", confidence=0.65, detail="voice heard")])
+    text = svc.summary()
+    assert "hear someone" in text and "can't tell where" in text
+    assert "left" not in text and "right" not in text and "metres" not in text
 
 
 @pytest.mark.parametrize("value,expected", [
