@@ -213,8 +213,20 @@ class Config:
                     "  Put your key in .env:  GROQ_API_KEY=gsk_...   (or set JARVIS_BRAIN=chatgpt)."
                 )
             return "groq"
+        if self.brain == "ollama":
+            try:
+                import httpx
+                httpx.get(self.ollama_base.rsplit("/v1", 1)[0] + "/api/tags", timeout=2).raise_for_status()
+            except Exception:
+                raise SystemExit(
+                    "Ollama brain selected but the local server isn't reachable.\n"
+                    "  Start it:   ollama serve        (or: sudo systemctl start ollama)\n"
+                    f"  Pull a model:  ollama pull {self.ollama_model}\n"
+                    "  (or set JARVIS_BRAIN=chatgpt / gemini / groq in .env)."
+                )
+            return "ollama"
         raise SystemExit(
-            f"Unknown JARVIS_BRAIN={self.brain!r}. Use 'chatgpt' (default), 'gemini', or 'groq'."
+            f"Unknown JARVIS_BRAIN={self.brain!r}. Use 'chatgpt', 'gemini', 'groq', or 'ollama'."
         )
 
     def resolved_voice_backend(self) -> str:
