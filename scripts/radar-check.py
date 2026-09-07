@@ -159,25 +159,37 @@ def snapshot(path: str) -> int:
     if not camera.ensure_model():
         print("could not fetch the YuNet model (offline?)")
         return 1
-    cap, index = camera.open_capture(cv2, warmup=8)
-    if cap is None:
-        print("camera busy or missing — stop the backend first:")
-        print("  systemctl --user stop jarvis-backend; pkill -f 'jarvis --web'")
-        return 1
-    for _ in range(10):
-        cap.read()                       # let auto-exposure settle
-    rotation = camera.detect_rotation(cv2, cap, camera.MODEL_PATH)
+    # Grab a usable frame as early as possible: this webcam only delivers ~40% of reads
+    # once USB autosuspend has kicked in, so spend the budget on getting one good frame
+    # rather than on anything clever beforehand.
     frame = None
-    for _ in range(15):                  # this webcam drops the odd frame; retry briefly
-        ok, candidate = cap.read()
-        if ok and candidate is not None:
-            frame = candidate
+    index = None
+    for _ in range(4):
+        cap, index = camera.open_capture(cv2, warmup=10)
+        if cap is None:
+            time.sleep(1.0)
+            continue
+        for _ in range(40):
+            ok, candidate = cap.read()
+            if ok and candidate is not None and candidate.mean() > 1:
+                frame = candidate
+                break
+            time.sleep(0.05)
+        if frame is not None:
             break
-        time.sleep(0.1)
-    cap.release()
+        cap.release()
     if frame is None:
-        print("camera stopped delivering frames (it re-enumerates on this machine) — retry")
+        print("camera never delivered a frame.")
+        print("This laptop's webcam re-enumerates on USB resume; fix it once with:")
+        print("  sudo bash scripts/fix-camera-autosuspend.sh")
         return 1
+    for _ in range(6):                   # a few more, so auto-exposure settles
+        ok, better = cap.read()
+        if ok and better is not None:
+            frame = better
+    rotation = camera.detect_rotation(cv2, cap, camera.MODEL_PATH, attempts=4)
+    cap.release()
+
     print(f"video{index}  {frame.shape[1]}x{frame.shape[0]}  brightness {frame.mean():.0f}/255")
     if frame.mean() < camera.DARK_LEVEL:
         print("frame is black — privacy shutter closed or the room is dark")

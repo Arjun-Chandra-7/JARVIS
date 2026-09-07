@@ -102,22 +102,32 @@ def _rotate(cv2, frame, degrees: int):
 
 
 def detect_rotation(cv2, cap, model_path, attempts: int = 6) -> Optional[int]:
-    """Find the rotation that actually yields a face. None if no orientation does."""
+    """Find the rotation that actually yields a face. None if no orientation does.
+
+    Detectors are built once and reused: constructing a FaceDetectorYN per rotation per
+    frame is slow enough that the camera can hit its 2 s USB autosuspend mid-probe and
+    re-enumerate, which is exactly the failure this is trying to work around.
+    """
     if _ROTATE_ENV.isdigit():
         return int(_ROTATE_ENV) % 360
+    ok, frame = cap.read()
+    if not ok or frame is None:
+        return None
+    h, w = frame.shape[:2]
+    detectors = {}
+    for degrees in ROTATIONS:
+        size = (w, h) if degrees in (0, 180) else (h, w)
+        det = cv2.FaceDetectorYN_create(str(model_path), "", size, score_threshold=0.5)
+        det.setInputSize(size)
+        detectors[degrees] = det
     for _ in range(attempts):
         ok, frame = cap.read()
         if not ok or frame is None or frame.mean() < DARK_LEVEL:
             continue
-        for degrees in ROTATIONS:
-            turned = _rotate(cv2, frame, degrees)
-            h, w = turned.shape[:2]
-            det = cv2.FaceDetectorYN_create(str(model_path), "", (w, h), score_threshold=0.5)
-            det.setInputSize((w, h))
-            _, faces = det.detect(turned)
+        for degrees, det in detectors.items():
+            _, faces = det.detect(_rotate(cv2, frame, degrees))
             if faces is not None and len(faces):
                 return degrees
-        time.sleep(0.15)
     return None
 
 
