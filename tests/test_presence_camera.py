@@ -91,3 +91,58 @@ def test_no_faces_is_empty_not_an_error():
 
 def test_dark_threshold_is_configured():
     assert 0 < camera.DARK_LEVEL < 40
+
+
+class _FakeCap:
+    """Mimics cv2.VideoCapture: some /dev/videoN nodes open but never yield a frame."""
+
+    def __init__(self, index, yields):
+        self.index, self._yields, self.released = index, yields, False
+
+    def isOpened(self): return self.index in (1, 2)
+    def set(self, *_): return True
+    def read(self):
+        return (True, np.zeros((480, 640, 3), np.uint8)) if self._yields else (False, None)
+    def get(self, _prop): return 640
+    def release(self): self.released = True
+
+
+def test_candidate_indices_prefers_an_explicit_override(monkeypatch):
+    monkeypatch.setattr(camera, "_DEVICE", 3)
+    assert camera.candidate_indices() == [3]
+
+
+def test_candidate_indices_enumerates_device_nodes(monkeypatch):
+    monkeypatch.setattr(camera, "_DEVICE", None)
+    monkeypatch.setattr(camera.glob, "glob", lambda _p: ["/dev/video2", "/dev/video1", "/dev/videoX"])
+    assert camera.candidate_indices() == [1, 2]      # sorted, non-numeric ignored
+
+
+def test_open_capture_skips_a_node_that_never_delivers_a_frame(monkeypatch):
+    """video1 opens but yields nothing (a metadata node); video2 is the real capture."""
+    monkeypatch.setattr(camera, "_DEVICE", None)
+    monkeypatch.setattr(camera, "candidate_indices", lambda: [1, 2])
+    made = []
+
+    class FakeCv2:
+        @staticmethod
+        def VideoCapture(index):
+            cap = _FakeCap(index, yields=(index == 2))
+            made.append(cap)
+            return cap
+        CAP_PROP_FRAME_WIDTH = CAP_PROP_FRAME_HEIGHT = 0
+
+    cap, index = camera.open_capture(FakeCv2)
+    assert index == 2 and cap is not None
+    assert made[0].released is True, "the dead node must be released, not leaked"
+
+
+def test_open_capture_returns_none_when_nothing_works(monkeypatch):
+    monkeypatch.setattr(camera, "candidate_indices", lambda: [7])
+
+    class FakeCv2:
+        @staticmethod
+        def VideoCapture(index): return _FakeCap(99, yields=False)
+        CAP_PROP_FRAME_WIDTH = CAP_PROP_FRAME_HEIGHT = 0
+
+    assert camera.open_capture(FakeCv2) == (None, None)

@@ -9,8 +9,10 @@ only lit while presence sensing is actually enabled.
 """
 from __future__ import annotations
 
+import glob
 import math
 import os
+import re
 import threading
 import time
 import urllib.request
@@ -25,7 +27,11 @@ MODEL_URL = ("https://github.com/opencv/opencv_zoo/raw/main/models/"
 MODEL_PATH = Path(os.environ.get(
     "JARVIS_YUNET_MODEL", "~/.local/share/jarvis/models/yunet.onnx")).expanduser()
 
-_DEVICE = int(os.environ.get("JARVIS_CAMERA_INDEX", "0"))
+# A laptop exposes several /dev/videoN nodes (capture + metadata), and they renumber
+# whenever the USB device re-enumerates. Discover a node that actually yields frames
+# rather than assuming index 0. JARVIS_CAMERA_INDEX pins one explicitly.
+_DEVICE_ENV = os.environ.get("JARVIS_CAMERA_INDEX")
+_DEVICE = int(_DEVICE_ENV) if _DEVICE_ENV and _DEVICE_ENV.lstrip("-").isdigit() else None
 _WIDTH = int(os.environ.get("JARVIS_CAMERA_WIDTH", "640"))
 _HEIGHT = int(os.environ.get("JARVIS_CAMERA_HEIGHT", "480"))
 _FPS = float(os.environ.get("JARVIS_PRESENCE_FPS", "4"))       # low: this runs all day
@@ -49,6 +55,36 @@ def ensure_model(timeout: float = 60.0) -> bool:
         return True
     except Exception:  # noqa: BLE001 - offline is a normal, non-fatal state
         return False
+
+
+def candidate_indices() -> list[int]:
+    """Video node numbers to try, lowest first. Honours an explicit override."""
+    if _DEVICE is not None:
+        return [_DEVICE]
+    found = sorted(int(m.group(1)) for m in
+                   (re.match(r"/dev/video(\d+)$", p) for p in sorted(glob.glob("/dev/video*")))
+                   if m)
+    return found or [0]
+
+
+def open_capture(cv2, warmup: int = 3):
+    """Open the first node that genuinely delivers a frame. Returns (capture, index)."""
+    for index in candidate_indices():
+        cap = cv2.VideoCapture(index)
+        if not cap.isOpened():
+            cap.release()
+            continue
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, _WIDTH)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, _HEIGHT)
+        ok = False
+        for _ in range(warmup):                    # metadata nodes open but never yield a frame
+            ok, frame = cap.read()
+            if ok and frame is not None:
+                break
+        if ok:
+            return cap, index
+        cap.release()
+    return None, None
 
 
 def _ipd_px(landmarks) -> Optional[float]:
@@ -107,17 +143,15 @@ class CameraSensor:
             self._set_status(False, "YuNet model unavailable (offline?)")
             return
 
-        cap = cv2.VideoCapture(_DEVICE)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, _WIDTH)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, _HEIGHT)
-        if not cap.isOpened():
-            self._set_status(False, f"camera {_DEVICE} busy or missing")
+        cap, index = open_capture(cv2)
+        if cap is None:
+            self._set_status(False, "no capture-capable camera (busy, missing, or blocked)")
             return
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or _WIDTH
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or _HEIGHT
         detector = cv2.FaceDetectorYN_create(str(MODEL_PATH), "", (width, height),
                                              score_threshold=_SCORE)
-        self._set_status(True, f"{width}x{height} @{_FPS:g}fps, hfov {geo.hfov_deg():.0f}deg")
+        self._set_status(True, f"video{index} {width}x{height} @{_FPS:g}fps, hfov {geo.hfov_deg():.0f}deg")
 
         period = 1.0 / max(0.5, _FPS)
         try:
@@ -196,6 +230,6 @@ def sensor() -> CameraSensor:
 
 def describe() -> dict[str, Any]:
     """Cheap capability report for diagnostics."""
-    return {"device": _DEVICE, "size": [_WIDTH, _HEIGHT], "fps": _FPS,
+    return {"device": _DEVICE, "candidates": candidate_indices(), "size": [_WIDTH, _HEIGHT], "fps": _FPS,
             "model": str(MODEL_PATH), "model_present": MODEL_PATH.exists(),
             "hfov_deg": geo.hfov_deg()}
