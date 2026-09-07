@@ -147,13 +147,78 @@ def calibrate(distance_m: float) -> int:
     return 0
 
 
+def snapshot(path: str) -> int:
+    """Save what the camera sees, with any detected face boxed — for aiming the lid."""
+    try:
+        import cv2
+    except ImportError:
+        print("needs opencv: .venv/bin/pip install opencv-python-headless")
+        return 1
+    from jarvis.presence import camera, geometry as geo
+
+    if not camera.ensure_model():
+        print("could not fetch the YuNet model (offline?)")
+        return 1
+    cap, index = camera.open_capture(cv2, warmup=8)
+    if cap is None:
+        print("camera busy or missing — stop the backend first:")
+        print("  systemctl --user stop jarvis-backend; pkill -f 'jarvis --web'")
+        return 1
+    for _ in range(10):
+        cap.read()                       # let auto-exposure settle
+    rotation = camera.detect_rotation(cv2, cap, camera.MODEL_PATH)
+    frame = None
+    for _ in range(15):                  # this webcam drops the odd frame; retry briefly
+        ok, candidate = cap.read()
+        if ok and candidate is not None:
+            frame = candidate
+            break
+        time.sleep(0.1)
+    cap.release()
+    if frame is None:
+        print("camera stopped delivering frames (it re-enumerates on this machine) — retry")
+        return 1
+    print(f"video{index}  {frame.shape[1]}x{frame.shape[0]}  brightness {frame.mean():.0f}/255")
+    if frame.mean() < camera.DARK_LEVEL:
+        print("frame is black — privacy shutter closed or the room is dark")
+    if rotation is None:
+        print("orientation: unknown (no face found in any rotation — nobody in shot?)")
+        rotation = 0
+    else:
+        print(f"orientation: {rotation} deg rotation needed")
+    frame = camera._rotate(cv2, frame, rotation)
+    h, w = frame.shape[:2]
+    det = cv2.FaceDetectorYN_create(str(camera.MODEL_PATH), "", (w, h), score_threshold=0.5)
+    det.setInputSize((w, h))
+    _, faces = det.detect(frame)
+    if faces is None or not len(faces):
+        print("NO FACE DETECTED — is your face fully inside the frame? Tilt the lid.")
+    for f in faces if faces is not None else []:
+        x, y, bw, bh = (int(v) for v in f[:4])
+        ipd = camera._ipd_px([(f[4], f[5]), (f[6], f[7])])
+        cv2.rectangle(frame, (x, y), (x + bw, y + bh), (0, 255, 0), 2)
+        if ipd:
+            dist = geo.distance_from_ipd(ipd, w)
+            bearing = geo.bearing_deg(x + bw / 2, w)
+            label = f"{dist:.2f}m {bearing:+.0f}deg"
+            cv2.putText(frame, label, (x, max(14, y - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+            print(f"  FACE score={f[-1]:.2f}  {dist:.2f} m  bearing {bearing:+.1f} deg")
+    cv2.imwrite(path, frame)
+    print(f"saved {path}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--seconds", type=float, default=30.0)
     ap.add_argument("--sensors", default=None, help="override JARVIS_PRESENCE, e.g. camera,acoustic")
     ap.add_argument("--calibrate", type=float, metavar="METRES",
                     help="solve the camera FOV from a known standoff")
+    ap.add_argument("--snapshot", nargs="?", const="/tmp/jarvis-camera.jpg", metavar="PATH",
+                    help="save what the camera sees, with any face boxed")
     args = ap.parse_args()
+    if args.snapshot:
+        return snapshot(args.snapshot)
     return calibrate(args.calibrate) if args.calibrate else live(args.seconds, args.sensors)
 
 

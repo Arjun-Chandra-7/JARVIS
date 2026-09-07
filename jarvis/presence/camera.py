@@ -38,6 +38,12 @@ _FPS = float(os.environ.get("JARVIS_PRESENCE_FPS", "4"))       # low: this runs 
 _SCORE = float(os.environ.get("JARVIS_FACE_SCORE", "0.75"))
 DARK_LEVEL = float(os.environ.get("JARVIS_CAMERA_DARK_LEVEL", "8"))  # mean 0-255 below which no face can exist
 
+# Some laptop webcams are mounted inverted and the driver does not correct it. A face
+# detector finds nothing at all in a 180-rotated frame, so orientation is auto-detected
+# by trying each rotation until one produces a face. "auto" | 0 | 90 | 180 | 270.
+_ROTATE_ENV = os.environ.get("JARVIS_CAMERA_ROTATE", "auto").strip().lower()
+ROTATIONS = (0, 180, 90, 270)   # most likely first
+
 
 def ensure_model(timeout: float = 60.0) -> bool:
     """Fetch the 230 KB YuNet model once. Returns True when it is on disk."""
@@ -85,6 +91,34 @@ def open_capture(cv2, warmup: int = 3):
             return cap, index
         cap.release()
     return None, None
+
+
+def _rotate(cv2, frame, degrees: int):
+    if degrees == 0:
+        return frame
+    return cv2.rotate(frame, {90: cv2.ROTATE_90_CLOCKWISE,
+                              180: cv2.ROTATE_180,
+                              270: cv2.ROTATE_90_COUNTERCLOCKWISE}[degrees])
+
+
+def detect_rotation(cv2, cap, model_path, attempts: int = 6) -> Optional[int]:
+    """Find the rotation that actually yields a face. None if no orientation does."""
+    if _ROTATE_ENV.isdigit():
+        return int(_ROTATE_ENV) % 360
+    for _ in range(attempts):
+        ok, frame = cap.read()
+        if not ok or frame is None or frame.mean() < DARK_LEVEL:
+            continue
+        for degrees in ROTATIONS:
+            turned = _rotate(cv2, frame, degrees)
+            h, w = turned.shape[:2]
+            det = cv2.FaceDetectorYN_create(str(model_path), "", (w, h), score_threshold=0.5)
+            det.setInputSize((w, h))
+            _, faces = det.detect(turned)
+            if faces is not None and len(faces):
+                return degrees
+        time.sleep(0.15)
+    return None
 
 
 def _ipd_px(landmarks) -> Optional[float]:
@@ -147,21 +181,52 @@ class CameraSensor:
         if cap is None:
             self._set_status(False, "no capture-capable camera (busy, missing, or blocked)")
             return
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or _WIDTH
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or _HEIGHT
+        rotation = detect_rotation(cv2, cap, MODEL_PATH)
+        # No orientation produced a face yet — that usually means nobody is in shot, so
+        # start unrotated and re-check occasionally rather than refusing to run.
+        confirmed = rotation is not None
+        rotation = rotation or 0
+        probe_ok, probe = cap.read()
+        if probe_ok and probe is not None:
+            turned = _rotate(cv2, probe, rotation)
+            height, width = turned.shape[:2]
+        else:
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or _WIDTH
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or _HEIGHT
         detector = cv2.FaceDetectorYN_create(str(MODEL_PATH), "", (width, height),
                                              score_threshold=_SCORE)
-        self._set_status(True, f"video{index} {width}x{height} @{_FPS:g}fps, hfov {geo.hfov_deg():.0f}deg")
+        detector.setInputSize((width, height))   # YuNet finds nothing if this mismatches
+        self._set_status(True, f"video{index} {width}x{height} @{_FPS:g}fps, "
+                               f"rot {rotation}deg{'' if confirmed else '?'}, hfov {geo.hfov_deg():.0f}deg")
 
         period = 1.0 / max(0.5, _FPS)
+        empty_runs = 0
+        read_failures = 0
         try:
             while not self._stop.is_set():
                 started = time.monotonic()
                 ok, frame = cap.read()
                 if not ok or frame is None:
-                    self._set_status(False, "frame read failed")
-                    time.sleep(1.0)
+                    # This webcam re-enumerates when it resumes from USB autosuspend, which
+                    # moves its /dev/videoN node out from under us. Reopen and rediscover
+                    # rather than sitting on a dead handle for the rest of the session.
+                    read_failures += 1
+                    self._set_status(False, f"frame read failed ({read_failures})")
+                    if read_failures >= 3:
+                        cap.release()
+                        time.sleep(1.0)
+                        cap, index = open_capture(cv2)
+                        if cap is None:
+                            self._set_status(False, "camera vanished — reopening")
+                            time.sleep(3.0)
+                            cap, index = open_capture(cv2)
+                            if cap is None:
+                                return
+                        read_failures = 0
+                    time.sleep(0.5)
                     continue
+                read_failures = 0
+                frame = _rotate(cv2, frame, rotation)
                 # A near-black frame means the shutter is closed or the room is dark.
                 # Say so — silently reporting "nobody here" would be a lie.
                 brightness = float(frame.mean())
@@ -171,8 +236,26 @@ class CameraSensor:
                                             "privacy shutter closed or room dark")
                     time.sleep(1.0)
                     continue
-                self._set_status(True, f"{width}x{height} @{_FPS:g}fps, hfov {geo.hfov_deg():.0f}deg")
-                self._publish(self._detect(detector, frame, width))
+                found = self._detect(detector, frame, width)
+                self._publish(found)
+                # Still unsure of orientation and seeing nobody? Re-probe now and then;
+                # an inverted webcam is invisible to the detector until it is corrected.
+                if found:
+                    confirmed, empty_runs = True, 0
+                elif not confirmed:
+                    empty_runs += 1
+                    if empty_runs >= int(_FPS) * 20:
+                        empty_runs = 0
+                        again = detect_rotation(cv2, cap, MODEL_PATH, attempts=3)
+                        if again is not None and again != rotation:
+                            rotation, confirmed = again, True
+                            probe_ok, probe = cap.read()
+                            if probe_ok and probe is not None:
+                                height, width = _rotate(cv2, probe, rotation).shape[:2]
+                                detector.setInputSize((width, height))
+                self._set_status(True, f"video{index} {width}x{height} @{_FPS:g}fps, "
+                                       f"rot {rotation}deg{'' if confirmed else '?'}, "
+                                       f"hfov {geo.hfov_deg():.0f}deg")
                 time.sleep(max(0.0, period - (time.monotonic() - started)))
         finally:
             cap.release()
