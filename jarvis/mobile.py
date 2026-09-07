@@ -173,8 +173,8 @@ async def mobile_status():
     try:
         from .integrations import system_stats
         s = system_stats.snapshot()
-        out["cpu"] = s.get("cpu_pct") or s.get("cpu")
-        out["mem"] = s.get("mem_pct") or s.get("memory")
+        out["cpu"] = s.get("cpu_percent")
+        out["mem"] = (s.get("mem") or {}).get("percent")
     except Exception:  # noqa: BLE001
         pass
     return out
