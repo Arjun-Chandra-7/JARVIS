@@ -43,6 +43,11 @@ C_AIR = 343.0
 MIN_RANGE_M = 0.35                 # inside this the direct-path mainlobe dominates
 MAX_RANGE_M = 4.0
 CLUTTER_LEN = 40                   # ~2 s of profiles for the median clutter map
+MIN_SNR_DB = 8.0                   # below this a peak is clutter residue, not a body
+MAX_TARGETS = 3
+PERSIST_FRAMES = 4                 # a real target holds still-ish across consecutive sweeps
+PERSIST_HITS = 3
+PERSIST_TOLERANCE_M = 0.30
 AMPLITUDE = float(os.environ.get("JARVIS_SONAR_LEVEL", "0.12"))
 
 
@@ -76,8 +81,12 @@ def range_axis(n_bins: int, origin: int) -> np.ndarray:
     return (np.arange(n_bins) - origin) * (C_AIR / SR) / 2.0
 
 
-def cfar(profile: np.ndarray, guard: int = 4, train: int = 16, threshold_db: float = 16.0) -> list[int]:
-    """Cell-averaging CFAR: a bin must beat its local neighbourhood, not a global mean.
+def cfar(profile: np.ndarray, guard: int = 4, train: int = 16,
+         threshold_db: float = 16.0) -> list[tuple[int, float]]:
+    """Cell-averaging CFAR. Returns (index, local_noise) so callers score SNR against
+    the same noise estimate that authorised the detection.
+
+    A bin must beat its local neighbourhood, not a global mean.
 
     The threshold is on magnitude, so it is deliberately high. Rayleigh-distributed
     noise magnitude routinely reaches ~4x its own mean, and with thousands of bins per
@@ -97,7 +106,8 @@ def cfar(profile: np.ndarray, guard: int = 4, train: int = 16, threshold_db: flo
     noise = (win - guard_sum) / (2 * train) + 1e-12
     strong = profile[idx] > ratio * noise
     local_max = (profile[idx] >= profile[idx - 1]) & (profile[idx] >= profile[idx + 1])
-    return [int(i) for i in idx[strong & local_max]]
+    keep = strong & local_max
+    return [(int(i), float(n)) for i, n in zip(idx[keep], noise[keep])]
 
 
 class AcousticSensor:
@@ -110,6 +120,7 @@ class AcousticSensor:
         self._contacts: list[Contact] = []
         self._status = SensorStatus("acoustic", False, "not started")
         self._seq = 0
+        self._history: list[list[float]] = []
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -210,23 +221,45 @@ class AcousticSensor:
             return []
         window = residual[lo:hi]
         now = time.time()
-        out: list[Contact] = []
-        for peak in cfar(window):
+
+        # Score against the CFAR training cells, not a global median. The residual is
+        # half zeros after clipping, so a global median is ~0 and turns every peak into
+        # a nonsensical 200 dB.
+        raw: list[tuple[float, float]] = []
+        for peak, noise in cfar(window):
             idx = lo + peak
-            noise = float(np.median(window)) + 1e-12
-            snr_db = 20 * np.log10(residual[idx] / noise)
+            snr_db = float(min(40.0, 20 * np.log10(max(residual[idx], 1e-12) / max(noise, 1e-9))))
+            if snr_db >= MIN_SNR_DB:
+                raw.append((float(ranges[idx]), snr_db))
+
+        # A person persists; multipath and room ring flicker. Only report a range that
+        # has been seen in at least PERSIST_HITS of the last PERSIST_FRAMES sweeps.
+        self._history.append([r for r, _ in raw])
+        if len(self._history) > PERSIST_FRAMES:
+            self._history.pop(0)
+
+        out: list[Contact] = []
+        for distance, snr_db in sorted(raw, key=lambda item: -item[1]):
+            hits = sum(1 for frame in self._history
+                       if any(abs(prev - distance) <= PERSIST_TOLERANCE_M for prev in frame))
+            if hits < PERSIST_HITS:
+                continue
+            if any(abs((c.distance_m or 0) - distance) <= PERSIST_TOLERANCE_M for c in out):
+                continue                       # one contact per resolvable range cell
             self._seq += 1
             out.append(Contact(
                 id=f"ac-{self._seq}",
                 source="acoustic",
-                distance_m=float(ranges[idx]),
+                distance_m=distance,
                 bearing_deg=None,               # genuinely unknown on this hardware
-                confidence=round(min(0.75, 0.25 + snr_db / 40.0), 3),
+                confidence=round(min(0.7, 0.2 + snr_db / 60.0), 3),
                 moving=True,                    # the clutter map removes everything static
                 first_seen=now, last_seen=now,
                 detail=f"moving echo, {snr_db:.0f} dB over clutter",
             ))
-        return sorted(out, key=lambda c: c.distance_m or 0)[:4]
+            if len(out) >= MAX_TARGETS:
+                break
+        return sorted(out, key=lambda c: c.distance_m or 0)
 
     def _publish(self, contacts: list[Contact]) -> None:
         with self._lock:

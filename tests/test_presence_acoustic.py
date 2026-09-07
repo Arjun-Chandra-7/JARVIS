@@ -71,8 +71,11 @@ def test_cfar_finds_a_peak_above_local_noise_only():
     profile = np.abs(rng.normal(0, 1, 900)) * 0.1
     profile[400] = 6.0
     peaks = a.cfar(profile)
-    assert 400 in peaks
+    indices = [i for i, _noise in peaks]
+    assert 400 in indices
     assert len(peaks) <= 3                                   # not firing on noise everywhere
+    noise_at_peak = dict(peaks)[400]
+    assert 0 < noise_at_peak < profile[400], "noise estimate must be local and below the peak"
 
 
 def test_cfar_is_quiet_on_pure_noise():
@@ -86,7 +89,8 @@ def test_targets_are_range_only_and_never_invent_a_bearing():
     origin = 100
     at_1m = origin + int(round(1.0 * 2 / a.C_AIR * a.SR))
     residual[at_1m] = 5.0
-    contacts = sensor._targets(residual, origin)
+    for _ in range(a.PERSIST_HITS):          # a target must persist before it is reported
+        contacts = sensor._targets(residual, origin)
     assert contacts, "expected a detection"
     c = contacts[0]
     assert c.bearing_deg is None                # the whole point
@@ -102,7 +106,45 @@ def test_targets_outside_the_usable_window_are_dropped():
     origin = 50
     residual[origin + 4] = 9.0                                     # 1.4 cm: direct-path mainlobe
     residual[origin + int(8.0 * 2 / a.C_AIR * a.SR)] = 9.0         # 8 m: beyond range
-    assert sensor._targets(residual, origin) == []
+    for _ in range(a.PERSIST_FRAMES):
+        assert sensor._targets(residual, origin) == []
+
+
+def test_snr_is_finite_and_bounded():
+    """A residual that is mostly zeros must not yield an absurd 200 dB."""
+    sensor = a.AcousticSensor()
+    residual = np.zeros(6000)
+    origin = 100
+    residual[origin + int(round(1.5 * 2 / a.C_AIR * a.SR))] = 8.0
+    for _ in range(a.PERSIST_HITS):
+        contacts = sensor._targets(residual, origin)
+    assert contacts
+    db = float(contacts[0].detail.split()[2])
+    assert 0 < db <= 40, f"implausible SNR {db} dB"
+    assert 0.0 < contacts[0].confidence <= 0.7
+
+
+def test_a_one_frame_flicker_is_not_reported():
+    """Multipath flickers; a person persists. One sighting must not become a contact."""
+    sensor = a.AcousticSensor()
+    origin = 100
+    hit = np.zeros(6000)
+    hit[origin + int(round(2.0 * 2 / a.C_AIR * a.SR))] = 8.0
+    assert sensor._targets(hit, origin) == []
+    for _ in range(a.PERSIST_FRAMES):
+        sensor._targets(np.zeros(6000), origin)
+    assert sensor._targets(hit, origin) == []
+
+
+def test_max_targets_is_capped():
+    sensor = a.AcousticSensor()
+    origin = 100
+    residual = np.zeros(9000)
+    for metres in (0.6, 1.2, 1.8, 2.4, 3.0, 3.6):
+        residual[origin + int(round(metres * 2 / a.C_AIR * a.SR))] = 8.0
+    for _ in range(a.PERSIST_HITS):
+        contacts = sensor._targets(residual, origin)
+    assert len(contacts) <= a.MAX_TARGETS
 
 
 def test_guard_interval_prevents_range_wrap():
