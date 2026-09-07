@@ -73,6 +73,11 @@ class Snapshot:
     at: float = field(default_factory=time.time)
 
     @property
+    def count(self) -> int:
+        """Every contact, including range-only echoes we cannot place."""
+        return len(self.contacts)
+
+    @property
     def people(self) -> int:
         """How many distinct people we can actually stand behind (bearing or identity known)."""
         return sum(1 for c in self.contacts
@@ -83,7 +88,7 @@ class Snapshot:
             "at": self.at,
             "age": round(max(0.0, time.time() - self.at), 2),
             "people": self.people,
-            "count": len(self.contacts),
+            "count": self.count,
             "contacts": [c.to_dict() for c in self.contacts],
             "sensors": [s.to_dict() for s in self.sensors],
         }
