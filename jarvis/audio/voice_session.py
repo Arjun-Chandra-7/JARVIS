@@ -529,6 +529,24 @@ class VoiceSession:
                                 f"returned on {where} with: {job.get('summary') or 'no notable output'}")
             first_pass = False
 
+    async def _watch_power(self) -> None:
+        """Announce the charger going in or coming out, with the battery level."""
+        from ..integrations.power_supply import PowerWatcher
+        from ..preferences import notifications_enabled
+
+        watcher = PowerWatcher()
+        while True:
+            await asyncio.sleep(3)
+            try:
+                message = await asyncio.to_thread(watcher.poll)
+            except Exception:  # noqa: BLE001
+                continue
+            if not message:
+                continue
+            self.on_event("power", message)
+            if notifications_enabled():
+                self._speak(message)
+
     async def _watch_meet(self) -> None:
         """Announce once when a Meet the bot joined finishes, with its summary."""
         import httpx
@@ -604,6 +622,7 @@ class VoiceSession:
         asyncio.create_task(self._watch_afk(agent))  # welcome-back brief after a long idle gap
         asyncio.create_task(self._watch_coding_jobs())  # speak coding-job completions + chime
         asyncio.create_task(self._watch_meet())  # announce when a joined Meet ends, with summary
+        asyncio.create_task(self._watch_power())  # "laptop charging, battery N%" on plug/unplug
 
         if self.config.screen_always:  # keep screen vision on from the start
             from ..vision import live
