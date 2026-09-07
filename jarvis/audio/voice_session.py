@@ -691,7 +691,9 @@ class VoiceSession:
                         mem_used = st.get("mem", {}).get("used_gb", 8)
                         mem_free = round(mem_total - mem_used, 1)
                         gpu_info = f", GPU load is at {st['gpu']['util']} percent" if st.get("gpu") else ""
-                        
+                        from ..integrations.power_supply import spoken_state
+                        power_info = f" Power: {spoken_state()}."
+
                         # 2. Detailed subsystems status (which are online and which are offline)
                         h = hud_state.health()
                         systems = h.get("systems", [])
@@ -728,7 +730,7 @@ class VoiceSession:
 
                         reply = (
                             f"Online and ready, {self.config.user_name}. "
-                            f"Computer stats: CPU is at {cpu_p} percent with {mem_free} gigabytes of memory free{gpu_info}. "
+                            f"Computer stats: CPU is at {cpu_p} percent with {mem_free} gigabytes of memory free{gpu_info}.{power_info} "
                             f"{subsys_msg} "
                             f"{ai_msg}"
                             f"{wa_msg}"
