@@ -64,6 +64,11 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
         from .agent import away
         away.set_available(config)
         return "Welcome back, sir. Away replies are off."
+    if re.fullmatch(r"(?:who(?:'?s| is)(?: around| here| nearby| in the room| with me)|"
+                    r"is (?:anyone|anybody|someone) (?:here|around|nearby|with me)|"
+                    r"(?:scan|check)(?: the)? room|human radar|radar)", command):
+        from .presence import service as presence
+        return await asyncio.to_thread(presence.summary, config)
     if re.fullmatch(r"(?:join|open)(?: the| my)? (?:google )?meet(?: and (?:take )?notes)?", command):
         from .integrations import meet_bot
         result = await meet_bot.join_meet("https://meet.google.com/twa-pgjz-gss", "", config)

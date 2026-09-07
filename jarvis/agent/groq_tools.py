@@ -343,6 +343,23 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         from ..integrations import contacts
         return contacts.remember(a.get("name", ""), a.get("number", ""), a.get("note", ""))["message"]
 
+    @tool("who_is_around",
+          "Who is physically nearby right now: people located by the webcam (range + bearing), "
+          "range-only acoustic contacts, and people identified by their devices. Says what is "
+          "unknown rather than guessing.",
+          {})
+    async def who_is_around(a):
+        from ..presence import service as presence
+        return await asyncio.to_thread(presence.summary, config)
+
+    @tool("remember_device",
+          "Bind a MAC address to a person so Jarvis can recognise them by their phone/watch "
+          "even with no line of sight. Randomised (private) MACs are refused.",
+          {"mac": {"type": "string"}, "person": {"type": "string"}}, ["mac", "person"])
+    async def remember_device(a):
+        from ..presence import identity
+        return identity.remember(config, a.get("mac", ""), a.get("person", ""))["message"]
+
     @tool("contact_context",
           "What Jarvis knows about a person from past WhatsApp chats: frequency, recurring topics, "
           "pending items, last interaction. Use before messaging or when the user asks about someone. "

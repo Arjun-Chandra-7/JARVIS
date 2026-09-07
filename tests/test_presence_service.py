@@ -80,3 +80,24 @@ def test_summary_admits_unknown_bearing_for_echoes():
 def test_named_only_contact_is_described_as_by_device():
     _service_with([Contact(id="n", source="network", label="Maya", confidence=0.7)])
     assert "by device" in svc.summary()
+
+
+def test_who_is_around_command_routes_to_presence(monkeypatch):
+    """The voice phrase must reach the presence summary, not the LLM."""
+    import asyncio
+    from jarvis import commands
+    from jarvis.config import Config
+
+    monkeypatch.setattr(svc, "summary", lambda config=None: "One person: someone about 1.2 metres ahead.")
+    for phrase in ("Jarvis who's around", "who is here", "is anyone nearby",
+                   "scan the room", "human radar"):
+        reply = asyncio.run(commands.handle(phrase, Config()))
+        assert reply is not None and "1.2 metres" in reply, phrase
+
+
+def test_who_is_around_tool_is_registered():
+    from jarvis.agent.groq_tools import build_registry
+    from jarvis.config import Config
+    schemas, _ = build_registry(Config(), None, None)
+    names = {s["function"]["name"] for s in schemas}
+    assert "who_is_around" in names and "remember_device" in names
