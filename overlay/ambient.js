@@ -126,108 +126,90 @@ function stringToHue(str) {
 }
 
 async function refreshRadar() {
-  try {
-    // 1. Fetch physical acoustic sonar echoes (real human bodies in room)
-    const sonarData = await (await fetch(API + "/sonar")).json().catch(() => null);
-    const targets = [];
+  const host = $("hblips");
+  const countEl = $("nearcount");
+  if (!host) return;
+  let data = null;
+  try { data = await (await fetch(API + "/radar")).json(); } catch (e) { data = null; }
 
-    if (sonarData && sonarData.humans && sonarData.humans.length > 0) {
-      sonarData.humans.forEach((h, idx) => {
-        targets.push({
-          id: h.id || `body_${idx}`,
-          name: `HUMAN ${idx + 1}`,
-          type: "PHYSICAL BODY",
-          dist: h.distance,
-          angle: h.angle_deg || 0.0,
-          x_m: h.x_m || 0.0,
-          y_m: h.y_m || h.distance,
-          source: "sonar",
-          conf: h.confidence || 0.8
-        });
-      });
+  if (!data || data.error) { countEl.textContent = "RADAR OFFLINE"; host.innerHTML = ""; return; }
+
+  const contacts = data.contacts || [];
+  const located = contacts.filter(c => c.bearing_known && c.y_m != null);
+  const ranged  = contacts.filter(c => !c.bearing_known && c.distance_m != null);
+  const named   = contacts.filter(c => !c.bearing_known && c.distance_m == null && c.label);
+
+  // Headline reflects what we can actually stand behind, not raw contact count.
+  const people = data.people || 0;
+  if (people > 0)          countEl.textContent = people === 1 ? "1 PERSON" : `${people} PEOPLE`;
+  else if (ranged.length)  countEl.textContent = `${ranged.length} MOVING`;
+  else {
+    const blocked = (data.sensors || []).find(s => !s.ok && s.detail);
+    countEl.textContent = blocked ? "NO SIGNAL" : "CLEAR";
+  }
+
+  const MAX_M = 5.0, HALF_FOV = 34;   // matches the camera's horizontal half-FOV
+  if (!window._blipMap) window._blipMap = new Map();
+  const blipMap = window._blipMap;
+  const alive = new Set();
+
+  // --- located people: a real top-down polar position -----------------------
+  for (const c of located) {
+    alive.add(c.id);
+    let el = blipMap.get(c.id);
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "hblip";
+      el.innerHTML = '<span class="htag"></span><span class="hdist"></span>';
+      host.appendChild(el); blipMap.set(c.id, el);
     }
+    el.classList.remove("harc");
+    const xPct = 50 + Math.max(-1, Math.min(1, (c.bearing_deg || 0) / HALF_FOV)) * 40;
+    const yPct = 96 - Math.max(0, Math.min(1, (c.y_m || 0) / MAX_M)) * 88;  // near = bottom
+    el.style.left = xPct.toFixed(1) + "%";
+    el.style.top = yPct.toFixed(1) + "%";
+    const size = Math.max(9, 19 - (c.distance_m / MAX_M) * 10);
+    el.style.width = el.style.height = size.toFixed(0) + "px";
+    el.style.opacity = String(0.45 + 0.55 * (c.confidence || 0.5));
+    el.querySelector(".htag").textContent = c.label || "PERSON";
+    el.querySelector(".hdist").textContent =
+      `${c.distance_m.toFixed(1)}m ${c.bearing_deg > 0 ? "+" : ""}${Math.round(c.bearing_deg)}\u00b0`;
+  }
 
-    targets.sort((a, b) => a.dist - b.dist);
-    const count = targets.length;
-
-    if (count === 0) {
-      $("nearcount").textContent = "SCANNING";
-    } else if (count === 1) {
-      $("nearcount").textContent = "1 PERSON";
-    } else {
-      $("nearcount").textContent = `${count} PEOPLE`;
+  // --- range-only contacts: an ARC, because the bearing is genuinely unknown --
+  for (const c of ranged) {
+    alive.add(c.id);
+    let el = blipMap.get(c.id);
+    if (!el) {
+      el = document.createElement("div");
+      el.innerHTML = '<span class="htag"></span>';
+      host.appendChild(el); blipMap.set(c.id, el);
     }
+    el.className = "hblip harc";
+    el.style.width = el.style.height = "";
+    el.style.left = "50%";
+    el.style.top = (96 - Math.max(0, Math.min(1, c.distance_m / MAX_M)) * 88).toFixed(1) + "%";
+    el.style.opacity = String(0.35 + 0.5 * (c.confidence || 0.5));
+    el.querySelector(".htag").textContent = `${c.distance_m.toFixed(1)}m \u00b7 bearing unknown`;
+  }
 
-    const host = $("hblips");
-    if (!host) return;
+  for (const [id, el] of blipMap.entries()) {
+    if (!alive.has(id)) { el.remove(); blipMap.delete(id); }
+  }
 
-    // Track blip elements by persistent Target ID
-    if (!window._blipMap) window._blipMap = new Map();
-    const blipMap = window._blipMap;
-    const activeIds = new Set(targets.map(t => t.id));
-
-    // Remove old tracks
-    for (const [id, el] of blipMap.entries()) {
-      if (!activeIds.has(id)) {
-        el.remove();
-        blipMap.delete(id);
-      }
-    }
-
-    for (let i = 0; i < targets.length; i++) {
-      const t = targets[i];
-      let el = blipMap.get(t.id);
-      if (!el) {
-        el = document.createElement("div");
-        el.className = "hblip";
-        el.innerHTML = '<span class="htag"></span><span class="hdist"></span>';
-        host.appendChild(el);
-        blipMap.set(t.id, el);
-      }
-
-      // Exact Azimuth angle mapping to X axis (-45° left to +45° right -> 10% to 90% width)
-      const clampedAngle = Math.max(-42, Math.min(42, t.angle));
-      const xPct = 50 + (clampedAngle / 42) * 38;
-
-      // Anchored directly on the central horizontal Y-axis (50%)
-      const yPct = 50;
-
-      el.style.left = xPct.toFixed(1) + "%";
-      el.style.top = yPct + "%";
-
-      // Glowing Cyan/Teal HUD Target marker with proximity glow
-      el.style.background = "var(--accent)";
-      el.style.borderColor = "var(--accent2)";
-      el.style.boxShadow = "0 0 14px var(--accent), 0 0 28px var(--accent)";
-
-      // Size scales with physical distance: closer = larger (18px at 0.5m -> 9px at 3.5m)
-      const size = Math.max(9, Math.min(18, 20 - (t.dist / 3.5) * 11));
-      el.style.width = size + "px";
-      el.style.height = size + "px";
-
-      const tagEl = el.querySelector(".htag");
-      if (tagEl) {
-        if (count === 1) {
-          tagEl.textContent = t.dist < 1.8 ? "YOU" : "PERSON";
-        } else {
-          tagEl.textContent = `PERSON ${i + 1}`;
-        }
-      }
-
-      const distEl = el.querySelector(".hdist");
-      if (distEl) {
-        const angleStr = Math.abs(t.angle) >= 2 ? ` (${t.angle > 0 ? '+' : ''}${Math.round(t.angle)}°)` : "";
-        distEl.textContent = `${t.dist}m${angleStr}`;
-      }
-    }
-  } catch (e) {
-    $("nearcount").textContent = "SONAR ACTIVE";
+  // --- legend tells the truth about which sensors are contributing -----------
+  const legend = $("hradar-range");
+  if (legend) {
+    const on = (data.sensors || []).filter(s => s.ok).map(s => s.name);
+    const off = (data.sensors || []).find(s => !s.ok);
+    let text = on.length ? on.join(" + ") : (off ? off.detail : "no sensors");
+    if (named.length) text += " \u00b7 " + named.map(c => c.label).join(", ") + " by device";
+    legend.textContent = text.length > 74 ? text.slice(0, 71) + "..." : text;
   }
 }
 
-// 400ms polling for smooth continuous locked-target tracking
 refreshRadar();
-setInterval(refreshRadar, 400);
+setInterval(refreshRadar, 1000);
 
 
 

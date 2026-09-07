@@ -257,3 +257,9 @@ html, body { width: 100vw; height: 100vh; overflow: hidden; background: transpar
 .lg { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .lg.wifi { background: var(--accent); }
 
+
+/* --- human radar: range-only contacts render as an arc, never a fake point --- */
+.hblip.harc{width:78%!important;height:0!important;transform:translate(-50%,-50%);
+  border:0;border-top:2px dashed var(--accent2);border-radius:50%/0;
+  background:none!important;box-shadow:0 0 10px var(--accent2)}
+.hblip.harc .htag{top:-16px;letter-spacing:.10em;opacity:.85;white-space:nowrap}
