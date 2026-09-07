@@ -238,6 +238,7 @@ class CodingJobManager:
         self.jobs: dict[str, CodingJob] = {}
         self._tasks: dict[str, asyncio.Task] = {}
         self.selections: dict[str, dict[str, str | None]] = {}
+        self.ws_selections: dict[str, dict[str, str | None]] = {}  # workspace -> last provider/model/effort
         self.pending: dict[str, Any] = {}
         self._subscribers: list[Callable[[dict[str, Any]], Any]] = []
         self._dirty_jobs: set[str] = set()
@@ -249,11 +250,12 @@ class CodingJobManager:
         return self.state_path.with_suffix(self.state_path.suffix + ".lock")
 
     def _read_disk(self) -> dict[str, Any]:
+        empty = {"jobs": [], "selections": {}, "ws_selections": {}, "pending": {}}
         try:
             raw = json.loads(self.state_path.read_text(encoding="utf-8"))
-            return {"jobs": raw, "selections": {}, "pending": {}} if isinstance(raw, list) else raw
+            return {**empty, "jobs": raw} if isinstance(raw, list) else {**empty, **raw}
         except (OSError, ValueError, TypeError):
-            return {"jobs": [], "selections": {}, "pending": {}}
+            return empty
 
     def _load(self) -> None:
         try:
@@ -261,6 +263,7 @@ class CodingJobManager:
             # Accept the first version's plain job list as well as the versioned envelope.
             records = raw.get("jobs", [])
             self.selections = raw.get("selections", {})
+            self.ws_selections = raw.get("ws_selections", {})
             self.pending = raw.get("pending", {})
             for record in records:
                 job = CodingJob(**record)
@@ -296,8 +299,10 @@ class CodingJobManager:
                     pending[session_id] = self.pending[session_id]
                 else:
                     pending.pop(session_id, None)
+            ws_selections = {**disk.get("ws_selections", {}), **self.ws_selections}
             tmp = self.state_path.with_suffix(self.state_path.suffix + f".{os.getpid()}.tmp")
-            tmp.write_text(json.dumps({"jobs": list(jobs.values()), "selections": selections, "pending": pending}, indent=2), encoding="utf-8")
+            tmp.write_text(json.dumps({"jobs": list(jobs.values()), "selections": selections,
+                                      "ws_selections": ws_selections, "pending": pending}, indent=2), encoding="utf-8")
             tmp.replace(self.state_path)
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
         self._dirty_jobs.clear()
@@ -393,11 +398,14 @@ class CodingJobManager:
                                            pending.get("model"), pending["effort"])
                 except Exception as exc:
                     return f"I couldn't start that coding job: {exc}"
-                self.selections[session_id] = {key: pending.get(key) for key in ("provider", "model", "effort")}
+                choice = {key: pending.get(key) for key in ("provider", "model", "effort")}
+                self.selections[session_id] = choice
+                self.ws_selections[str(pending["workspace"])] = choice  # remember per folder — no re-asking
                 self.pending.pop(session_id, None)
                 self._dirty_sessions.add(session_id)
                 self._save()
-                return f"Prompt given, sir. {job['provider'].title()} job {job['id']} is running."
+                return (f"Prompt given, sir. {job['provider'].title()} job {job['id']} is running. "
+                        "I'll use these settings for this folder from now on.")
         selection_request = bool(re.search(r"\b(?:use|switch|set)\s+(?:the\s+)?(?:coding\s+)?(?:provider|agent)?\s*(codex|claude|agy)\b", low))
         if "which" in low and ("coding provider" in low or "coding agent" in low):
             self.pending[session_id] = {"stage": "provider"}
@@ -424,13 +432,35 @@ class CodingJobManager:
             workspace = context.get("folder")
             if not workspace:
                 return "I couldn't find an open VS Code workspace, sir. Open the project and try again."
+
+            wants_reset = bool(re.search(r"\b(ask me again|different (agent|provider|model)|change the (agent|provider|model|effort)|reconfigure)\b", low))
+            remembered = None if wants_reset else self.ws_selections.get(str(workspace))
+            if wants_reset:
+                self.ws_selections.pop(str(workspace), None)
+
+            if remembered:
+                # Same folder as before → skip the dialogue, just run it.
+                try:
+                    job = await self.start(spoken, workspace, remembered.get("provider") or "codex",
+                                           remembered.get("model"), remembered.get("effort"))
+                except Exception as exc:
+                    return f"I couldn't start that coding job: {exc}"
+                self._dirty_sessions.add(session_id)
+                self._save()
+                bits = job["provider"].title()
+                if remembered.get("model"):
+                    bits += f" ({remembered['model']})"
+                if remembered.get("effort"):
+                    bits += f", {remembered['effort']} effort"
+                return f"Prompt given, sir. {bits} on {Path(workspace).name}, job {job['id']}."
+
             self.pending[session_id] = {
                 "stage": "provider", "task": spoken, "workspace": workspace,
                 "context": context, "snapshot": workspace_snapshot(workspace), "created_at": _now(),
             }
             self._dirty_sessions.add(session_id)
             self._save()
-            return "I captured the VS Code workspace. Which coding provider: Codex, Claude, or agy?"
+            return f"New folder ({Path(workspace).name}). Which coding provider: Codex, Claude, or agy?"
         return None
 
     def selection(self, session_id: str = "local") -> dict[str, str | None]:

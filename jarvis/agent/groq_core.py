@@ -161,6 +161,39 @@ class GroqAgent:
                 s["function"]["description"] = d[:40]
 
         self.messages: list[dict] = [{"role": "system", "content": _compact_system(config)}]
+        self._restore_history()
+
+    # --- cross-session conversation memory -------------------------------------------------
+    @staticmethod
+    def _history_path():
+        import os
+        from pathlib import Path
+        return Path(os.environ.get("JARVIS_STATE_DIR", "~/.local/share/jarvis")).expanduser() / "chat-history.json"
+
+    def _restore_history(self, keep: int = 16) -> None:
+        """Reload the last few plain user/assistant turns so Jarvis remembers the last chat."""
+        import json
+        try:
+            turns = json.loads(self._history_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        clean = [t for t in turns if isinstance(t, dict)
+                 and t.get("role") in ("user", "assistant") and isinstance(t.get("content"), str) and t["content"].strip()]
+        if clean:
+            self.messages[1:1] = clean[-keep:]
+
+    def _save_history(self, keep: int = 16) -> None:
+        import json
+        turns = [{"role": m["role"], "content": m["content"][:4000]}
+                 for m in self.messages[1:]
+                 if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str) and m["content"].strip()
+                 and "tool_calls" not in m]
+        try:
+            p = self._history_path()
+            p.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            p.write_text(json.dumps(turns[-keep:], ensure_ascii=False, indent=1), encoding="utf-8")
+        except OSError:
+            pass
 
     async def __aenter__(self) -> "GroqAgent":
         return self
@@ -271,6 +304,7 @@ class GroqAgent:
 
         vaultmod.git_autocommit(self.config.vault_path, f"jarvis: memory update {now:%Y-%m-%d %H:%M}")
         self._trim()
+        self._save_history()
         return reply or "(no reply)"
 
     async def _execute(self, triples) -> None:

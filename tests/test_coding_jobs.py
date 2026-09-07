@@ -44,17 +44,27 @@ class CodingJobsTest(unittest.TestCase):
                 return 0, "done", ""
             async def run():
                 manager = CodingJobManager(state, runner=fake_runner)
-                with patch("jarvis.integrations.coding.active_context", return_value={"folder": str(workspace), "file": "app.py"}):
+                ctx = {"folder": str(workspace), "file": "app.py"}
+                with patch("jarvis.integrations.coding.active_context", return_value=ctx):
                     first = await manager.handle_message("fix the login bug in VS Code", "voice")
-                self.assertIn("captured", first)
-                self.assertIn("model", (await manager.handle_message("codex", "voice")).lower())
-                self.assertIn("effort", (await manager.handle_message("default", "voice")).lower())
-                final = await manager.handle_message("xhigh", "voice")
-                self.assertIn("Prompt given, sir", final)
-                job_id = manager.list_jobs()[0]["id"]
-                await manager._tasks[job_id]
+                    self.assertIn("provider", first.lower())
+                    self.assertIn("model", (await manager.handle_message("codex", "voice")).lower())
+                    self.assertIn("effort", (await manager.handle_message("default", "voice")).lower())
+                    final = await manager.handle_message("xhigh", "voice")
+                    self.assertIn("Prompt given, sir", final)
+                    job_id = manager.list_jobs()[0]["id"]
+                    await manager._tasks[job_id]
+
+                    # Same folder again -> no provider/model/effort dialogue, launches straight away.
+                    again = await manager.handle_message("also add a test in VS Code", "voice")
+                self.assertIn("Prompt given, sir", again)
+                self.assertNotIn("provider", again.lower())
+                self.assertEqual(len(manager.list_jobs()), 2)
+                for jid in list(manager._tasks):
+                    await manager._tasks[jid]
             asyncio.run(run())
-            self.assertEqual(CodingJobManager(state).list_jobs()[0]["status"], "completed")
+            statuses = {j["status"] for j in CodingJobManager(state).list_jobs()}
+            self.assertEqual(statuses, {"completed"})
 
     def test_external_event_survives_restart(self):
         with tempfile.TemporaryDirectory() as root:
