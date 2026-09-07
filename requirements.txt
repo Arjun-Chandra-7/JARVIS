@@ -42,3 +42,6 @@ psutil>=5.9
 
 # deep research via the user's Perplexity account (drives system Chrome; no browser download)
 playwright>=1.40
+
+# Human-presence radar: webcam face detection (YuNet) for bearing + metric range
+opencv-python-headless>=4.9
