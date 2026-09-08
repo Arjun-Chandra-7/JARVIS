@@ -1,5 +1,7 @@
 # Human radar — what a laptop can and cannot sense
 
+> Technology comparison and the reasoning behind these choices: **docs/PEOPLE_DETECTION_RESEARCH.md**.
+
 Measured on this machine with `scripts/probe-sensors.py`. Every design choice below
 follows from these numbers, not from wishful thinking.
 
@@ -33,7 +35,7 @@ fabricated position.
 |---|---|---|---|---|
 | **Passive audio** | "someone is here, talking" | room | no bearing, no range | **works** — measured +17 dB separation between a quiet room and speech |
 | **BT/Wi-Fi** | *identity* + room presence | whole home | no position; device-bound | **works** |
-| **Camera** | bearing ±2°, distance ±8%, count | ~0.4–6 m, within FOV | needs light + line of sight | **works when aimed and lit** |
+| **Camera + YOLOX body** | presence, bearing ±2°, count; distance when a face shows | ~0.4–6 m, within FOV | needs light + the lens aimed at you | **works — full-body, robust to turned heads/poor light** |
 | **Acoustic FMCW** | distance + motion, in theory | ~0.3–4 m | no bearing | **does not work** — see below |
 
 ### The acoustic channel does not detect people on this hardware
@@ -74,7 +76,8 @@ Bind a device to a person once: *"remember that A0:11:22:33:44:55 is Maya's"*.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `JARVIS_PRESENCE` | `audio,network` | which sensors run; add `camera` for bearing, or `off` |
+| `JARVIS_PRESENCE` | `audio,network` | which sensors run; add `camera` for full-body detection + bearing, or `off` |
+| `JARVIS_PERSON_DETECT` | `1` | `0` uses face-only (skips the YOLOX body model) |
 | `JARVIS_CAM_HFOV_DEG` | `68` | camera horizontal FOV — set from `--calibrate` |
 | `JARVIS_PRESENCE_FPS` | `4` | camera detection rate |
 | `JARVIS_CAMERA_INDEX` | auto | pin a `/dev/videoN`; otherwise auto-discovered |
