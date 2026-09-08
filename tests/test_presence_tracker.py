@@ -145,3 +145,36 @@ def test_voice_track_retires_when_it_stops():
     t = Tracker()
     t.update([voice()], now=0.0)
     assert t.update([], now=COAST_S + 1.0).contacts == []
+
+
+def cam_bearing_only(bearing, conf=0.7):
+    """A desk-cropped person box: bearing known, legs off-frame so no range."""
+    return Contact(id="x", source="camera", distance_m=None, bearing_deg=bearing, confidence=conf)
+
+
+def test_bearing_only_person_is_one_stable_track():
+    """Regression: a person with no metric range must not respawn every frame."""
+    t = Tracker()
+    for i, b in enumerate((10.0, 11.0, 9.5, 12.0, 10.5)):
+        snap = t.update([cam_bearing_only(b)], now=i * 0.25)
+    assert len(snap.contacts) == 1
+    c = snap.contacts[0]
+    assert c.bearing_deg is not None and c.distance_m is None
+    assert snap.people == 1, "a bearing-only person still counts as a located person"
+
+
+def test_two_bearing_only_people_far_apart_stay_separate():
+    t = Tracker()
+    snap = t.update([cam_bearing_only(-25.0), cam_bearing_only(25.0)], now=0.0)
+    assert len(snap.contacts) == 2
+
+
+def test_range_arrives_later_and_upgrades_the_same_track():
+    """Face comes into view mid-track and supplies distance without splitting the track."""
+    t = Tracker()
+    first = t.update([cam_bearing_only(5.0)], now=0.0)
+    tid = first.contacts[0].id
+    second = t.update([cam(2.0, 5.0)], now=0.25)      # now with range
+    assert len(second.contacts) == 1
+    assert second.contacts[0].id == tid
+    assert second.contacts[0].distance_m == pytest.approx(2.0, abs=0.01)

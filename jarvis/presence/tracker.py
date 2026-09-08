@@ -21,7 +21,8 @@ from typing import Iterable, Optional
 
 from .types import Contact, SensorStatus, Snapshot
 
-CAMERA_GATE_M = 0.9      # two camera looks this close are the same person
+CAMERA_GATE_M = 0.9      # two camera looks this close (both ranged) are the same person
+ANGULAR_GATE_DEG = 14.0  # ...or this close in bearing when one of them has no range
 ACOUSTIC_GATE_M = 0.6    # a range-only echo this close to a track is that track
 SMOOTHING = 0.45         # alpha for range/bearing; low enough to reject a single bad frame
 COAST_S = 2.5            # keep a track this long after its last update
@@ -88,11 +89,11 @@ class Tracker:
         now = time.time() if now is None else now
         located, ranged, named = [], [], []
         for c in contacts:
-            if c.bearing_deg is not None and c.distance_m is not None:
+            if c.bearing_deg is not None:            # a bearing, with or without range
                 located.append(c)
-            elif c.distance_m is not None:
+            elif c.distance_m is not None:           # range only (acoustic)
                 ranged.append(c)
-            else:
+            else:                                    # identity only (network / audio)
                 named.append(c)
 
         self._absorb_located(located, now)
@@ -107,17 +108,26 @@ class Tracker:
 
     # --- per-kind absorption ---------------------------------------------------
     def _absorb_located(self, contacts: list[Contact], now: float) -> None:
+        """Directional contacts (camera): a bearing, sometimes a range.
+
+        Two contacts that both carry a range are matched on Cartesian distance; if either
+        lacks a range (e.g. a desk-cropped person box with no metric distance) they are
+        matched on bearing alone. This keeps a bearing-only person a single stable track
+        instead of a fresh one every frame.
+        """
         unmatched = dict(enumerate(contacts))
         for track in self._tracks.values():
-            anchor = _xy(track.distance_m, track.bearing_deg)
-            if anchor is None:
+            if track.bearing_deg is None:
                 continue
-            best, best_d = None, CAMERA_GATE_M
+            best, best_cost = None, 1.0
             for i, c in unmatched.items():
-                point = _xy(c.distance_m, c.bearing_deg)
-                d = math.dist(anchor, point)
-                if d < best_d:
-                    best, best_d = i, d
+                if track.distance_m is not None and c.distance_m is not None:
+                    cost = math.dist(_xy(track.distance_m, track.bearing_deg),
+                                     _xy(c.distance_m, c.bearing_deg)) / CAMERA_GATE_M
+                else:
+                    cost = abs(track.bearing_deg - c.bearing_deg) / ANGULAR_GATE_DEG
+                if cost < 1.0 and cost < best_cost:
+                    best, best_cost = i, cost
             if best is not None:
                 self._apply(track, unmatched.pop(best), now, geometric=True)
         for c in unmatched.values():
@@ -166,8 +176,8 @@ class Tracker:
         track.last_seen = now
         track.detail = c.detail
         if geometric:
-            track.distance_m = _blend(track.distance_m, c.distance_m)
             track.bearing_deg = _blend(track.bearing_deg, c.bearing_deg)
+            track.distance_m = _blend(track.distance_m, c.distance_m)   # _blend keeps old if new is None
         elif track.bearing_deg is None:
             # Nothing better exists yet, so a range-only update may still refine the range.
             track.distance_m = _blend(track.distance_m, c.distance_m)

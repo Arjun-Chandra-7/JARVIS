@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from . import geometry as geo
+from . import person as person_det
 from .types import Contact, SensorStatus
 
 MODEL_URL = ("https://github.com/opencv/opencv_zoo/raw/main/models/"
@@ -151,6 +152,7 @@ class CameraSensor:
         self._contacts: list[Contact] = []
         self._status = SensorStatus("camera", False, "not started")
         self._next_id = 0
+        self._person_session = None      # YOLOX; None falls back to face-only
 
     # --- lifecycle ------------------------------------------------------------
     def start(self) -> None:
@@ -206,7 +208,9 @@ class CameraSensor:
         detector = cv2.FaceDetectorYN_create(str(MODEL_PATH), "", (width, height),
                                              score_threshold=_SCORE)
         detector.setInputSize((width, height))   # YuNet finds nothing if this mismatches
-        self._set_status(True, f"video{index} {width}x{height} @{_FPS:g}fps, "
+        self._person_session = _load_person_session()
+        mode = "person+face" if self._person_session is not None else "face-only"
+        self._set_status(True, f"video{index} {width}x{height} @{_FPS:g}fps, {mode}, "
                                f"rot {rotation}deg{'' if confirmed else '?'}, hfov {geo.hfov_deg():.0f}deg")
 
         period = 1.0 / max(0.5, _FPS)
@@ -246,7 +250,7 @@ class CameraSensor:
                                             "privacy shutter closed or room dark")
                     time.sleep(1.0)
                     continue
-                found = self._detect(detector, frame, width)
+                found = self._detect(detector, frame, width, height)
                 self._publish(found)
                 # Still unsure of orientation and seeing nobody? Re-probe now and then;
                 # an inverted webcam is invisible to the detector until it is corrected.
@@ -263,7 +267,7 @@ class CameraSensor:
                             if probe_ok and probe is not None:
                                 height, width = _rotate(cv2, probe, rotation).shape[:2]
                                 detector.setInputSize((width, height))
-                self._set_status(True, f"video{index} {width}x{height} @{_FPS:g}fps, "
+                self._set_status(True, f"video{index} {width}x{height} @{_FPS:g}fps, {mode}, "
                                        f"rot {rotation}deg{'' if confirmed else '?'}, "
                                        f"hfov {geo.hfov_deg():.0f}deg")
                 time.sleep(max(0.0, period - (time.monotonic() - started)))
@@ -271,44 +275,112 @@ class CameraSensor:
             cap.release()
             self._set_status(False, "stopped")
 
-    def _detect(self, detector, frame, width: int) -> list[Contact]:
-        _, faces = detector.detect(frame)
-        out: list[Contact] = []
-        if faces is None:
-            return out
+    def _detect(self, detector, frame, width: int, height: int) -> list[Contact]:
+        """Fuse full-body person detection with face/IPD range into one contact per person.
+
+        YOLOX gives robust presence, bearing and a head count even when no face is visible.
+        YuNet then supplies an accurate metric distance for any person whose face is in
+        view. A face with no enclosing person box still becomes its own contact, so an
+        extreme close-up (head fills the frame, YOLOX misses the body) is not lost.
+        """
         now = time.time()
-        for face in faces:
-            x, y, w, h = (float(v) for v in face[:4])
-            score = float(face[-1])
-            landmarks = [(face[4 + 2 * i], face[5 + 2 * i]) for i in range(5)]
-            ipd = _ipd_px(landmarks)
-            if ipd:
-                distance = geo.distance_from_ipd(ipd, width)
-                from_ipd = True
-            elif w > 1:
-                distance = geo.distance_from_width(w, width)
-                from_ipd = False
+        persons = person_det.detect(self._person_session, frame) if self._person_session else []
+        _, faces = detector.detect(frame)
+        faces = list(faces) if faces is not None else []
+
+        out: list[Contact] = []
+        used = set()
+        for box in persons:
+            bearing = person_det.person_bearing(box, width)
+            distance = person_det.person_distance(box, height, width)
+            from_ipd = False
+            detail = f"person {box['score']:.2f}"
+            match = self._face_in_box(faces, used, box)
+            if match is not None:
+                used.add(match)
+                ipd = _ipd_px([(faces[match][4], faces[match][5]),
+                               (faces[match][6], faces[match][7])])
+                if ipd:
+                    d = geo.distance_from_ipd(ipd, width)
+                    if 0.25 <= d <= 8.0:
+                        distance, from_ipd = d, True
+                        detail += " +face(ipd)"
+            if distance is not None and not 0.25 <= distance <= 8.0:
+                distance = None
+            if distance is not None:
+                conf = geo.range_confidence(distance, from_ipd) * min(1.0, box["score"] + 0.3)
             else:
-                continue
-            # A face further than ~8 m on a laptop webcam is a false positive, not a person.
-            if not 0.25 <= distance <= 8.0:
-                continue
-            bearing = geo.bearing_deg(x + w / 2.0, width)
+                conf = min(0.8, 0.5 + 0.35 * box["score"])   # bearing-only presence
             self._next_id += 1
             out.append(Contact(
-                id=f"cam-{self._next_id}",
-                source="camera",
-                distance_m=distance,
-                bearing_deg=bearing,
-                confidence=round(min(1.0, geo.range_confidence(distance, from_ipd) * score), 3),
-                first_seen=now, last_seen=now,
-                detail=f"face score {score:.2f}, {'ipd' if from_ipd else 'box'} range",
-            ))
+                id=f"cam-{self._next_id}", source="camera",
+                distance_m=distance, bearing_deg=bearing,
+                confidence=round(min(0.99, conf), 3),
+                first_seen=now, last_seen=now, detail=detail))
+
+        # Faces not inside any person box → their own contact (close-up fallback).
+        for i, face in enumerate(faces):
+            if i in used:
+                continue
+            contact = self._face_contact(face, width, now)
+            if contact is not None:
+                out.append(contact)
         return out
+
+    @staticmethod
+    def _face_in_box(faces, used, box) -> Optional[int]:
+        """Index of a face whose centre sits in the head region (top 65%) of a person box."""
+        best, best_area = None, None
+        for i, f in enumerate(faces):
+            if i in used:
+                continue
+            fx, fy = f[0] + f[2] / 2.0, f[1] + f[3] / 2.0
+            if (box["x"] <= fx <= box["x"] + box["w"]
+                    and box["y"] <= fy <= box["y"] + box["h"] * 0.65):
+                area = float(f[2]) * float(f[3])
+                if best_area is None or area > best_area:
+                    best, best_area = i, area
+        return best
+
+    def _face_contact(self, face, width: int, now: float) -> Optional[Contact]:
+        x, y, w, h = (float(v) for v in face[:4])
+        score = float(face[-1])
+        ipd = _ipd_px([(face[4], face[5]), (face[6], face[7])])
+        if ipd:
+            distance, from_ipd = geo.distance_from_ipd(ipd, width), True
+        elif w > 1:
+            distance, from_ipd = geo.distance_from_width(w, width), False
+        else:
+            return None
+        if not 0.25 <= distance <= 8.0:
+            return None
+        self._next_id += 1
+        return Contact(
+            id=f"cam-{self._next_id}", source="camera",
+            distance_m=distance, bearing_deg=geo.bearing_deg(x + w / 2.0, width),
+            confidence=round(min(1.0, geo.range_confidence(distance, from_ipd) * score), 3),
+            first_seen=now, last_seen=now,
+            detail=f"face score {score:.2f}, {'ipd' if from_ipd else 'box'} range")
 
     def _publish(self, contacts: list[Contact]) -> None:
         with self._lock:
             self._contacts = contacts
+
+
+def _load_person_session():
+    """Load the YOLOX session once, or None (offline / no onnxruntime) for face-only mode."""
+    if os.environ.get("JARVIS_PERSON_DETECT", "1").strip().lower() in {"0", "off", "false"}:
+        return None
+    try:
+        import onnxruntime as ort
+    except ImportError:
+        return None
+    if not person_det.ensure_model():
+        return None
+    try:
+        return ort.InferenceSession(str(person_det.MODEL_PATH), providers=["CPUExecutionProvider"])
+    except Exception:  # noqa: BLE001
+        return None
 
 
 _sensor: Optional[CameraSensor] = None
