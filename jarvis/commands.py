@@ -76,5 +76,9 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
     if re.fullmatch(r"(?:what did i miss|(?:read|show|give me)(?: me)?(?: my| the)? (?:away )?(?:messages? summary|message summary|debrief|catch[- ]?up))", command):
         from .agent import pa_daemon
         return pa_daemon.debrief(config)
+    if re.fullmatch(r"(?:scan|list|show|check)(?: the| my| nearby| all)? wi[- ]?fi(?: networks?| passwords?)?"
+                    r"|wi[- ]?fi(?: networks?| passwords?)|what wi[- ]?fi(?:s| networks?)?(?: are)?(?: around| near(?:by| me))?", command):
+        from .integrations import wifi_scan
+        return await asyncio.to_thread(wifi_scan.report)
     from .integrations import coding_jobs
     return await coding_jobs.handle_message(raw, session_id=session_id)

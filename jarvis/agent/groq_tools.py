@@ -343,6 +343,14 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         from ..integrations import contacts
         return contacts.remember(a.get("name", ""), a.get("number", ""), a.get("note", ""))["message"]
 
+    @tool("wifi_scan",
+          "List nearby Wi-Fi networks and reveal the passwords THIS computer has already "
+          "saved. Cannot recover passwords for networks the machine never joined.",
+          {})
+    async def wifi_scan(a):
+        from ..integrations import wifi_scan as ws
+        return await asyncio.to_thread(ws.report)
+
     @tool("who_is_around",
           "Who is physically nearby right now: people located by the webcam (range + bearing), "
           "range-only acoustic contacts, and people identified by their devices. Says what is "
