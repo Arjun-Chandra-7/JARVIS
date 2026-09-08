@@ -351,6 +351,15 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         from ..integrations import wifi_scan as ws
         return await asyncio.to_thread(ws.report)
 
+    @tool("bluetooth_scan",
+          "List nearby Bluetooth devices (phones/watches/earbuds) as a camera-free people "
+          "signal, naming any bound to a person. Counts anonymous devices; cannot ID a "
+          "randomised address.",
+          {})
+    async def bluetooth_scan(a):
+        from ..presence import bluetooth
+        return await asyncio.to_thread(bluetooth.report, config)
+
     @tool("who_is_around",
           "Who is physically nearby right now: people located by the webcam (range + bearing), "
           "range-only acoustic contacts, and people identified by their devices. Says what is "

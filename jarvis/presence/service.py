@@ -4,15 +4,18 @@ Which sensors run is opt-in through ``JARVIS_PRESENCE`` (comma separated):
 
     audio     passive listening — "someone is here and talking". No direction, no sound
               emitted, works in the dark and with the lid shut. Reliable.
-    network   Bluetooth/Wi-Fi device bindings — names, no position. Cheap, private.
+    bluetooth live BLE census — counts nearby phones/watches/earbuds and names the ones
+              you have bound. No root, no Wi-Fi disruption, through walls. Best
+              camera-free people signal.
+    network   Wi-Fi/LAN device bindings — names, no position. Cheap, private.
     camera    webcam face detection — the ONLY source of bearing. Lights the webcam LED
               and needs light and line of sight.
     acoustic  near-ultrasound ranging. OFF by default and not recommended: measured on
               this hardware it cannot separate a moving person from room reverberation,
               and it holds the speaker continuously.
 
-Default is ``audio,network`` — the two that work with no camera and no line of sight.
-Add ``camera`` to get bearing and metric range.
+Default is ``audio,bluetooth,network`` — all camera-free. Add ``camera`` (needs the
+lens pointed at people) to get bearing and metric range.
 """
 from __future__ import annotations
 
@@ -24,7 +27,7 @@ from typing import Optional
 from .tracker import Tracker
 from .types import Contact, SensorStatus, Snapshot
 
-DEFAULT_SENSORS = "audio,network"
+DEFAULT_SENSORS = "audio,bluetooth,network"
 FUSE_HZ = 4.0
 
 
@@ -47,6 +50,7 @@ class PresenceService:
         self._camera = None
         self._acoustic = None
         self._passive = None
+        self._bluetooth = None
         self._net_at = 0.0
         self._net_cache: tuple[list[Contact], SensorStatus] = ([], SensorStatus("network", False, "not scanned"))
 
@@ -66,13 +70,17 @@ class PresenceService:
             from . import passive
             self._passive = passive.sensor()
             self._passive.start()
+        if "bluetooth" in self._sensors:
+            from . import bluetooth
+            self._bluetooth = bluetooth.sensor(self.config)
+            self._bluetooth.start()
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="presence-fusion", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
         self._stop.set()
-        for sensor in (self._camera, self._acoustic, self._passive):
+        for sensor in (self._camera, self._acoustic, self._passive, self._bluetooth):
             if sensor is not None:
                 sensor.stop()
         if self._thread:
@@ -114,6 +122,10 @@ class PresenceService:
                 statuses.append(status)
             if self._passive is not None:
                 found, status = self._passive.snapshot()
+                contacts += found
+                statuses.append(status)
+            if self._bluetooth is not None:
+                found, status = self._bluetooth.snapshot()
                 contacts += found
                 statuses.append(status)
             if "network" in self._sensors:
@@ -159,10 +171,16 @@ def summary(config=None) -> str:
     echoes = [c for c in snap.contacts if c.source.startswith("acoustic") and c.bearing_deg is None]
 
     if not snap.contacts:
+        bt = next((st for st in snap.sensors if st.name == "bluetooth" and st.ok), None)
+        if bt is not None and "devices near" in bt.detail:
+            n = bt.detail.split(" ", 1)[0]
+            if n.isdigit() and int(n) > 0:
+                return (f"No one I can place, sir, but I can see {n} Bluetooth device"
+                        f"{'s' if n != '1' else ''} nearby — so probably someone around.")
         blocked = [s for s in snap.sensors if not s.ok]
         if blocked and not any(s.ok for s in snap.sensors):
             return f"I can't see anyone, sir — {blocked[0].detail}."
-        return "Nobody in view, sir."
+        return "Nobody I can detect, sir."
 
     parts = []
     if located:
@@ -176,6 +194,12 @@ def summary(config=None) -> str:
     heard = [c for c in snap.contacts if c.source.startswith("audio")]
     if heard and not located:
         parts.append("I can hear someone talking, but I can't tell where from")
+    bt = next((st for st in snap.sensors if st.name == "bluetooth" and st.ok), None)
+    bt_people = [c for c in snap.contacts if c.source.startswith("bluetooth")]
+    if bt is not None and not bt_people and not located and "devices near" in bt.detail:
+        n = bt.detail.split(" ", 1)[0]
+        if n.isdigit() and int(n) > 0:
+            parts.append(f"{n} Bluetooth device{'s' if n != '1' else ''} nearby — likely someone around")
     if echoes:
         parts.append(f"{len(echoes)} moving contact{'s' if len(echoes) > 1 else ''} at "
                      + ", ".join(f"{c.distance_m:.1f} m" for c in echoes) + ", bearing unknown")

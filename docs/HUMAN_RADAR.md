@@ -34,7 +34,8 @@ fabricated position.
 | Source | Gives | Range | Limits | Verdict |
 |---|---|---|---|---|
 | **Passive audio** | "someone is here, talking" | room | no bearing, no range | **works** — measured +17 dB separation between a quiet room and speech |
-| **BT/Wi-Fi** | *identity* + room presence | whole home | no position; device-bound | **works** |
+| **Bluetooth (BLE)** | live device count + names of bound devices | whole room, through walls | no position; anonymous MACs only counted | **works — camera-free, no root** |
+| **Wi-Fi/LAN** | *identity* of bound devices | whole home | no position; device-bound | **works** |
 | **Camera + YOLOX body** | presence, bearing ±2°, count; distance when a face shows | ~0.4–6 m, within FOV | needs light + the lens aimed at you | **works — full-body, robust to turned heads/poor light** |
 | **Acoustic FMCW** | distance + motion, in theory | ~0.3–4 m | no bearing | **does not work** — see below |
 
@@ -76,7 +77,7 @@ Bind a device to a person once: *"remember that A0:11:22:33:44:55 is Maya's"*.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `JARVIS_PRESENCE` | `audio,network` | which sensors run; add `camera` for full-body detection + bearing, or `off` |
+| `JARVIS_PRESENCE` | `audio,bluetooth,network` | camera-free by default; add `camera` for bearing, or `off` |
 | `JARVIS_PERSON_DETECT` | `1` | `0` uses face-only (skips the YOLOX body model) |
 | `JARVIS_CAM_HFOV_DEG` | `68` | camera horizontal FOV — set from `--calibrate` |
 | `JARVIS_PRESENCE_FPS` | `4` | camera detection rate |

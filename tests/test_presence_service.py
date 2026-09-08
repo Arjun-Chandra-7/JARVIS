@@ -14,10 +14,20 @@ def _fresh(monkeypatch):
     svc._service = None
 
 
-def test_default_sensor_set_works_without_a_camera():
-    """Defaults must sense something with no webcam, no light and the lid shut."""
-    assert svc.enabled_sensors() == {"audio", "network"}
+def test_default_sensor_set_is_camera_free():
+    """Defaults must sense something with no webcam — an inverted/lid-shut laptop."""
+    assert svc.enabled_sensors() == {"audio", "bluetooth", "network"}
+    assert "camera" not in svc.enabled_sensors(), "camera is opt-in; some setups have no usable lens"
     assert "acoustic" not in svc.enabled_sensors(), "sonar holds the speaker; must be opt-in"
+
+
+def test_summary_reports_bluetooth_device_count_when_nothing_placed():
+    from jarvis.presence.types import SensorStatus
+    s = svc.PresenceService(config=None)
+    s._snapshot = Tracker().update([], [SensorStatus("bluetooth", True, "3 devices near, 3 anon")], now=0.0)
+    svc._service = s
+    text = svc.summary()
+    assert "3 Bluetooth devices nearby" in text and "probably someone" in text
 
 
 def test_audio_only_contact_admits_it_has_no_direction():
@@ -49,7 +59,7 @@ def _service_with(contacts, sensors=None):
 
 def test_summary_when_nothing_is_seen():
     _service_with([])
-    assert "Nobody in view" in svc.summary()
+    assert "Nobody I can detect" in svc.summary()
 
 
 def test_summary_surfaces_a_blocked_sensor_instead_of_claiming_empty():
