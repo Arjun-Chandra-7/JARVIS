@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import time
 import urllib.error
@@ -125,17 +124,7 @@ def _ensure() -> str | None:
 def open_console(view: str = "dashboard") -> bool:
     """Open the desktop console, on a specific screen."""
     url = f"{base_url()}/app/?view={view}"
-    for opener in ("xdg-open", "opera", "google-chrome", "firefox"):
-        if shutil.which(opener):
-            try:
-                subprocess.Popen(
-                    [opener, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    start_new_session=True,
-                )
-                return True
-            except Exception:
-                continue
-    return False
+    return apps.open_url(url, browser="xdg-open") is not None
 
 
 def open_profile() -> str:
@@ -151,7 +140,7 @@ def open_profile() -> str:
     profile_url = str((data.get("values") or {}).get("linkedin_profile_url") or "").strip()
     if not profile_url:
         return "No LinkedIn profile URL is stored in the copilot settings."
-    opened = apps.open_url(profile_url)
+    opened = apps.open_url(profile_url, browser="xdg-open")
     return "Opened your LinkedIn profile." if opened else "I couldn't open a browser window."
 
 

@@ -320,6 +320,97 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         m = whatsapp.inbox()
         return "\n".join(f"{x.get('name')}: {x.get('text')}" for x in m[-15:]) or "No new messages."
 
+    # ---------------- LinkedIn Content Copilot ----------------
+    @tool(
+        "linkedin_stats",
+        "Read the LinkedIn content dashboard and open it on screen. Use for any request about "
+        "LinkedIn performance, publishing state, drafts, schedule, or overall progress.",
+        {},
+    )
+    async def linkedin_stats(a):
+        from ..integrations import linkedin
+        return linkedin.stats(open_gui=True)
+
+    @tool(
+        "linkedin_open_profile",
+        "Open the user's own public LinkedIn profile stored in the copilot settings. Use whenever "
+        "they want to see, view, pull up, inspect, or go to their LinkedIn page or profile.",
+        {},
+    )
+    async def linkedin_open_profile(a):
+        from ..integrations import linkedin
+        return linkedin.open_profile()
+
+    @tool(
+        "linkedin_open_console",
+        "Open a LinkedIn copilot screen: dashboard, approvals, calendar, network, analytics, "
+        "profile, or settings.",
+        {"view": {"type": "string"}},
+    )
+    async def linkedin_open_console(a):
+        from ..integrations import linkedin
+        view = (a.get("view") or "dashboard").strip().lower()
+        error = linkedin._ensure()
+        if error:
+            return error
+        return f"Opened the {view} screen." if linkedin.open_console(view) else "I couldn't open a browser window."
+
+    @tool(
+        "linkedin_pending_drafts",
+        "List LinkedIn posts waiting for the user's approval.",
+        {},
+    )
+    async def linkedin_pending_drafts(a):
+        from ..integrations import linkedin
+        return linkedin.pending_drafts()
+
+    @tool(
+        "linkedin_read_draft",
+        "Read a queued LinkedIn post aloud in full before the user decides whether to approve it.",
+        {"position": {"type": "integer"}},
+    )
+    async def linkedin_read_draft(a):
+        from ..integrations import linkedin
+        return linkedin.read_draft(_i(a.get("position"), 1))
+
+    @tool(
+        "linkedin_approve_draft",
+        "Approve a LinkedIn draft only after it was read aloud in this session; the backend rejects "
+        "approval if the exact text hash changed.",
+        {"position": {"type": "integer"}},
+    )
+    async def linkedin_approve_draft(a):
+        from ..integrations import linkedin
+        return linkedin.approve_read_draft(_i(a.get("position"), 1))
+
+    @tool(
+        "linkedin_networking",
+        "Read and open the small LinkedIn networking suggestion queue. The user handles every "
+        "invitation manually.",
+        {},
+    )
+    async def linkedin_networking(a):
+        from ..integrations import linkedin
+        return linkedin.networking(open_gui=True)
+
+    @tool(
+        "linkedin_capture_idea",
+        "Turn an idea or described work into a LinkedIn draft for later review.",
+        {
+            "topic": {"type": "string"},
+            "notes": {"type": "string"},
+            "category": {"type": "string"},
+        },
+        ["topic"],
+    )
+    async def linkedin_capture_idea(a):
+        from ..integrations import linkedin
+        return linkedin.capture_idea(
+            a.get("topic", ""),
+            a.get("notes", ""),
+            (a.get("category") or "BUILD_LOG").upper(),
+        )
+
     @tool("find_contact", "Look up a person's WhatsApp contact by name (before sending).",
           {"name": {"type": "string"}}, ["name"])
     async def find_contact(a):
@@ -473,7 +564,8 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     @tool("open_url", "Open a URL in the browser (Opera).", {"url": {"type": "string"}}, ["url"])
     async def open_url(a):
         from ..integrations import apps
-        return f"opened {apps.open_url(a.get('url', ''))}"
+        opened = apps.open_url(a.get("url", ""))
+        return f"Opened {opened}." if opened else "I couldn't open a browser window."
 
     @tool("launch_app", "Launch a desktop app by name.", {"name": {"type": "string"}}, ["name"])
     async def launch_app(a):
@@ -753,7 +845,8 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         if not has_google and name.startswith("google_"):
             continue
             
-        f.pop("description", None)
+        if not name.startswith("linkedin_"):
+            f.pop("description", None)
         for p_val in f.get("parameters", {}).get("properties", {}).values():
             p_val.pop("description", None)
         schemas.append(s)

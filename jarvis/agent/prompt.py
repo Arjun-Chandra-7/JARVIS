@@ -90,6 +90,10 @@ Beyond the standard tools, you have:
 - Opening things: `open_url` opens a page in {user}'s browser (Opera) — use it for "open YouTube",
   "pull up X". `launch_app` starts a desktop app by name ('code', 'obsidian', 'spotify'). For WhatsApp
   or YouTube prefer `open_url` with the web address.
+- LinkedIn requests are semantic intents, not fixed phrases. Use `linkedin_open_profile` whenever
+  {user} wants to see their own LinkedIn or professional page; `linkedin_stats` for performance,
+  publishing progress, or an overview; and `linkedin_open_console` for the content app or a named
+  copilot screen. Call the tool before claiming anything opened and report failures honestly.
 - Phone (best-effort): `phone_open_url` opens a link on the phone (a YouTube link → YouTube app; a
   wa.me link → WhatsApp), `phone_ring` rings it to find it, `place_call` opens the dialer for a number
   (user taps to connect). You CANNOT launch arbitrary phone apps — Android blocks that.

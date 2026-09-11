@@ -10,9 +10,26 @@ def test_open_profile_uses_stored_copilot_url(monkeypatch):
         lambda path: {"values": {"linkedin_profile_url": profile_url}},
     )
     opened = []
-    monkeypatch.setattr(linkedin.apps, "open_url", lambda url: opened.append(url) or url)
+    monkeypatch.setattr(
+        linkedin.apps,
+        "open_url",
+        lambda url, browser="opera": opened.append((url, browser)) or url,
+    )
 
     result = linkedin.open_profile()
 
-    assert opened == [profile_url]
+    assert opened == [(profile_url, "xdg-open")]
     assert result == "Opened your LinkedIn profile."
+
+
+def test_linkedin_tools_are_available_to_the_active_semantic_registry():
+    from jarvis.agent.groq_tools import build_registry
+    from jarvis.config import Config
+
+    schemas, _ = build_registry(Config(), job_runner=None, confirm_fn=None)
+    tools = {schema["function"]["name"]: schema["function"] for schema in schemas}
+
+    assert "linkedin_open_profile" in tools
+    assert "own public LinkedIn profile" in tools["linkedin_open_profile"]["description"]
+    assert "linkedin_stats" in tools
+    assert "performance" in tools["linkedin_stats"]["description"]

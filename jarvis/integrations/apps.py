@@ -18,10 +18,21 @@ def _env() -> dict:
     return {k: v for k, v in os.environ.items() if k not in _SNAP_ENV}
 
 
-def _spawn(argv: list[str]) -> None:
-    subprocess.Popen(
-        argv, env=_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
-    )
+def _spawn(argv: list[str]) -> bool:
+    try:
+        process = subprocess.Popen(
+            argv,
+            env=_env(),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError:
+        return False
+    try:
+        return process.wait(timeout=0.4) == 0
+    except subprocess.TimeoutExpired:
+        return True
 
 
 # --- laptop ---------------------------------------------------------------
@@ -32,8 +43,7 @@ def open_url(url: str, browser: str = "opera") -> str | None:
     exe = shutil.which(browser) or shutil.which("opera") or shutil.which("xdg-open")
     if not exe:
         return None
-    _spawn([exe, url])
-    return url
+    return url if _spawn([exe, url]) else None
 
 
 def launch_app(name: str) -> str | None:
