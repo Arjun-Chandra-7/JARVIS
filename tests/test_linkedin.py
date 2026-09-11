@@ -33,3 +33,14 @@ def test_linkedin_tools_are_available_to_the_active_semantic_registry():
     assert "own public LinkedIn profile" in tools["linkedin_open_profile"]["description"]
     assert "linkedin_stats" in tools
     assert "performance" in tools["linkedin_stats"]["description"]
+
+
+def test_plain_semantic_tool_label_is_executed_instead_of_spoken():
+    from jarvis.agent.groq_core import _parse_calls
+
+    assert _parse_calls("LinkedIn Open Profile - Opening your professional page") == [
+        ("linkedin_open_profile", {})
+    ]
+    assert _parse_calls("LinkedIn Open Console - Opening the analytics view") == [
+        ("linkedin_open_console", {"view": "analytics"})
+    ]

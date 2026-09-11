@@ -42,6 +42,8 @@ TOOL PROTOCOL (exact):
 - Empty args = {{}}. You may emit several calls at once. I then reply `TOOL RESULTS:` and you continue.
 - When you are finished, reply in PLAIN text (no function tags) — that is what {user} hears.
 - Pure chat/greetings/general questions → just answer in plain text, no tools.
+- Never write a tool label as prose (for example, "LinkedIn Open Profile - Opening"). Emit the
+  `<function=...>{...}</function>` call so Jarvis performs the action before you report success.
 
 WORKED EXAMPLE:
   {user}: what's my CPU and memory doing?

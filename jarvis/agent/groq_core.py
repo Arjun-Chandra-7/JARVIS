@@ -106,6 +106,31 @@ def _parse_calls(text: str):
             except Exception:  # noqa: BLE001
                 args = {}
             out.append((m.group(1), args if isinstance(args, dict) else {}))
+    if not out:
+        # ChatGPT occasionally renders its semantic tool choice as a display
+        # label. Treat only an exact leading label as a call so it cannot claim
+        # an action happened without actually dispatching the tool.
+        plain = re.match(
+            r"^\s*LinkedIn\s+(Open\s+Profile|Open\s+Console|Stats)\s*[-:]",
+            text,
+            re.IGNORECASE,
+        )
+        if plain:
+            label = re.sub(r"\s+", " ", plain.group(1).strip().lower())
+            name = {
+                "open profile": "linkedin_open_profile",
+                "open console": "linkedin_open_console",
+                "stats": "linkedin_stats",
+            }[label]
+            args = {}
+            if name == "linkedin_open_console":
+                view = re.search(
+                    r"\b(dashboard|approvals|calendar|network|analytics|profile|settings)\b",
+                    text[plain.end() :],
+                    re.IGNORECASE,
+                )
+                args = {"view": view.group(1).lower() if view else "dashboard"}
+            out.append((name, args))
     return out
 
 
