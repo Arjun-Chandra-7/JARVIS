@@ -326,6 +326,12 @@ class GroqAgent:
             calls = msg.tool_calls or []
             if not calls:
                 reply = (msg.content or "").strip()
+                salvaged = _parse_calls(reply)
+                if salvaged:
+                    await self._execute(
+                        [(f"text_call_{i}", name, args) for i, (name, args) in enumerate(salvaged)]
+                    )
+                    continue
                 self.messages.append({"role": "assistant", "content": reply})
                 break
 
