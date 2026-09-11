@@ -45,15 +45,26 @@ def base_url() -> str:
 
 
 def _request(path: str, method: str = "GET", body: dict | None = None, auth: bool = True) -> Any:
-    url = f"{base_url()}{path}"
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(url, data=data, method=method)
-    req.add_header("Content-Type", "application/json")
-    if auth and _token:
-        req.add_header("Authorization", f"Bearer {_token}")
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-        raw = resp.read().decode()
-    return json.loads(raw) if raw else None
+    global _token
+    for attempt in range(2):
+        url = f"{base_url()}{path}"
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(url, data=data, method=method)
+        req.add_header("Content-Type", "application/json")
+        if auth and _token:
+            req.add_header("Authorization", f"Bearer {_token}")
+        try:
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+                raw = resp.read().decode()
+            return json.loads(raw) if raw else None
+        except urllib.error.HTTPError as exc:
+            if not (auth and exc.code == 401 and attempt == 0):
+                raise
+            # A service restart can invalidate the process-local token. Renew
+            # once so the next request does not require a Jarvis restart.
+            _token = None
+            _connect()
+    return None  # pragma: no cover - the retry either returns or raises
 
 
 def _connect() -> None:
