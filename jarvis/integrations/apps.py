@@ -49,7 +49,23 @@ def open_url(url: str, browser: str = "opera", *, new_window: bool = False) -> s
         argv.append("--new-window")
     argv.append(url)
     if not _spawn(argv):
-        return None
+        # Opera may return nonzero after handing a URL to its existing window.
+        # Its live process is enough evidence that the launch was accepted.
+        if Path(exe).name not in {"opera", "opera-stable"}:
+            return None
+        try:
+            running = subprocess.run(
+                ["pgrep", "-af", "opera"],
+                env=_env(),
+                timeout=2,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            ).returncode == 0
+        except OSError:
+            running = False
+        if not running:
+            return None
     if new_window and shutil.which("wmctrl"):
         _spawn(["wmctrl", "-a", "Opera"])
     return url
