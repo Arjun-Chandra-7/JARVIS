@@ -56,9 +56,9 @@ You are running on Groq with function tools. Follow these rules exactly:
    - "Initiate Protocol Nexus" or automation requests: Call `trigger_automation` to activate n8n webhook workflows that connect to thousands of external apps and services, or use `list_automations`/`remember_automation` to manage them.
    - "Initiate Protocol Guardian" or OmniCore PA Shield: Use `process_incoming_communication`, `check_pa_status`, or `set_pa_status` to record everything (all texts/calls), detect implicit schedules (e.g. "tuition on 6:10"), and conduct autonomous 2-sided conversational PA interception when Arjun is out or in tuition.
    - "Engage Omni-Control" or full laptop control: Use `enable_full_laptop_autonomy` and `control_laptop_full` (along with GUI tools like `find_and_click` and `run_bash`) to command and automate all tools across the entire laptop without friction.
-9. LINKEDIN: Route by semantic intent, never by matching a fixed phrase. Requests to see the user's
-   own professional page use `linkedin_open_profile`; performance, publishing progress, stats, or
-   an overview use `linkedin_stats`; the content app or a named copilot screen uses
+9. LINKEDIN: Route by semantic intent, never by matching a fixed phrase. Only an explicit request
+   for the public profile page uses `linkedin_open_profile`; performance or metrics use
+   `linkedin_stats`; publishing, scheduling, content, and general management use
    `linkedin_open_console`. Never claim a page opened unless the tool confirms it.
 """
 
@@ -247,6 +247,33 @@ class GroqAgent:
             max_tokens=512,
         )
 
+    def _classify_linkedin_intent(self, user_text: str) -> str | None:
+        """Recover semantic LinkedIn navigation when a model declines to call a tool."""
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Classify the user's meaning. Reply with exactly one label: "
+                        "linkedin_open_console when they want the interface that manages, schedules, "
+                        "or reviews professional social posts; linkedin_stats when they want performance "
+                        "or publishing progress; linkedin_open_profile when they want their public "
+                        "professional profile page; none for everything else, including drafting, "
+                        "approval, networking, and general career questions."
+                    ),
+                },
+                {"role": "user", "content": user_text},
+            ],
+            temperature=0,
+            max_tokens=16,
+        )
+        content = (response.choices[0].message.content or "").strip().lower()
+        for name in ("linkedin_open_console", "linkedin_stats", "linkedin_open_profile"):
+            if re.fullmatch(rf"(?:`)?{name}(?:`)?[.!]?", content):
+                return name
+        return None
+
     def _try_local_fallback(self) -> bool:
         """Repoint at a local Ollama model so chat survives an exhausted cloud rate limit."""
         if self._on_local:
@@ -292,6 +319,7 @@ class GroqAgent:
         self.messages.append({"role": "user", "content": f"[time: {now:%A %Y-%m-%d %H:%M %Z}] {user_text}"})
 
         reply = ""
+        linkedin_executed = False
         rl_waits = 0  # how many times we've waited out a rate-limit this turn
         for _ in range(12):  # bounded tool rounds
             try:
@@ -331,7 +359,18 @@ class GroqAgent:
                     await self._execute(
                         [(f"text_call_{i}", name, args) for i, (name, args) in enumerate(salvaged)]
                     )
+                    linkedin_executed = any(name.startswith("linkedin_") for name, _ in salvaged)
                     continue
+                if not linkedin_executed:
+                    try:
+                        intent = await asyncio.to_thread(self._classify_linkedin_intent, user_text)
+                    except Exception:  # noqa: BLE001 - normal response remains available
+                        intent = None
+                    if intent:
+                        args = {"view": "dashboard"} if intent == "linkedin_open_console" else {}
+                        await self._execute([("semantic_linkedin", intent, args)])
+                        linkedin_executed = True
+                        continue
                 self.messages.append({"role": "assistant", "content": reply})
                 break
 
@@ -343,6 +382,9 @@ class GroqAgent:
                     args = {}
                 triples.append((c.id, c.function.name, args if isinstance(args, dict) else {}))
             await self._execute(triples)
+            linkedin_executed = linkedin_executed or any(
+                name.startswith("linkedin_") for _, name, _ in triples
+            )
 
         vaultmod.git_autocommit(self.config.vault_path, f"jarvis: memory update {now:%Y-%m-%d %H:%M}")
         self._trim()

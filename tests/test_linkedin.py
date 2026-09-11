@@ -58,3 +58,22 @@ def test_model_generated_linkedin_labels_dispatch_semantic_actions():
         ("linkedin_stats", {}),
         ("linkedin_open_console", {"view": "dashboard"}),
     ]
+
+
+def test_semantic_classifier_accepts_only_a_known_tool_label():
+    from types import SimpleNamespace
+
+    from jarvis.agent.groq_core import GroqAgent
+
+    agent = GroqAgent.__new__(GroqAgent)
+    agent.model = "local"
+    message = SimpleNamespace(content="linkedin_open_console")
+    create = lambda **kwargs: SimpleNamespace(choices=[SimpleNamespace(message=message)])
+    agent.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+    assert agent._classify_linkedin_intent("show me where my professional posts are managed") == (
+        "linkedin_open_console"
+    )
+
+    message.content = "open_url"
+    assert agent._classify_linkedin_intent("open a cooking site") is None

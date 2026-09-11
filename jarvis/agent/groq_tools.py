@@ -333,8 +333,9 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
 
     @tool(
         "linkedin_open_profile",
-        "Open the user's own public LinkedIn profile stored in the copilot settings. Use whenever "
-        "they want to see, view, pull up, inspect, or go to their LinkedIn page or profile.",
+        "Open the user's own public LinkedIn profile stored in the copilot settings. Use only "
+        "when they explicitly ask for the public profile page; publishing and management requests "
+        "belong in linkedin_open_console.",
         {},
     )
     async def linkedin_open_profile(a):
