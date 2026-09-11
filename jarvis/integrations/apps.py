@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from pathlib import Path
 
 _SNAP_ENV = ("LD_LIBRARY_PATH", "LD_PRELOAD", "GTK_PATH", "GIO_MODULE_DIR", "GSETTINGS_SCHEMA_DIR")
 
@@ -36,14 +37,22 @@ def _spawn(argv: list[str]) -> bool:
 
 
 # --- laptop ---------------------------------------------------------------
-def open_url(url: str, browser: str = "opera") -> str | None:
-    """Open a URL in `browser` (default Opera). Returns the resolved URL, or None if it can't."""
+def open_url(url: str, browser: str = "opera", *, new_window: bool = False) -> str | None:
+    """Open a URL in `browser` and report whether the launch was accepted."""
     if not url.startswith(("http://", "https://", "file://")):
         url = "https://" + url
     exe = shutil.which(browser) or shutil.which("opera") or shutil.which("xdg-open")
     if not exe:
         return None
-    return url if _spawn([exe, url]) else None
+    argv = [exe]
+    if new_window and Path(exe).name in {"opera", "opera-stable"}:
+        argv.append("--new-window")
+    argv.append(url)
+    if not _spawn(argv):
+        return None
+    if new_window and shutil.which("wmctrl"):
+        _spawn(["wmctrl", "-a", "Opera"])
+    return url
 
 
 def launch_app(name: str) -> str | None:

@@ -13,12 +13,12 @@ def test_open_profile_uses_stored_copilot_url(monkeypatch):
     monkeypatch.setattr(
         linkedin.apps,
         "open_url",
-        lambda url, browser="opera": opened.append((url, browser)) or url,
+        lambda url, browser="opera", **kwargs: opened.append((url, browser, kwargs)) or url,
     )
 
     result = linkedin.open_profile()
 
-    assert opened == [(profile_url, "xdg-open")]
+    assert opened == [(profile_url, "opera", {"new_window": True})]
     assert result == "Opened your LinkedIn profile."
 
 
