@@ -727,6 +727,17 @@ def build_tool_server(config: Config, job_runner: JobRunner):
         return _text(linkedin.stats(open_gui=True))
 
     @tool(
+        "linkedin_open_profile",
+        "Open the user's own LinkedIn profile URL stored in the LinkedIn copilot settings. "
+        "Use for 'open my LinkedIn profile'.",
+        {},
+    )
+    async def linkedin_open_profile(args):
+        from ..integrations import linkedin
+
+        return _text(linkedin.open_profile())
+
+    @tool(
         "linkedin_open_console",
         "Open the LinkedIn copilot console on a particular screen without reading anything out. "
         "view is one of: dashboard, approvals, calendar, network, analytics, profile, settings.",
@@ -826,7 +837,7 @@ def build_tool_server(config: Config, job_runner: JobRunner):
             google_tasks_list, google_tasks_add, google_tasks_complete,
             phone_messages, phone_reply, phone_send_sms,
             whatsapp_send, whatsapp_inbox,
-            linkedin_stats, linkedin_open_console, linkedin_pending_drafts,
+            linkedin_stats, linkedin_open_profile, linkedin_open_console, linkedin_pending_drafts,
             linkedin_read_draft, linkedin_approve_draft, linkedin_networking,
             linkedin_capture_idea,
         ],

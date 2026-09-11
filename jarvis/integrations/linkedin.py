@@ -27,6 +27,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from . import apps
+
 DEFAULT_URL = "http://127.0.0.1:8000"
 PROJECT_DIR = Path(os.environ.get("LINKEDIN_COPILOT_DIR", str(Path.home() / "Dev" / "Linkdin" / "repo")))
 TIMEOUT = 20
@@ -134,6 +136,23 @@ def open_console(view: str = "dashboard") -> bool:
             except Exception:
                 continue
     return False
+
+
+def open_profile() -> str:
+    """Open the account profile stored by the LinkedIn copilot."""
+    error = _ensure()
+    if error:
+        return error
+    try:
+        data = _request("/api/v1/settings")
+    except Exception as exc:  # noqa: BLE001
+        return f"I couldn't read the LinkedIn profile setting ({type(exc).__name__})."
+
+    profile_url = str((data.get("values") or {}).get("linkedin_profile_url") or "").strip()
+    if not profile_url:
+        return "No LinkedIn profile URL is stored in the copilot settings."
+    opened = apps.open_url(profile_url)
+    return "Opened your LinkedIn profile." if opened else "I couldn't open a browser window."
 
 
 # -------------------------------------------------------------------- reads --
