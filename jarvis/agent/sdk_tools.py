@@ -712,6 +712,102 @@ def build_tool_server(config: Config, job_runner: JobRunner):
             return _text("No recent WhatsApp messages (or the bridge isn't running).")
         return _text("\n".join(f"{m.get('name')}: {m.get('text')}" for m in msgs[-15:]))
 
+    # --- LinkedIn Content Copilot ---------------------------------------
+    @tool(
+        "linkedin_stats",
+        "Report the LinkedIn copilot's current state out loud and open its console on screen. "
+        "Use for 'open LinkedIn stats', 'how's LinkedIn doing', 'LinkedIn status', 'show my "
+        "LinkedIn dashboard'. Returns a spoken summary: drafts awaiting approval, what publishes "
+        "next, totals, and any learned pattern.",
+        {},
+    )
+    async def linkedin_stats(args):
+        from ..integrations import linkedin
+
+        return _text(linkedin.stats(open_gui=True))
+
+    @tool(
+        "linkedin_open_console",
+        "Open the LinkedIn copilot console on a particular screen without reading anything out. "
+        "view is one of: dashboard, approvals, calendar, network, analytics, profile, settings.",
+        {"view": str},
+    )
+    async def linkedin_open_console(args):
+        from ..integrations import linkedin
+
+        view = (args.get("view") or "dashboard").strip().lower()
+        error = linkedin._ensure()
+        if error:
+            return _text(error)
+        ok = linkedin.open_console(view)
+        return _text(f"Opened the {view} screen." if ok else "I couldn't open a browser window.")
+
+    @tool(
+        "linkedin_pending_drafts",
+        "List the LinkedIn posts waiting for the user's approval, with their quality scores. "
+        "Use for 'anything to approve', 'what's in the LinkedIn queue'.",
+        {},
+    )
+    async def linkedin_pending_drafts(args):
+        from ..integrations import linkedin
+
+        return _text(linkedin.pending_drafts())
+
+    @tool(
+        "linkedin_read_draft",
+        "Read a queued LinkedIn post aloud, in full, so the user can judge it by ear. "
+        "position is 1 for the first draft in the queue. This must happen before "
+        "linkedin_approve_draft will approve anything.",
+        {"position": int},
+    )
+    async def linkedin_read_draft(args):
+        from ..integrations import linkedin
+
+        return _text(linkedin.read_draft(int(args.get("position") or 1)))
+
+    @tool(
+        "linkedin_approve_draft",
+        "Approve a LinkedIn post the user has just heard, and let the copilot schedule it. "
+        "Only works for a draft read aloud earlier in this session, and is refused if the text "
+        "changed since — never approve a post the user has not heard.",
+        {"position": int},
+    )
+    async def linkedin_approve_draft(args):
+        from ..integrations import linkedin
+
+        return _text(linkedin.approve_read_draft(int(args.get("position") or 1)))
+
+    @tool(
+        "linkedin_networking",
+        "Say who is worth connecting with on LinkedIn and why, and open the queue. The user sends "
+        "every invitation themselves — this never sends or accepts connections, because "
+        "automating that breaches LinkedIn's terms and risks their account.",
+        {},
+    )
+    async def linkedin_networking(args):
+        from ..integrations import linkedin
+
+        return _text(linkedin.networking(open_gui=True))
+
+    @tool(
+        "linkedin_capture_idea",
+        "Turn something the user just described into a LinkedIn draft. Use when they say 'write a "
+        "post about...' or describe work worth posting. Put the specifics (what broke, what they "
+        "changed, numbers) in notes — that is what makes the post good enough to pass the quality "
+        "gate. category: BUILD_LOG, TECHNICAL_LESSON, AI_OBSERVATION or MILESTONE.",
+        {"topic": str, "notes": str, "category": str},
+    )
+    async def linkedin_capture_idea(args):
+        from ..integrations import linkedin
+
+        return _text(
+            linkedin.capture_idea(
+                args.get("topic", ""),
+                args.get("notes", ""),
+                (args.get("category") or "BUILD_LOG").upper(),
+            )
+        )
+
     return create_sdk_mcp_server(
         "jarvis",
         tools=[
@@ -730,5 +826,8 @@ def build_tool_server(config: Config, job_runner: JobRunner):
             google_tasks_list, google_tasks_add, google_tasks_complete,
             phone_messages, phone_reply, phone_send_sms,
             whatsapp_send, whatsapp_inbox,
+            linkedin_stats, linkedin_open_console, linkedin_pending_drafts,
+            linkedin_read_draft, linkedin_approve_draft, linkedin_networking,
+            linkedin_capture_idea,
         ],
     )
