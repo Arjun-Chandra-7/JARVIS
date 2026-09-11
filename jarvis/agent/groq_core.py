@@ -107,30 +107,37 @@ def _parse_calls(text: str):
                 args = {}
             out.append((m.group(1), args if isinstance(args, dict) else {}))
     if not out:
-        # ChatGPT occasionally renders its semantic tool choice as a display
-        # label. Treat only an exact leading label as a call so it cannot claim
-        # an action happened without actually dispatching the tool.
-        plain = re.match(
-            r"^\s*LinkedIn\s+(Open\s+Profile|Open\s+Console|Stats)\s*[-:]",
+        # ChatGPT sometimes renders a selected LinkedIn tool as a display label
+        # instead of function syntax. Normalize those model-generated labels so
+        # a claimed action is always backed by a real dispatch.
+        for plain in re.finditer(
+            r"^\s*LinkedIn\s+(.+?)\s*[-:]\s*(.*)$",
             text,
-            re.IGNORECASE,
-        )
-        if plain:
+            re.IGNORECASE | re.MULTILINE,
+        ):
             label = re.sub(r"\s+", " ", plain.group(1).strip().lower())
-            name = {
-                "open profile": "linkedin_open_profile",
-                "open console": "linkedin_open_console",
-                "stats": "linkedin_stats",
-            }[label]
-            args = {}
-            if name == "linkedin_open_console":
+            detail = plain.group(2)
+            if "profile" in label:
+                out.append(("linkedin_open_profile", {}))
+                continue
+            if any(word in label for word in ("stat", "performance", "metric", "overview", "insight")):
+                out.append(("linkedin_stats", {}))
+                continue
+            if any(
+                word in label
+                for word in ("console", "dashboard", "content", "calendar", "network", "analytics", "approval", "settings")
+            ):
                 view = re.search(
                     r"\b(dashboard|approvals|calendar|network|analytics|profile|settings)\b",
-                    text[plain.end() :],
+                    f"{label} {detail}",
                     re.IGNORECASE,
                 )
-                args = {"view": view.group(1).lower() if view else "dashboard"}
-            out.append((name, args))
+                out.append(
+                    (
+                        "linkedin_open_console",
+                        {"view": view.group(1).lower() if view else "dashboard"},
+                    )
+                )
     return out
 
 

@@ -44,3 +44,17 @@ def test_plain_semantic_tool_label_is_executed_instead_of_spoken():
     assert _parse_calls("LinkedIn Open Console - Opening the analytics view") == [
         ("linkedin_open_console", {"view": "analytics"})
     ]
+
+
+def test_model_generated_linkedin_labels_dispatch_semantic_actions():
+    from jarvis.agent.groq_core import _parse_calls
+
+    response = (
+        "LinkedIn Show Performance - Displaying performance metrics\n\n"
+        "LinkedIn Open Console - Opening the LinkedIn Dashboard View"
+    )
+
+    assert _parse_calls(response) == [
+        ("linkedin_stats", {}),
+        ("linkedin_open_console", {"view": "dashboard"}),
+    ]
