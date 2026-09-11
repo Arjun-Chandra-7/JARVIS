@@ -316,6 +316,19 @@ class GroqAgent:
                 pass
 
         now = datetime.now().astimezone()
+        try:
+            linkedin_intent = await asyncio.to_thread(self._classify_linkedin_intent, user_text)
+        except Exception:  # noqa: BLE001 - normal tool routing remains available
+            linkedin_intent = None
+        if linkedin_intent:
+            args = {"view": "dashboard"} if linkedin_intent == "linkedin_open_console" else {}
+            self.on_tool(linkedin_intent, "semantic intent")
+            result = await self.dispatch(linkedin_intent, args)
+            vaultmod.git_autocommit(
+                self.config.vault_path, f"jarvis: memory update {now:%Y-%m-%d %H:%M}"
+            )
+            return str(result)
+
         self.messages.append({"role": "user", "content": f"[time: {now:%A %Y-%m-%d %H:%M %Z}] {user_text}"})
 
         reply = ""
