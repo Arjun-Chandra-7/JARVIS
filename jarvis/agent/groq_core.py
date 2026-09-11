@@ -259,7 +259,8 @@ class GroqAgent:
                         "linkedin_open_console when they want the interface that manages, schedules, "
                         "or reviews professional social posts; linkedin_stats when they want performance "
                         "or publishing progress; linkedin_open_profile when they want their public "
-                        "professional profile page; none for everything else, including drafting, "
+                        "professional profile page; linkedin_top_ideas when they want fresh trending "
+                        "public topics to write about; none for everything else, including drafting, "
                         "approval, networking, and general career questions."
                     ),
                 },
@@ -269,7 +270,12 @@ class GroqAgent:
             max_tokens=16,
         )
         content = (response.choices[0].message.content or "").strip().lower()
-        for name in ("linkedin_open_console", "linkedin_stats", "linkedin_open_profile"):
+        for name in (
+            "linkedin_open_console",
+            "linkedin_stats",
+            "linkedin_open_profile",
+            "linkedin_top_ideas",
+        ):
             if re.fullmatch(rf"(?:`)?{name}(?:`)?[.!]?", content):
                 return name
         return None

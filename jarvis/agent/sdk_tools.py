@@ -727,6 +727,26 @@ def build_tool_server(config: Config, job_runner: JobRunner):
         return _text(linkedin.stats(open_gui=True))
 
     @tool(
+        "linkedin_top_ideas",
+        "Show the ten freshest public topics ranked for LinkedIn and offer to write a selected draft.",
+        {},
+    )
+    async def linkedin_top_ideas(args):
+        from ..integrations import linkedin
+
+        return _text(linkedin.top_ideas())
+
+    @tool(
+        "linkedin_delete_scheduled",
+        "Cancel one pending scheduled post when the user explicitly asks to delete or cancel it.",
+        {"position": int},
+    )
+    async def linkedin_delete_scheduled(args):
+        from ..integrations import linkedin
+
+        return _text(linkedin.delete_scheduled(int(args.get("position") or 1)))
+
+    @tool(
         "linkedin_open_profile",
         "Open the user's own LinkedIn profile URL stored in the LinkedIn copilot settings. "
         "Use for 'open my LinkedIn profile'.",

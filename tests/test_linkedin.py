@@ -77,3 +77,8 @@ def test_semantic_classifier_accepts_only_a_known_tool_label():
 
     message.content = "open_url"
     assert agent._classify_linkedin_intent("open a cooking site") is None
+
+    message.content = "linkedin_top_ideas"
+    assert agent._classify_linkedin_intent("what are the freshest topics I could post about") == (
+        "linkedin_top_ideas"
+    )

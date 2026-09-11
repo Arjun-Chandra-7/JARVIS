@@ -332,6 +332,24 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         return linkedin.stats(open_gui=True)
 
     @tool(
+        "linkedin_top_ideas",
+        "Show the ten freshest ranked public topics and offer to write a draft about a selected one.",
+        {},
+    )
+    async def linkedin_top_ideas(a):
+        from ..integrations import linkedin
+        return linkedin.top_ideas()
+
+    @tool(
+        "linkedin_delete_scheduled",
+        "Cancel a pending scheduled LinkedIn post only when the user explicitly asks to cancel or delete it.",
+        {"position": {"type": "integer"}},
+    )
+    async def linkedin_delete_scheduled(a):
+        from ..integrations import linkedin
+        return linkedin.delete_scheduled(_i(a.get("position"), 1))
+
+    @tool(
         "linkedin_open_profile",
         "Open the user's own public LinkedIn profile stored in the copilot settings. Use only "
         "when they explicitly ask for the public profile page; publishing and management requests "

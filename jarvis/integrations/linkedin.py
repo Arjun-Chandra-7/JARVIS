@@ -206,6 +206,51 @@ def pending_drafts() -> str:
     return " ".join(lines)
 
 
+def delete_scheduled(position: int = 1) -> str:
+    """Cancel one pending scheduled post selected by its displayed position."""
+    error = _ensure()
+    if error:
+        return error
+    try:
+        slots = _request("/api/v1/schedule") or []
+        index = max(1, position) - 1
+        if index >= len(slots):
+            return f"There are only {len(slots)} scheduled posts."
+        slot = slots[index]
+        _request(f"/api/v1/schedule/{slot['id']}", method="DELETE")
+    except urllib.error.HTTPError as exc:
+        return f"The copilot refused to cancel that post ({exc.code})."
+    except Exception as exc:  # noqa: BLE001
+        return f"I couldn't cancel that scheduled post ({type(exc).__name__})."
+    return f"Cancelled scheduled post {position}: {slot.get('title') or 'untitled'}."
+
+
+def top_ideas() -> str:
+    """Return the ten freshest ranked public-source topics for future posts."""
+    error = _ensure()
+    if error:
+        return error
+    try:
+        data = _request("/api/v1/ideas/top") or {}
+    except Exception as exc:  # noqa: BLE001
+        return f"I couldn't refresh the public topic list ({type(exc).__name__})."
+    items = data.get("items") or []
+    if not items:
+        return "The public feeds are refreshing, but there are no ranked topics yet. Ask again shortly."
+    lines = ["Top topics to turn into posts:"]
+    for item in items[:10]:
+        summary = (item.get("summary") or "").strip()
+        detail = f" — {summary[:180]}" if summary else ""
+        lines.append(
+            f"{item.get('rank', len(lines))}. {item.get('topic', 'Untitled')}{detail} "
+            f"({item.get('source', 'public feed')})"
+        )
+    if data.get("refresh_queued"):
+        lines.append("I also queued a fresh public-feed scan; the next request will include new items.")
+    lines.append("Tell me a number and I'll research it and write a draft for your approval.")
+    return " ".join(lines)
+
+
 def read_draft(position: int = 1) -> str:
     """Read a queued draft aloud and remember exactly what was read."""
     error = _ensure()
