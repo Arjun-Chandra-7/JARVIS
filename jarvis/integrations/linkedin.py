@@ -239,7 +239,7 @@ def top_ideas() -> str:
         return "The public feeds are refreshing, but there are no ranked topics yet. Ask again shortly."
     lines = ["Top topics to turn into posts:"]
     for item in items[:10]:
-        summary = (item.get("summary") or "").strip()
+        summary = " ".join((item.get("summary") or "").split())
         detail = f" — {summary[:180]}" if summary else ""
         lines.append(
             f"{item.get('rank', len(lines))}. {item.get('topic', 'Untitled')}{detail} "
@@ -247,7 +247,7 @@ def top_ideas() -> str:
         )
     if data.get("refresh_queued"):
         lines.append("I also queued a fresh public-feed scan; the next request will include new items.")
-    lines.append("Tell me a number and I'll research it and write a draft for your approval.")
+    lines.append("I queued research and drafts for these topics; approval is still required before anything publishes.")
     return " ".join(lines)
 
 
