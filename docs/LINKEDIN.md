@@ -7,7 +7,7 @@ capture an idea or approve a post by voice.
 ## Setup
 
 ```bash
-LINKEDIN_COPILOT_URL=http://127.0.0.1:8000
+LINKEDIN_COPILOT_URL=http://127.0.0.1:8787
 LINKEDIN_COPILOT_DIR=$HOME/Dev/Linkdin/repo
 ```
 

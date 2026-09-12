@@ -28,7 +28,7 @@ from typing import Any
 
 from . import apps
 
-DEFAULT_URL = "http://127.0.0.1:8000"
+DEFAULT_URL = "http://127.0.0.1:8787"
 PROJECT_DIR = Path(os.environ.get("LINKEDIN_COPILOT_DIR", str(Path.home() / "Dev" / "Linkdin" / "repo")))
 TIMEOUT = 20
 
@@ -77,11 +77,19 @@ def _connect() -> None:
 
 
 def is_running() -> bool:
+    """True only if a *copilot* answers - not merely something on that port.
+
+    Checking for HTTP 200 alone meant an unrelated service on the same port
+    looked healthy, and every call after that failed confusingly.
+    """
     try:
         with urllib.request.urlopen(f"{base_url()}/health", timeout=3) as resp:
-            return resp.status == 200
+            if resp.status != 200:
+                return False
+            payload = json.loads(resp.read().decode() or "{}")
     except Exception:
         return False
+    return payload.get("service") == "linkedin-copilot"
 
 
 def start_backend() -> bool:
@@ -118,8 +126,10 @@ def _ensure() -> str | None:
     if not is_running():
         if not start_backend():
             return (
-                "The LinkedIn copilot backend isn't running and I couldn't start it. "
-                f"Try ./scripts/dev.sh in {PROJECT_DIR}."
+                "The LinkedIn copilot backend isn't answering on "
+                f"{base_url()} and I couldn't start it. If something else is "
+                f"using that port, set LINKEDIN_COPILOT_URL. Otherwise run "
+                f"./scripts/dev.sh in {PROJECT_DIR}."
             )
         _token = None
     try:
