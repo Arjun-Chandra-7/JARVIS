@@ -379,19 +379,25 @@ async def _run_meeting() -> None:
 
 
 def _run_index() -> None:
-    from .memory.embeddings import available
-    from .memory.index import VaultIndex
+    """Rebuild the hybrid memory index over the vault (keyword always, vectors if Ollama can)."""
+    from .memory.search import _embedder
+    from .memory.store import get_store
 
-    if not available():
-        print("Ollama isn't running. Install https://ollama.com and run:")
-        print("  ollama pull nomic-embed-text")
-        print("…then retry. (Semantic search is optional; keyword recall works without it.)")
-        return
-    print("Building semantic index over the vault…")
-    stats = VaultIndex(CONFIG.vault_path).build(
-        progress=lambda path, n: print(f"  {n} chunks indexed ({path})", end="\r")
+    store = get_store(CONFIG.vault_path)
+    embed = _embedder()
+    if embed is None:
+        # Keyword recall still works, so this is a warning rather than a refusal — but say exactly
+        # what is missing, because a running Ollama without the embed model pulled looks healthy
+        # from the outside and silently produced an empty semantic index for a long time.
+        print("No embedding model — indexing keyword-only. For semantic recall:")
+        print("  ollama serve   &&   ollama pull nomic-embed-text")
+    print(f"Indexing {CONFIG.vault_path} → {store.path}")
+    stats = store.sync_vault(
+        CONFIG.vault_path, embed=embed,
+        progress=lambda path, n: print(f"  {n} chunks ({path})", end="\r"),
     )
     print(f"\nDone: {stats}")
+    print(f"Store: {store.stats()}")
 
 
 

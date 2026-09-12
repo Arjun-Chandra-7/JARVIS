@@ -373,13 +373,16 @@ class GroqAgent:
         direct = await handle(user_text, self.config, getattr(self, "command_session", "local"))
         if direct is not None:
             return direct
-        # episodic journal
+        # episodic journal — the human-readable daily note, plus the searchable episode store
         clean = " ".join(l for l in user_text.splitlines() if not l.strip().startswith("["))[:140].strip()
         if clean:
             try:
                 vaultmod.journal_append(self.config.vault_path, clean)
             except Exception:  # noqa: BLE001
                 pass
+            from ..memory import search as memsearch
+
+            await asyncio.to_thread(memsearch.record_turn, "you", clean, self.config.vault_path)
 
         now = datetime.now().astimezone()
         try:
@@ -395,7 +398,13 @@ class GroqAgent:
             )
             return str(result)
 
-        self.messages.append({"role": "user", "content": f"[time: {now:%A %Y-%m-%d %H:%M %Z}] {user_text}"})
+        # A spoken turn needs a spoken answer. This is a directive about the channel, so it rides
+        # in the bracketed prefix alongside the timestamp rather than being pasted onto the user's
+        # own words, where it would end up in the journal and in semantic recall.
+        prefix = f"[time: {now:%A %Y-%m-%d %H:%M %Z}]"
+        if getattr(self, "command_session", "") == "voice":
+            prefix += " [channel: voice — answer in one or two short spoken sentences, plain speech, no markdown or lists]"
+        self.messages.append({"role": "user", "content": f"{prefix} {user_text}"})
 
         reply = ""
         linkedin_executed = False
@@ -466,6 +475,10 @@ class GroqAgent:
                 name.startswith("linkedin_") for _, name, _ in triples
             )
 
+        if reply:
+            from ..memory import search as memsearch
+
+            await asyncio.to_thread(memsearch.record_turn, "jarvis", reply[:600], self.config.vault_path)
         vaultmod.git_autocommit(self.config.vault_path, f"jarvis: memory update {now:%Y-%m-%d %H:%M}")
         self._trim()
         self._save_history()
