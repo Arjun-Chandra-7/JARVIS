@@ -77,6 +77,12 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     async def _confirm(desc: str) -> bool:
         return bool(confirm_fn and await confirm_fn(desc))
 
+    def _google_status() -> str:
+        """Why Google is unavailable, phrased so the model can relay a fix rather than a shrug."""
+        from ..integrations.google.auth import status
+
+        return status(config)
+
     # ---------------- built-in equivalents (shell / files / web) ----------------
     @tool("run_bash", "Run a shell command on this Linux machine and return stdout/stderr.",
           {"command": {"type": "string"}}, ["command"])
@@ -635,18 +641,18 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     @tool("google_agenda", "Upcoming calendar events for N days.", {"days": {"type": "string"}})
     async def google_agenda(a):
         from ..integrations.google import calendar as gcal
-        return gcal.agenda(config, _i(a.get("days"), 1) or 1) or "Google not connected."
+        return gcal.agenda(config, _i(a.get("days"), 1) or 1) or _google_status()
 
     @tool("google_email_check", "List Gmail (default unread).", {"query": {"type": "string"}})
     async def google_email_check(a):
         from ..integrations.google import gmail
-        return gmail.check(config, a.get("query") or "is:unread") or "Google not connected."
+        return gmail.check(config, a.get("query") or "is:unread") or _google_status()
 
     @tool("google_email_read", "Read the full body of one Gmail message by its id (from google_email_check).",
           {"id": {"type": "string"}}, ["id"])
     async def google_email_read(a):
         from ..integrations.google import gmail
-        return gmail.read(config, a.get("id", "")) or "Google not connected."
+        return gmail.read(config, a.get("id", "")) or _google_status()
 
     @tool("google_email_send", "Send an email (confirm first).",
           {"to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}}, ["to", "subject", "body"])
@@ -654,7 +660,7 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         if not await _confirm(f"send an email to {a.get('to')} — {a.get('subject')}"):
             return "user declined."
         from ..integrations.google import gmail
-        return gmail.send(config, a.get("to", ""), a.get("subject", ""), a.get("body", "")) or "Google not connected."
+        return gmail.send(config, a.get("to", ""), a.get("subject", ""), a.get("body", "")) or _google_status()
 
     @tool("google_calendar_create", "Create a calendar event. start/end are ISO datetimes.",
           {"title": {"type": "string"}, "start": {"type": "string"}, "end": {"type": "string"},
@@ -664,22 +670,22 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
             return "user declined."
         from ..integrations.google import calendar as gcal
         return gcal.create_event(config, a.get("title", ""), a.get("start", ""), a.get("end", ""),
-                                 a.get("description", "")) or "Google not connected."
+                                 a.get("description", "")) or _google_status()
 
     @tool("google_tasks_list", "List your Google Tasks.", {})
     async def google_tasks_list(a):
         from ..integrations.google import tasks
-        return tasks.list_tasks(config) or "Google not connected."
+        return tasks.list_tasks(config) or _google_status()
 
     @tool("google_tasks_add", "Add a Google Task.", {"title": {"type": "string"}, "notes": {"type": "string"}}, ["title"])
     async def google_tasks_add(a):
         from ..integrations.google import tasks
-        return tasks.add_task(config, a.get("title", ""), a.get("notes", "")) or "Google not connected."
+        return tasks.add_task(config, a.get("title", ""), a.get("notes", "")) or _google_status()
 
     @tool("google_tasks_complete", "Mark a Google Task complete by its title.", {"title": {"type": "string"}}, ["title"])
     async def google_tasks_complete(a):
         from ..integrations.google import tasks
-        return tasks.complete_task(config, a.get("title", "")) or "Google not connected."
+        return tasks.complete_task(config, a.get("title", "")) or _google_status()
 
     # ---------------- n8n Automation Engine (thousands of app connectors) ----------------
     @tool("trigger_automation", "Trigger an n8n automation workflow via webhook alias or URL. Pass extra JSON fields in 'payload_json'.",
@@ -855,19 +861,18 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         except Exception as e:
             return f"Failed to toggle sports widget: {e}"
 
+    # Google tools are only useful once OAuth has actually happened. The files live where
+    # config.py puts them (~/.config/jarvis/) — an older check looked for a `credentials.json`
+    # in the vault, a path Jarvis never writes, so Gmail/Calendar/Tasks silently vanished from
+    # the brain's menu even on a fully authorised machine.
+    has_google = config.google_client_secret.exists() or config.google_token_file.exists()
+
     schemas = []
-    has_google = (config.vault_path / "credentials.json").exists() or Path.home().joinpath(".credentials", "credentials.json").exists()
     for s, _ in reg.values():
         f = s.get("function", {})
         name = f.get("name", "")
-        # Drop inactive tool suites to save thousands of tokens!
         if not has_google and name.startswith("google_"):
             continue
-            
-        if not name.startswith("linkedin_"):
-            f.pop("description", None)
-        for p_val in f.get("parameters", {}).get("properties", {}).values():
-            p_val.pop("description", None)
         schemas.append(s)
 
     async def dispatch(name: str, args: dict) -> str:

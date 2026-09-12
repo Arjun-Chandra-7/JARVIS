@@ -11,6 +11,7 @@ import base64
 import json
 import os
 import re
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
@@ -141,6 +142,25 @@ def _parse_calls(text: str):
     return out
 
 
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+# Tools that only read state can safely run at the same time. Anything that sends a message, moves
+# the mouse, writes a file or changes a setting stays strictly sequential and in the model's order.
+_PARALLEL_SAFE = frozenset({
+    "read_file", "list_dir", "web_search", "web_fetch", "recall", "system_stats", "capture_screen",
+    "analyze_image", "read_project", "whatsapp_inbox", "instagram_dms", "find_contact",
+    "contact_context", "conversation_search", "wifi_scan", "bluetooth_scan", "who_is_around",
+    "google_agenda", "google_email_check", "google_email_read", "google_tasks_list",
+    "list_automations", "check_coding_tasks", "check_pa_status", "get_activity_recordings",
+    "read_clipboard", "linkedin_stats", "linkedin_pending_drafts", "linkedin_read_draft",
+})
+
+
 def _is_rate_limit(exc: Exception) -> bool:
     if getattr(exc, "status_code", None) == 429:
         return True
@@ -191,10 +211,23 @@ class GroqAgent:
         self._on_local = False  # switched to local Ollama after a cloud rate-limit
         self.client = OpenAI(base_url=base_url, api_key=api_key, max_retries=0, timeout=45)
         self.schemas, self.dispatch = build_registry(config, self.job_runner, confirm_fn)
-        for s in self.schemas:  # trim descriptions hard — tool names are self-explanatory, and every
-            d = s["function"].get("description", "")   # token here is sent on EVERY request (rate limits)
-            if len(d) > 40:
-                s["function"]["description"] = d[:40]
+
+        # Tool retrieval. Descriptions used to be clipped to 40 characters so that all ~80 schemas
+        # could ship on every request without blowing a rate limit — which starved small models of
+        # the one signal they need and made selection worse the more tools we added. Instead we now
+        # send FULL descriptions for a short, retrieved menu (see agent/tool_router.py).
+        from .tool_router import ToolRouter, enabled as _router_enabled
+
+        self._router_on = _router_enabled()
+        self.router = ToolRouter(self.schemas, k=_int_env("JARVIS_TOOL_K", 14))
+        self._recent_tools: list[str] = []
+        if self._router_on:
+            threading.Thread(target=self.router.warm, daemon=True).start()
+        else:
+            for s in self.schemas:  # legacy behaviour: everything, clipped, to stay under a cap
+                d = s["function"].get("description", "")
+                if len(d) > 40:
+                    s["function"]["description"] = d[:40]
 
         self.messages: list[dict] = [{"role": "system", "content": _compact_system(config)}]
         self._restore_history()
@@ -237,18 +270,45 @@ class GroqAgent:
     async def __aexit__(self, *exc: Any) -> None:
         return None
 
-    def _complete(self):
+    def _tools_for(self, user_text: str) -> list[dict]:
+        """The tool menu for this turn: retrieved for relevance, plus whatever we just used.
+
+        Pinning `_recent_tools` keeps follow-ups working — "now do the same for Tuesday" carries
+        none of the words that retrieved `google_calendar_create` the first time.
+        """
+        if not self._router_on:
+            return self.schemas
+        try:
+            return self.router.select(user_text, extra=self._recent_tools)
+        except Exception:  # noqa: BLE001 - retrieval is an optimisation, never a hard dependency
+            return self.schemas
+
+    def _complete(self, tools: Optional[list[dict]] = None):
         return self.client.chat.completions.create(
             model=self.model,
             messages=self.messages,
-            tools=self.schemas,
+            tools=tools if tools is not None else self.schemas,
             tool_choice="auto",
             temperature=0.4,
             max_tokens=512,
         )
 
+    # The LinkedIn classifier is a second, blocking LLM round trip. It used to run on every single
+    # message — so "what's the weather" paid for a LinkedIn intent check. Gate it on the topic
+    # actually being in the room.
+    _LINKEDIN_HINT = re.compile(
+        r"\blinked\s?in\b|\bmy\s+(?:profile|network|connections)\b"
+        r"|\b(?:posts?|posting|publish\w*|drafts?|impressions?|engagement|followers?)\b",
+        re.IGNORECASE,
+    )
+
+    def _maybe_linkedin(self, user_text: str) -> bool:
+        return bool(self._LINKEDIN_HINT.search(user_text or ""))
+
     def _classify_linkedin_intent(self, user_text: str) -> str | None:
         """Recover semantic LinkedIn navigation when a model declines to call a tool."""
+        if not self._maybe_linkedin(user_text):
+            return None
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
@@ -340,9 +400,10 @@ class GroqAgent:
         reply = ""
         linkedin_executed = False
         rl_waits = 0  # how many times we've waited out a rate-limit this turn
+        turn_tools = await asyncio.to_thread(self._tools_for, user_text)
         for _ in range(12):  # bounded tool rounds
             try:
-                resp = await asyncio.to_thread(self._complete)
+                resp = await asyncio.to_thread(self._complete, turn_tools)
             except Exception as exc:  # noqa: BLE001
                 if _is_rate_limit(exc) and not self._on_local and self.config.brain in ("groq", "gemini"):
                     # 1) Groq only: switch to the high-limit fallback model (once)
@@ -411,13 +472,49 @@ class GroqAgent:
         return reply or "(no reply)"
 
     async def _execute(self, triples) -> None:
-        """Append the assistant tool_calls turn + each tool result. triples = [(id, name, args)]."""
+        """Append the assistant tool_calls turn + each tool result. triples = [(id, name, args)].
+
+        Read-only tools in the same batch run concurrently — asking for the calendar, the inbox and
+        the weather at once used to cost the sum of three round trips and now costs the slowest.
+        Anything with a side effect runs in order, one at a time.
+        """
         self.messages.append({
             "role": "assistant", "content": "",
             "tool_calls": [{"id": tid, "type": "function",
                             "function": {"name": name, "arguments": json.dumps(args)}} for tid, name, args in triples],
         })
+        for _tid, name, _args in triples:
+            if name not in self._recent_tools:
+                self._recent_tools.append(name)
+        del self._recent_tools[:-4]
+
+        results: dict[str, str] = {}
+        batch: list[tuple[str, str, dict]] = []
+
+        async def flush() -> None:
+            if not batch:
+                return
+            if len(batch) == 1:
+                tid, name, args = batch[0]
+                results[tid] = str(await self.dispatch(name, args))
+            else:
+                done = await asyncio.gather(
+                    *(self.dispatch(n, a) for _t, n, a in batch), return_exceptions=True
+                )
+                for (tid, name, _a), res in zip(batch, done):
+                    results[tid] = f"tool error ({name}): {res}" if isinstance(res, BaseException) else str(res)
+            batch.clear()
+
         for tid, name, args in triples:
             self.on_tool(name, ", ".join(f"{k}={v}" for k, v in list(args.items())[:2]))
-            result = await self.dispatch(name, args)
-            self.messages.append({"role": "tool", "tool_call_id": tid, "content": str(result)[:6000]})
+            if name in _PARALLEL_SAFE:
+                batch.append((tid, name, args))
+                continue
+            await flush()                      # keep ordering: reads before this write land first
+            results[tid] = str(await self.dispatch(name, args))
+        await flush()
+
+        for tid, _name, _args in triples:
+            self.messages.append(
+                {"role": "tool", "tool_call_id": tid, "content": results.get(tid, "")[:6000]}
+            )
