@@ -191,9 +191,25 @@ class VoiceSession:
         if not away_now and notifications_enabled():  # while away, handle silently; muted = no readout
             self._speak(f"{app} message from {who}. {msg}.")
 
+    def _emit_level(self, level: float) -> None:
+        """Publish mic amplitude to the HUD, rate-limited.
+
+        Frames arrive at ~60/s; the overlay only needs enough to look alive, and each event is an
+        HTTP POST. 15/s is smooth to the eye and cheap. Levels are normalised against the VAD
+        threshold rather than an absolute scale, so the visualiser matches what Jarvis considers
+        loud enough to be speech on this particular microphone.
+        """
+        now = time.monotonic()
+        if now - getattr(self, "_last_level_at", 0.0) < 0.066:
+            return
+        self._last_level_at = now
+        norm = min(1.0, level / max(1.0, self.threshold * 2.2))
+        self.on_event("level", f"{norm:.3f}")
+
     def _record_transcript(self, wait_s: float) -> Optional[str]:
         pcm = vad.record_utterance(
             self.mic.read,
+            on_level=self._emit_level,
             sample_rate=self.sample_rate,
             frame_length=self.frame_length,
             threshold=self.threshold,
@@ -247,7 +263,11 @@ class VoiceSession:
                 frame = self.mic.read()
             except Exception:  # noqa: BLE001
                 return
-            if vad.rms(frame) >= trigger:
+            level = vad.rms(frame)
+            # Without echo cancellation these frames are mostly Jarvis's own speaker output, which
+            # is exactly what the HUD should be drawing while he talks — it is the room's audio.
+            self._emit_level(level)
+            if level >= trigger:
                 run += 1
                 if run >= needed:
                     self.on_event("barge_in")

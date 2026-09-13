@@ -79,7 +79,8 @@ def _voice_event(kind: str, text: str = "") -> None:
         "phone": f"  📱 {text}",
         "sleep": "  (back to sleep — say the wake word again)\n",
     }
-    print(labels.get(kind, f"  {kind} {text}"))
+    if kind != "level":   # ~15/s of mic amplitude — for the HUD's meter, not the console
+        print(labels.get(kind, f"  {kind} {text}"))
     _push_to_hud(kind, text)
 
 

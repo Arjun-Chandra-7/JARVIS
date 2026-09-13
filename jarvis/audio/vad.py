@@ -50,12 +50,17 @@ def record_utterance(
     max_s: float,
     wait_s: float,
     min_speech_ms: int = 200,
+    on_level: Optional[Callable[[float], None]] = None,
 ) -> Optional[bytes]:
     """Capture one spoken phrase.
 
     Waits up to `wait_s` for speech to start; once it does, accumulates frames until `silence_ms`
     of trailing silence (or `max_s` total). Returns int16 PCM bytes, or None if no speech began
     within the wait window.
+
+    `on_level` is called with each frame's RMS as it arrives. This is the only place in the system
+    that sees live microphone amplitude, so it is how the HUD gets a waveform that reflects the
+    actual room rather than a sine wave pretending to.
     """
     frame_ms = 1000.0 * frame_length / sample_rate
     silence_needed = max(1, int(round(silence_ms / frame_ms)))
@@ -77,6 +82,11 @@ def record_utterance(
             break
         arr = np.asarray(frame, dtype=np.int16)
         level = rms(arr)
+        if on_level is not None:
+            try:
+                on_level(level)
+            except Exception:  # noqa: BLE001 - a HUD hiccup must never break capture
+                pass
 
         if not started:
             if level >= threshold:
