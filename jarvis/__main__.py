@@ -404,6 +404,14 @@ def _run_index() -> None:
     print(f"\nDone: {stats}")
     print(f"Store: {store.stats()}")
 
+    # The flat JSON index this replaced is dead weight once the store exists — a few megabytes of
+    # duplicated vectors that nothing reads. Clean it up rather than leaving it to confuse.
+    legacy = CONFIG.vault_path / ".jarvis" / "semindex.json"
+    if legacy.exists():
+        size_kb = legacy.stat().st_size / 1024
+        legacy.unlink()
+        print(f"Removed the old flat index ({size_kb:.0f} KB) — superseded by memory.db")
+
 
 
 def _run_consolidate() -> None:
@@ -589,7 +597,7 @@ def main() -> None:
     parser.add_argument("--google-auth", action="store_true", help="one-time Google (Calendar/Gmail/Tasks) auth")
     parser.add_argument("--phone-test", action="store_true", help="test the KDE Connect phone bridge")
     parser.add_argument("--web", action="store_true", help="launch the WebGL Jarvis HUD in your browser")
-    parser.add_argument("--index", action="store_true", help="build the semantic memory index (needs Ollama)")
+    parser.add_argument("--index", action="store_true", help="rebuild the memory index over the vault")
     parser.add_argument("--consolidate", action="store_true",
                         help="distil recent conversation into durable facts, now")
     parser.add_argument("--check", action="store_true", help="preflight: deps, keys, audio devices")
