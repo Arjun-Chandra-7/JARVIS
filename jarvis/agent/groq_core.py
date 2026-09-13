@@ -229,6 +229,7 @@ class GroqAgent:
                 if len(d) > 40:
                     s["function"]["description"] = d[:40]
 
+        self.summary = self._load_summary()
         self.messages: list[dict] = [{"role": "system", "content": _compact_system(config)}]
         self._restore_history()
 
@@ -316,8 +317,14 @@ class GroqAgent:
         # `memo` is injected per request and deliberately never stored in self.messages — recalled
         # text is evidence for one answer, not part of the conversation to be trimmed and re-sent.
         messages = self.messages
+        extra = []
+        if self.summary:
+            extra.append({"role": "system",
+                          "content": "Earlier in this conversation:\n" + self.summary})
         if memo:
-            messages = [messages[0], {"role": "system", "content": memo}] + messages[1:]
+            extra.append({"role": "system", "content": memo})
+        if extra:
+            messages = [messages[0]] + extra + messages[1:]
         return self.client.chat.completions.create(
             model=self.model,
             messages=messages,
@@ -391,16 +398,79 @@ class GroqAgent:
         self.model, self._on_local = model, True
         return True
 
-    def _trim(self) -> None:
-        # Keep the system message + a suffix that starts on a clean 'user' turn (never split a
-        # tool_calls/tool pair, which the API rejects).
-        if len(self.messages) <= 14:
+    # --- rolling summary ---------------------------------------------------------------------
+    def _summary_path(self):
+        return self._history_path().with_name("chat-summary.txt")
+
+    def _load_summary(self) -> str:
+        try:
+            return self._summary_path().read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+
+    def _store_summary(self, text: str) -> None:
+        try:
+            p = self._summary_path()
+            p.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            p.write_text(text.strip()[:4000], encoding="utf-8")
+        except OSError:
+            pass
+
+    def _summarise(self, dropped: list[dict]) -> None:
+        """Fold the turns about to fall out of context into a running summary.
+
+        Trimming used to just delete them, so anything agreed more than ten messages ago was gone:
+        "book it for the time we said" had nothing to resolve against. The summary is a small
+        amount of text carried in the system slot, and it is the only thing that survives a long
+        conversation.
+        """
+        lines = []
+        for m in dropped:
+            role = m.get("role")
+            content = m.get("content")
+            if role in ("user", "assistant") and isinstance(content, str) and content.strip():
+                lines.append(f"{'User' if role == 'user' else 'Jarvis'}: {content.strip()[:400]}")
+        if not lines:
             return
+
+        prompt = (
+            "You are maintaining a running summary of an ongoing conversation between a user and "
+            "their assistant. Rewrite the summary so it still holds everything that might matter "
+            "later: decisions, commitments, names, numbers, dates, preferences, and anything left "
+            "unfinished. Drop small talk. Write plain sentences, at most 180 words, no preamble.\n\n"
+            f"Summary so far:\n{self.summary or '(nothing yet)'}\n\n"
+            f"New exchanges to fold in:\n" + "\n".join(lines)
+        )
+        try:
+            resp = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+                max_tokens=320,
+            )
+            text = (resp.choices[0].message.content or "").strip()
+        except Exception:  # noqa: BLE001 - losing a summary is better than failing the turn
+            return
+        if text:
+            self.summary = text[:2000]
+            self._store_summary(self.summary)
+
+    def _trim(self) -> list[dict]:
+        """Drop the oldest turns, returning what was removed so it can be summarised.
+
+        Keeps the system message plus a suffix that starts on a clean 'user' turn — splitting a
+        tool_calls/tool pair makes the API reject the next request.
+        """
+        if len(self.messages) <= 14:
+            return []
         keep_from = len(self.messages) - 10
         while keep_from < len(self.messages) and self.messages[keep_from].get("role") != "user":
             keep_from += 1
-        if keep_from < len(self.messages):
-            self.messages = [self.messages[0]] + self.messages[keep_from:]
+        if keep_from >= len(self.messages):
+            return []
+        dropped = self.messages[1:keep_from]
+        self.messages = [self.messages[0]] + self.messages[keep_from:]
+        return dropped
 
     async def send(self, user_text: str) -> str:
         from ..commands import handle
@@ -519,7 +589,9 @@ class GroqAgent:
 
             await asyncio.to_thread(memsearch.record_turn, "jarvis", reply[:600], self.config.vault_path)
         vaultmod.git_autocommit(self.config.vault_path, f"jarvis: memory update {now:%Y-%m-%d %H:%M}")
-        self._trim()
+        dropped = self._trim()
+        if dropped:
+            await asyncio.to_thread(self._summarise, dropped)
         self._save_history()
         return reply or "(no reply)"
 
