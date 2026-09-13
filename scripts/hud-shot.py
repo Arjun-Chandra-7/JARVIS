@@ -54,10 +54,13 @@ def _page(backdrop_css: str, mode: str, state: str, port: str, demo: bool, api_p
     state_js = f'"{state}"' if state else "null"
     energy = {"listening": 0.72, "speaking": 0.55}.get(state, 0.0)
     api_q = f"?port={api_port}" if api_port else ""
+    page = "ambient.html" if mode == "ambient" else "index.html"
     return f"""<!doctype html>
 <meta charset="utf-8">
 <style>
   html, body {{ margin: 0; height: 100%; overflow: hidden; }}
+  html.x ~ * iframe, html.x body iframe {{ inset: 0; left: 0; bottom: 0; translate: none;
+                                            width: 100%; height: 100%; }}
   body {{ {backdrop_css} }}
   /* A little desktop furniture, so the HUD is judged against real content and not empty space. */
   .doc {{ position: absolute; left: 6%; top: 8%; width: 46%; color: #22303c;
@@ -68,7 +71,10 @@ def _page(backdrop_css: str, mode: str, state: str, port: str, demo: bool, api_p
      space it never has, so the frame is sized exactly as Electron sizes the window. */
   iframe {{ position: absolute; left: 50%; bottom: 26px; translate: -50% 0;
             width: {FRAME_W}px; height: {frame_h}px; border: 0; background: transparent; }}
+  /* The ambient layer is its own fullscreen click-through window, so it is shot whole. */
+  body.ambient iframe {{ inset: 0; left: 0; bottom: 0; translate: none; width: 100%; height: 100%; }}
 </style>
+<script>if ("{mode}" === "ambient") document.documentElement.classList.add("x");</script>
 <div class="doc">
   <h1>Composited over real content</h1>
   <p>The overlay window is transparent, so the panels below are judged against whatever happens to
@@ -77,7 +83,7 @@ def _page(backdrop_css: str, mode: str, state: str, port: str, demo: bool, api_p
   <p>backdrop-filter cannot help here — over a transparent window there is no page content behind
   the panel to sample, so depth has to come from the panel itself.</p>
 </div>
-<iframe id="f" src="http://127.0.0.1:{port}/__overlay__/index.html{api_q}"></iframe>
+<iframe id="f" src="http://127.0.0.1:{port}/__overlay__/{page}{api_q}"></iframe>
 <script>
   const f = document.getElementById('f');
   f.addEventListener('load', () => {{
@@ -93,7 +99,8 @@ def _page(backdrop_css: str, mode: str, state: str, port: str, demo: bool, api_p
       // status line, the meter and the reactor together, so bypassing it would photograph a
       // HUD that looks right and does nothing.
       const hud = w.__hud;
-      if (!hud) {{ window.__err = 'renderer did not expose __hud'; return; }}
+      if (!hud) {{ if ('{mode}' !== 'ambient') window.__err = 'renderer did not expose __hud';
+                   d.body.className = '{state}' || 'idle'; window.__ready = true; return; }}
       hud.applyMode('{mode}');
       hud.setState({state_js});
       if ({demo_js}) seedDemo(d, w, hud);
@@ -142,7 +149,7 @@ def _page(backdrop_css: str, mode: str, state: str, port: str, demo: bool, api_p
 async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("out", nargs="?", default="hud.png")
-    ap.add_argument("--mode", default="text", choices=["voice", "text"])
+    ap.add_argument("--mode", default="text", choices=["voice", "text", "ambient"])
     ap.add_argument("--state", default="", choices=["", "listening", "thinking", "speaking", "error"])
     ap.add_argument("--backdrop", default="light", help="light | dark | path to an image")
     ap.add_argument("--width", type=int, default=1600)
