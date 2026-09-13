@@ -374,20 +374,15 @@ async def wipe_history():
     return {"ok": True}
 
 
-# Quick-action chips shown in the HUD. Each maps a label → a prompt sent to the brain.
-_SUGGESTIONS = [
-    {"label": "Catch me up", "icon": "inbox", "say": "What did I miss? Summarise messages, mail and anything important."},
-    {"label": "My agenda", "icon": "calendar", "say": "What's on my calendar today and what's my next meeting?"},
-    {"label": "Read screen", "icon": "eye", "say": "Take a screenshot and tell me what's on my screen."},
-    {"label": "System status", "icon": "activity", "say": "Give me a full system status report."},
-    {"label": "Unread mail", "icon": "mail", "say": "Check my email and summarise anything that needs a reply."},
-    {"label": "Focus mode", "icon": "moon", "say": "I'm going heads-down. Hold non-urgent notifications and cover my messages."},
-]
-
-
 @app.get("/suggestions")
 async def suggestions():
-    return {"suggestions": _SUGGESTIONS}
+    """Quick-action chips, derived from what is actually happening (see jarvis/suggestions.py)."""
+    from . import suggestions as sugg
+
+    try:
+        return {"suggestions": await asyncio.to_thread(sugg.build, CONFIG)}
+    except Exception as exc:  # noqa: BLE001 - chips are a nicety; never fail the HUD over them
+        return {"suggestions": [], "error": str(exc)}
 
 
 @app.get("/stats")
