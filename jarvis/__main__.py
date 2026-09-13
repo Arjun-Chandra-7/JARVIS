@@ -335,6 +335,7 @@ async def _run_daemon() -> None:
     manager.add_battery_monitor()            # local low-battery warnings
     manager.add_resource_monitor()           # hot CPU / low-memory warnings
     manager.add_daily_rollup(23, 30)         # nightly journal digest
+    manager.add_memory_consolidation(3, 15)  # distil episodes into durable facts while idle
     from .routines.monitors import DEFAULT_MONITORS
 
     for mon in DEFAULT_MONITORS:             # proactive condition monitors (e.g. important email)
@@ -403,6 +404,22 @@ def _run_index() -> None:
     print(f"\nDone: {stats}")
     print(f"Store: {store.stats()}")
 
+
+
+def _run_consolidate() -> None:
+    """Run the nightly memory pass immediately and report what it changed."""
+    from .memory import consolidate as memcon
+    from .memory.store import get_store
+
+    store = get_store(CONFIG.vault_path)
+    print(f"store before: {store.stats()}")
+    result = memcon.consolidate(CONFIG)
+    if result.get("skipped"):
+        print(f"skipped: {result['skipped']}  (looked at {result['episodes']} episodes)")
+    else:
+        print(f"read {result['episodes']} episodes -> "
+              f"{result['added']} new facts, {result['superseded']} superseded")
+    print(f"store after:  {store.stats()}")
 
 
 async def _run_whatsapp() -> None:
@@ -573,6 +590,8 @@ def main() -> None:
     parser.add_argument("--phone-test", action="store_true", help="test the KDE Connect phone bridge")
     parser.add_argument("--web", action="store_true", help="launch the WebGL Jarvis HUD in your browser")
     parser.add_argument("--index", action="store_true", help="build the semantic memory index (needs Ollama)")
+    parser.add_argument("--consolidate", action="store_true",
+                        help="distil recent conversation into durable facts, now")
     parser.add_argument("--check", action="store_true", help="preflight: deps, keys, audio devices")
     parser.add_argument("--selftest", action="store_true", help="one live TTS→mic→STT round trip")
     parser.add_argument("--screen-test", action="store_true", help="diagnose screen capture (Wayland/X11)")
@@ -612,6 +631,8 @@ def main() -> None:
             _run_web()
         elif args.index:
             _run_index()
+        elif args.consolidate:
+            _run_consolidate()
         elif args.selftest:
             _voice_selftest()
         elif args.task:
