@@ -189,7 +189,26 @@ class VoiceSession:
             "id": event.get("id"), "repliable": event.get("repliable"),
         }
         if not away_now and notifications_enabled():  # while away, handle silently; muted = no readout
-            self._speak(f"{app} message from {who}. {msg}.")
+            # An incoming message is not urgent enough to talk over a call. Hold it instead —
+            # `catch_up` and the HUD feed still have it, so nothing is lost by waiting.
+            ok, why = self._good_moment()
+            if ok:
+                self._speak(f"{app} message from {who}. {msg}.")
+            else:
+                self.on_event("phone", f"held: {app} from {who} ({why})")
+
+    def _good_moment(self) -> tuple[bool, str]:
+        """Whether Jarvis should speak unprompted right now.
+
+        Only consulted for things Jarvis raises on its own — a direct answer to a spoken question
+        is always delivered, because the user is plainly available if they just asked.
+        """
+        try:
+            from .. import context
+
+            return context.is_interruptible()
+        except Exception:  # noqa: BLE001 - if we can't tell, don't go quiet
+            return True, "context unavailable"
 
     def _emit_level(self, level: float) -> None:
         """Publish mic amplitude to the HUD, rate-limited.
@@ -418,7 +437,11 @@ class VoiceSession:
             )
             alert = parse_alert(out)
             if alert:
-                self._speak(alert)
+                ok, why = self._good_moment()
+                if ok:
+                    self._speak(alert)
+                else:
+                    self.on_event("timing", f"held screen alert ({why}): {alert}")
 
     # --- AFK / welcome-back ---------------------------------------------
     @staticmethod
