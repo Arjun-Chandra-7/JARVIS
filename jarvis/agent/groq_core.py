@@ -14,6 +14,7 @@ import re
 import threading
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Awaitable, Callable, Optional
 
 from ..config import Config
@@ -313,26 +314,84 @@ class GroqAgent:
             "what was just asked; never read this list out.\n" + "\n".join(lines)
         )
 
-    def _complete(self, tools: Optional[list[dict]] = None, memo: str = ""):
-        # `memo` is injected per request and deliberately never stored in self.messages — recalled
-        # text is evidence for one answer, not part of the conversation to be trimmed and re-sent.
-        messages = self.messages
+    def _request_messages(self, memo: str = "") -> list[dict]:
+        # `memo` and the summary are injected per request and deliberately never stored in
+        # self.messages — recalled text is evidence for one answer, not conversation to be
+        # trimmed and re-sent forever.
         extra = []
         if self.summary:
             extra.append({"role": "system",
                           "content": "Earlier in this conversation:\n" + self.summary})
         if memo:
             extra.append({"role": "system", "content": memo})
-        if extra:
-            messages = [messages[0]] + extra + messages[1:]
+        if not extra:
+            return self.messages
+        return [self.messages[0]] + extra + self.messages[1:]
+
+    def _complete(self, tools: Optional[list[dict]] = None, memo: str = ""):
         return self.client.chat.completions.create(
             model=self.model,
-            messages=messages,
+            messages=self._request_messages(memo),
             tools=tools if tools is not None else self.schemas,
             tool_choice="auto",
             temperature=0.4,
             max_tokens=512,
         )
+
+    def _complete_streaming(self, tools, memo: str, on_delta):
+        """Same request, streamed, so text can be shown and spoken as it is produced.
+
+        Returns an object shaped like a non-streamed response so the caller's loop is unchanged.
+        Tool calls cannot be acted on until they are complete, so their deltas are accumulated
+        silently and only `content` is forwarded to `on_delta`.
+        """
+        stream = self.client.chat.completions.create(
+            model=self.model,
+            messages=self._request_messages(memo),
+            tools=tools if tools is not None else self.schemas,
+            tool_choice="auto",
+            temperature=0.4,
+            max_tokens=512,
+            stream=True,
+        )
+
+        content: list[str] = []
+        calls: dict[int, dict] = {}
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            piece = getattr(delta, "content", None)
+            if piece:
+                content.append(piece)
+                if on_delta is not None:
+                    try:
+                        on_delta(piece)
+                    except Exception:  # noqa: BLE001 - a consumer must not break generation
+                        pass
+            for tc in (getattr(delta, "tool_calls", None) or []):
+                slot = calls.setdefault(
+                    tc.index, {"id": None, "name": "", "arguments": ""}
+                )
+                if tc.id:
+                    slot["id"] = tc.id
+                fn = getattr(tc, "function", None)
+                if fn is not None:
+                    if getattr(fn, "name", None):
+                        slot["name"] += fn.name
+                    if getattr(fn, "arguments", None):
+                        slot["arguments"] += fn.arguments
+
+        tool_calls = [
+            SimpleNamespace(
+                id=c["id"] or f"call_{i}",
+                function=SimpleNamespace(name=c["name"], arguments=c["arguments"]),
+            )
+            for i, c in sorted(calls.items())
+            if c["name"]
+        ]
+        message = SimpleNamespace(content="".join(content), tool_calls=tool_calls or None)
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
     # The LinkedIn classifier is a second, blocking LLM round trip. It used to run on every single
     # message — so "what's the weather" paid for a LinkedIn intent check. Gate it on the topic
@@ -472,7 +531,7 @@ class GroqAgent:
         self.messages = [self.messages[0]] + self.messages[keep_from:]
         return dropped
 
-    async def send(self, user_text: str) -> str:
+    async def send(self, user_text: str, on_delta=None) -> str:
         from ..commands import handle
         direct = await handle(user_text, self.config, getattr(self, "command_session", "local"))
         if direct is not None:
@@ -521,7 +580,11 @@ class GroqAgent:
         )
         for _ in range(12):  # bounded tool rounds
             try:
-                resp = await asyncio.to_thread(self._complete, turn_tools, memo)
+                if on_delta is not None:
+                    resp = await asyncio.to_thread(
+                        self._complete_streaming, turn_tools, memo, on_delta)
+                else:
+                    resp = await asyncio.to_thread(self._complete, turn_tools, memo)
             except Exception as exc:  # noqa: BLE001
                 if _is_rate_limit(exc) and not self._on_local and self.config.brain in ("groq", "gemini"):
                     # 1) Groq only: switch to the high-limit fallback model (once)

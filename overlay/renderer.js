@@ -189,19 +189,58 @@ async function send(text) {
   hideResults();
   addMsg("you", text);
   setState("thinking");
+
+  // Stream the reply so words appear as the model writes them. A local 3B model takes a few
+  // seconds for two sentences, and watching nothing happen for all of it makes the assistant
+  // feel far slower than it is. Falls back to the plain endpoint if streaming is unavailable.
+  let bubble = null;
+  let acc = "";
   try {
-    const r = await fetch(API + "/chat", {
+    const r = await fetch(API + "/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: text }),
     });
-    const j = await r.json();
-    addMsg("jarvis", j.reply || "(no reply)");
+    if (!r.ok || !r.body) throw new Error("no stream");
+
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      // SSE frames are separated by a blank line; keep any partial frame in the buffer.
+      const frames = buf.split("\n\n");
+      buf = frames.pop() ?? "";
+      for (const frame of frames) {
+        const line = frame.split("\n").find((l) => l.startsWith("data:"));
+        if (!line) continue;
+        let d; try { d = JSON.parse(line.slice(5).trim()); } catch { continue; }
+        if (d.kind === "delta") {
+          if (!bubble) { bubble = addMsg("jarvis", ""); bubble.classList.add("streaming"); setState("speaking"); }
+          acc += d.text;
+          bubble.innerHTML = `<span class="who">JARVIS</span>${fmt(acc)}`;
+          logEl.scrollTop = logEl.scrollHeight;
+        } else if (d.kind === "final") {
+          acc = d.text || acc;
+          if (!bubble) bubble = addMsg("jarvis", "");
+          bubble.innerHTML = `<span class="who">JARVIS</span>${fmt(acc || "(no reply)")}`;
+          bubble.classList.remove("streaming");
+        }
+      }
+    }
+    if (!bubble) addMsg("jarvis", acc || "(no reply)");
     setState(null);
   } catch {
-    addMsg("sys", "backend offline — it should restart itself; see /tmp/jarvis-web.log");
-    setState("error");
-    setTimeout(() => setState(null), 3000);
+    if (bubble) bubble.classList.remove("streaming");
+    if (!acc) {
+      addMsg("sys", "backend offline — it should restart itself; see /tmp/jarvis-web.log");
+      setState("error");
+      setTimeout(() => setState(null), 3000);
+    } else {
+      setState(null);
+    }
   }
   busy = false;
 }
