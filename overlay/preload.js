@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld("jarvis", {
   setMode: (mode) => ipcRenderer.send("mode", mode),
   setZoom: (f) => ipcRenderer.send("set-zoom", f),
   launchPhone: () => ipcRenderer.send("launch-phone"),
+  hide: () => ipcRenderer.send("hide-all"),
   quit: () => ipcRenderer.send("quit"),
   sportsToggle: (state) => ipcRenderer.send("sports_toggle", state),
   onToast: (cb) => ipcRenderer.on("toast", (_e, msg) => cb(msg)),

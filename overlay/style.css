@@ -1,185 +1,446 @@
-:root { --ink: #eaffff; --dim: #5a97a4; --glass: rgba(7, 16, 23, 0.74); --line: rgba(120, 220, 240, .28); --good:#38f2b0; --bad:#ff6b7f; }
-body.voice { --accent: #37e7ff; --accent2: #bff3ff; --glow: 0 0 26px rgba(55,231,255,.5); }
-body.text  { --accent: #ffc062; --accent2: #ffe6c4; --glow: 0 0 26px rgba(255,192,98,.5); }
-body.listening { --accent: #46f2ff; --accent2: #e6ffff; }
-body.speaking  { --accent: #ffc062; --accent2: #ffe6c4; }
-body.thinking  { --accent: #8f6dff; --accent2: #d9ccff; }
+/* JARVIS HUD — a transparent always-on-top console.
+ *
+ * Three things drove this rewrite:
+ *
+ * 1. `backdrop-filter` was a no-op here. The <html> element is always a backdrop root, and over a
+ *    fully transparent Electron window there is nothing inside the page to sample, so `blur(18px)`
+ *    blurred transparent black and produced nothing. The "glass" was a flat dark rectangle. Depth
+ *    now comes from things that actually composite over a desktop: a layered background (tint +
+ *    top-lit gradient + inner shadow), a 1px gradient rim that is brighter where light would fall,
+ *    and a real drop shadow.
+ *
+ * 2. Nothing loops at constant velocity. Three rings spinning forever at 4s/2.8s/6s is the single
+ *    clearest tell of costume sci-fi — no instrument spins because it is switched on. Motion here
+ *    is either a state transition or a measurement, and the idle state is genuinely still.
+ *
+ * 3. Symmetric `ease` is the motion equivalent of a default font. Transitions use a generated
+ *    `linear()` spring so panels settle with a little overshoot, the way Raycast and the Dynamic
+ *    Island do, and they stay on the compositor because they only touch transform/opacity.
+ *
+ * Progressive enhancement is behind @supports: this is written for the Chromium 128 that Electron
+ * 32 ships, and picks up squircle corners and anchor positioning automatically on a newer runtime.
+ */
+
+/* Registered properties are interpolatable — an unregistered --angle is just a string and cannot
+   be transitioned. This is what lets the perimeter light and the accent colour animate in CSS. */
+@property --angle    { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+@property --accent   { syntax: "<color>"; inherits: true;  initial-value: #37e7ff; }
+@property --accent2  { syntax: "<color>"; inherits: true;  initial-value: #bff3ff; }
+@property --lift     { syntax: "<number>"; inherits: false; initial-value: 0; }
+
+:root {
+  --ink:   #e9fbff;
+  --dim:   #6e93a0;
+  --dimmer:#3f5a64;
+
+  /* The panel ground. Deliberately not pure black: a desktop showing through a slightly blue-black
+     reads as glass, while #000 reads as a hole cut in the screen. */
+  --ground:      rgba(6, 13, 19, 0.80);
+  --ground-lit:  rgba(19, 38, 49, 0.86);
+  --rim:         rgba(126, 214, 236, 0.22);
+  --rim-lit:     rgba(160, 236, 255, 0.55);
+
+  --good: #3ce8a9;
+  --warn: #ffc062;
+  --bad:  #ff6b7f;
+
+  /* A critically-damped spring with a little overshoot, sampled to a linear() easing so it runs
+     on the compositor instead of the main thread — which matters on a laptop already running
+     Whisper, Piper, Ollama and a headless Chrome. */
+  --spring: linear(0, 0.0039 1.2%, 0.0157 2.5%, 0.0625 5%, 0.1407 7.6%, 0.2494 10.3%,
+                   0.4381 14.2%, 0.7924 20.5%, 0.9459 23.8%, 1.0505 27.4%, 1.0968 30.4%,
+                   1.1074 32.3%, 1.0995 34.4%, 1.0483 40%, 1.0006 47.3%, 0.9877 51.5%,
+                   0.9925 57.2%, 1.0016 66.5%, 1.0018 75.6%, 1);
+  --swift: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* State palettes. Each state also carries its own glow so brightness is a signal, not decoration. */
+body.voice     { --accent: #37e7ff; --accent2: #c9f5ff; }
+body.text      { --accent: #ffb84d; --accent2: #ffe7c2; }
+body.listening { --accent: #4df0ff; --accent2: #eaffff; }
+body.thinking  { --accent: #9d7cff; --accent2: #ded2ff; }
+body.speaking  { --accent: #ffb84d; --accent2: #ffe7c2; }
+body.error     { --accent: #ff6b7f; --accent2: #ffd4da; }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { width: 100vw; height: 100vh; overflow: hidden; background: transparent;
-  font-family: "Chakra Petch", system-ui, sans-serif; color: var(--ink); user-select: none; cursor: default; }
-button { font-family: inherit; cursor: pointer; color: inherit; background: none; border: none; }
+
+html, body {
+  width: 100vw; height: 100vh; overflow: hidden;
+  background: transparent;
+  font-family: "Chakra Petch", system-ui, sans-serif;
+  color: var(--ink);
+  user-select: none;
+  cursor: default;
+  /* Chromium renders light-on-dark text too heavy with subpixel AA over a transparent surface. */
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input { font-family: inherit; color: inherit; }
+button { cursor: pointer; background: none; border: none; }
 svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 
-.hud { position: fixed; inset: 0; display: flex; flex-direction: column; justify-content: flex-end; gap: 10px; padding: 6px; }
+.hud {
+  position: fixed; inset: 0;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  gap: 10px; padding: 8px;
+}
 
-/* ---------- expanded panel (text mode only) ---------- */
-.expand { flex: 1; min-height: 0; display: none; flex-direction: column;
-  background: var(--glass); border: 1px solid var(--line); border-radius: 16px; backdrop-filter: blur(18px);
-  box-shadow: var(--glow), inset 0 0 40px rgba(0,0,0,.5); overflow: hidden; animation: slideUp .3s ease; }
-body.text .expand { display: flex; }
-@keyframes slideUp { from { opacity: 0; transform: translateY(20px); } }
-.ehead { display: flex; align-items: center; gap: 14px; padding: 11px 16px;
-  font-family: "Orbitron"; font-size: 11px; letter-spacing: 4px; color: var(--accent); border-bottom: 1px solid var(--line); }
-.ehead > span:first-child { text-shadow: var(--glow); }
-.ehead em { margin-left: auto; font-family: "Chakra Petch"; font-style: normal; letter-spacing: 1px; color: var(--dim); font-size: 11px; }
-.sysdots { display: flex; gap: 6px; }
-.sysdots .d { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); box-shadow: 0 0 6px var(--bad); opacity: .5; transition: .3s; }
-.sysdots .d.on { background: var(--good); box-shadow: 0 0 8px var(--good); opacity: 1; }
+/* ─────────────────────────────────────────────────────────────────────────
+   Conversation panel
+   ───────────────────────────────────────────────────────────────────────── */
+.panel {
+  flex: 1; min-height: 0;
+  display: none; flex-direction: column;
+  border-radius: 18px;
+  overflow: hidden;
+  view-transition-name: panel;
+}
+body.text .panel { display: flex; }
 
-.log { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
-.log::-webkit-scrollbar { width: 4px; } .log::-webkit-scrollbar-thumb { background: var(--dim); border-radius: 4px; }
-.msgline { max-width: 92%; padding: 9px 13px; border-radius: 12px; line-height: 1.45; font-size: 15px; animation: pop .3s ease; }
-@keyframes pop { from { opacity: 0; transform: translateY(6px); } }
-.msgline .who { font-family: "Orbitron"; font-size: 8px; letter-spacing: 2px; opacity: .6; display: block; margin-bottom: 3px; }
-.msgline.you { align-self: flex-end; background: rgba(255,255,255,.08); border: 1px solid var(--line); }
-.msgline.jarvis { align-self: flex-start; background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid var(--line); }
-.msgline.sys { align-self: center; font-size: 12px; color: var(--dim); letter-spacing: 1px; }
-.msgline code { background: rgba(0,0,0,.4); padding: 1px 6px; border-radius: 5px; font-size: 13px; }
-.actions { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
-.act { flex: 1; height: 42px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 10px;
-  color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); transition: .15s; }
-.act svg { width: 20px; height: 20px; }
-.act:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); box-shadow: var(--glow); transform: translateY(-2px); }
-.act:active { transform: scale(.94); }
-.act.on { background: color-mix(in srgb, var(--accent) 30%, transparent); box-shadow: var(--glow); }
+.panel {
+  background:
+    radial-gradient(150% 120% at 8% -10%, var(--ground-lit) 0%, transparent 62%),
+    linear-gradient(180deg, rgba(255,255,255,.035) 0%, transparent 22%),
+    linear-gradient(var(--ground), var(--ground));
+  border: 1px solid var(--rim);
+  box-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 var(--rim-lit),
+    inset 0 -24px 48px -24px rgba(0, 0, 0, 0.7);
+}
 
-/* ---------- console bar (always visible) ---------- */
-.bar { height: 112px; display: flex; align-items: center; gap: 16px; padding: 0 20px;
-  background: var(--glass); border: 1px solid var(--line); border-radius: 22px; backdrop-filter: blur(18px);
-  box-shadow: var(--glow), inset 0 0 40px rgba(0,0,0,.55); position: relative; overflow: hidden; }
-/* breathing top edge that intensifies while listening */
-.bar::before { content: ""; position: absolute; top: 0; left: 8%; right: 8%; height: 2px;
-  background: linear-gradient(90deg, transparent, var(--accent), transparent); opacity: .5; transition: opacity .4s; }
-body.listening .bar::before { opacity: 1; animation: edge 1.4s ease-in-out infinite; }
-@keyframes edge { 50% { opacity: .35; } }
+.phead {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--rim) 70%, transparent);
+}
+/* The wordmark is spaced small caps rather than a sci-fi display face. Orbitron reads as a costume;
+   letterspaced text at low weight reads as an instrument. */
+.wordmark {
+  font-size: 11px; font-weight: 600; letter-spacing: 6px;
+  color: var(--accent);
+  text-shadow: 0 0 18px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.telemetry { margin-left: auto; }
+.brainlabel { font-size: 11px; letter-spacing: 1.2px; color: var(--dim); }
+.ghost {
+  font-size: 10px; letter-spacing: 1.5px; color: var(--dimmer);
+  padding: 4px 8px; border-radius: 6px; transition: color .18s, background .18s;
+}
+.ghost:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
-/* webcam eye (keeps hand-gestures alive) */
-.eye { position: relative; width: 62px; height: 62px; border-radius: 50%; overflow: hidden;
-  border: 1px solid var(--line); box-shadow: inset 0 0 14px rgba(0,0,0,.6), var(--glow); flex: none; }
-.eye video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
-.eye canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-.presence { position: absolute; bottom: 0; left: 0; right: 0; text-align: center; font-size: 11px; font-weight: 600;
-  color: #041016; background: var(--accent); letter-spacing: .5px; padding: 1px 0; opacity: 0; transition: opacity .3s; }
+.sysdots { display: flex; gap: 4px; }
+.sysdots .d {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--bad); opacity: .8;
+  transition: background .3s, opacity .3s, box-shadow .3s;
+}
+.sysdots .d.on { background: color-mix(in srgb, var(--good) 75%, transparent); opacity: .85; box-shadow: none; }
+
+.log {
+  flex: 1; overflow-y: auto; overscroll-behavior: contain;
+  padding: 16px; display: flex; flex-direction: column; gap: 11px;
+  scrollbar-width: thin; scrollbar-color: var(--dimmer) transparent;
+}
+.log::-webkit-scrollbar { width: 4px; }
+.log::-webkit-scrollbar-thumb { background: var(--dimmer); border-radius: 4px; }
+
+.msgline {
+  max-width: 86%; padding: 8px 12px; border-radius: 11px;
+  line-height: 1.45; font-size: 14px;
+  animation: rise .34s var(--swift) both;
+}
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+.msgline .who {
+  font-size: 8px; letter-spacing: 2.2px; font-weight: 600;
+  opacity: .38; display: block; margin-bottom: 3px;
+}
+.msgline.you {
+  align-self: flex-end;
+  background: rgba(255, 255, 255, .07);
+  border: 1px solid color-mix(in srgb, var(--rim) 80%, transparent);
+}
+.msgline.jarvis {
+  align-self: flex-start;
+  background: rgba(255, 255, 255, .045);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-left: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.msgline.sys {
+  align-self: center; font-size: 11.5px; letter-spacing: 1.1px; color: var(--dimmer);
+  background: none; border: none; padding: 2px 0;
+}
+.msgline code {
+  font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12.5px;
+  background: rgba(0, 0, 0, .45); padding: 1px 6px; border-radius: 5px;
+}
+.msgline.streaming::after {                 /* a caret while a reply is still arriving */
+  content: "▍"; color: var(--accent); animation: caret 1s steps(2) infinite;
+}
+@keyframes caret { 50% { opacity: 0; } }
+
+/* ── command-palette results ─────────────────────────────────────────── */
+.results {
+  border-top: 1px solid color-mix(in srgb, var(--rim) 70%, transparent);
+  max-height: 260px; overflow-y: auto; padding: 6px;
+  scrollbar-width: thin; scrollbar-color: var(--dimmer) transparent;
+}
+.result {
+  display: flex; align-items: center; gap: 11px;
+  padding: 9px 11px; border-radius: 9px; cursor: pointer;
+  transition: background .12s;
+}
+.result[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.result .rIcon {
+  width: 22px; height: 22px; display: grid; place-items: center; flex: none;
+  border-radius: 6px; font-size: 12px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+.result .rBody { min-width: 0; flex: 1; }
+.result .rTitle { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.result .rSub { font-size: 10.5px; color: var(--dimmer); letter-spacing: .4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.result .rKind {
+  font-size: 9px; letter-spacing: 1.4px; color: var(--dimmer);
+  border: 1px solid color-mix(in srgb, var(--rim) 70%, transparent);
+  padding: 2px 6px; border-radius: 5px; flex: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Console bar
+   ───────────────────────────────────────────────────────────────────────── */
+.bar {
+  height: 116px; flex: none;
+  display: flex; align-items: center; gap: 18px;
+  padding: 0 22px;
+  border-radius: 24px;
+  position: relative;
+  view-transition-name: bar;
+  background:
+    radial-gradient(160% 240% at 8% -60%, var(--ground-lit) 0%, transparent 62%),
+    linear-gradient(180deg, rgba(255,255,255,.05) 0%, transparent 26%),
+    linear-gradient(var(--ground), var(--ground));
+  border: 1px solid var(--rim);
+  box-shadow:
+    0 22px 60px rgba(0, 0, 0, 0.6),
+    0 3px 10px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 var(--rim-lit),
+    inset 0 -28px 56px -28px rgba(0, 0, 0, 0.75);
+}
+
+/* A perimeter light that sweeps only while Jarvis is listening or working — a rotating conic
+   gradient masked to the border. Registered --angle is what makes this animatable at all. */
+.bar::after {
+  content: ""; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none;
+  padding: 1px;
+  background: conic-gradient(from var(--angle),
+              transparent 0deg, transparent 300deg,
+              color-mix(in srgb, var(--accent) 85%, transparent) 340deg,
+              transparent 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  opacity: 0; transition: opacity .45s var(--swift);
+}
+body.listening .bar::after,
+body.thinking  .bar::after { opacity: 1; animation: sweep 2.6s linear infinite; }
+@keyframes sweep { to { --angle: 360deg; } }
+
+/* ── optics ──────────────────────────────────────────────────────────── */
+.optics {
+  position: relative; width: 60px; height: 60px; flex: none;
+  border-radius: 50%; overflow: hidden;
+  border: 1px solid var(--rim);
+  box-shadow: inset 0 0 16px rgba(0, 0, 0, .65);
+}
+.optics video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+.optics canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.presence {
+  position: absolute; inset: auto 0 0 0; text-align: center;
+  font-size: 10px; font-weight: 700; letter-spacing: .4px;
+  color: #04121a; background: var(--accent);
+  padding: 1px 0; opacity: 0; transition: opacity .3s var(--swift);
+}
 .presence.show { opacity: .95; }
 
-/* the MIC ORB — the hero. scroll or click to switch modes */
-.orb { position: relative; width: 86px; height: 86px; flex: none; display: grid; place-items: center; cursor: pointer; }
-.orb .r { position: absolute; border-radius: 50%; border: 1.5px solid var(--line); }
-.orb .r1 { inset: 0; border-top-color: var(--accent); border-right-color: var(--accent); animation: spin 4s linear infinite; }
-.orb .r2 { inset: 12%; border-bottom-color: var(--accent); animation: spin 2.8s linear infinite reverse; }
-.orb .r3 { inset: 24%; border-left-color: var(--accent); animation: spin 6s linear infinite; }
-.orb .core { position: absolute; inset: 30%; border-radius: 50%;
-  background: radial-gradient(circle, var(--accent2), var(--accent) 60%, transparent 78%);
-  box-shadow: 0 0 22px var(--accent); animation: pulse 2.6s ease-in-out infinite; }
-.orb .mic { position: absolute; width: 26px; height: 26px; color: #041016; z-index: 2; }
-.orb:hover .r1 { animation-duration: 1.6s; }
-@keyframes spin { to { transform: rotate(360deg); } }
-@keyframes pulse { 0%,100% { transform: scale(.86); opacity: .8; } 50% { transform: scale(1.06); opacity: 1; } }
-body.listening .orb .core { animation-duration: .8s; box-shadow: 0 0 40px var(--accent); }
-body.thinking .orb .r1, body.thinking .orb .r2 { animation-duration: .9s; }
-body.speaking .orb .core { animation-duration: 1.1s; }
+/* ── the reactor ─────────────────────────────────────────────────────── */
+.reactor {
+  position: relative; width: 104px; height: 104px; flex: none;
+  display: grid; place-items: center; cursor: pointer;
+  view-transition-name: reactor;
+  transition: scale .4s var(--spring);
+}
+.reactor:hover { scale: 1.045; }
+.reactor:active { scale: .965; transition-duration: .12s; }
+.reactor canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.reactor .mic {
+  position: absolute; width: 22px; height: 22px; z-index: 2;
+  color: #04121a; opacity: .82;
+  transition: opacity .3s;
+}
+body.listening .reactor .mic { opacity: 1; }
 
-/* middle: status (voice) OR text input (text) */
-.mid { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 6px; }
-.statuswrap { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.status { font-size: 17px; letter-spacing: 1px; color: var(--accent2); text-shadow: var(--glow); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* If WebGL is unavailable the canvas draws nothing, so give the orb a CSS body to fall back to. */
+body.no-gl .reactor::before {
+  content: ""; position: absolute; inset: 32%;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--accent2), var(--accent) 62%, transparent 80%);
+  box-shadow: 0 0 26px var(--accent);
+}
+body.no-gl .reactor::after {
+  content: ""; position: absolute; inset: 6%;
+  border-radius: 50%; border: 1.5px solid color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+/* ── middle column ───────────────────────────────────────────────────── */
+.mid { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 8px; }
+
+.statusrow { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.status {
+  /* The label is short and fixed; the meter is the elastic one. Sizing it the other way round
+     let an inflexible canvas squeeze the text to zero width, and the HUD silently stopped saying
+     what it was doing. */
+  flex: 0 0 auto;
+  font-size: 16px; letter-spacing: .6px; color: var(--accent2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  text-shadow: 0 0 20px color-mix(in srgb, var(--accent) 45%, transparent);
+}
 .status .cue { color: var(--accent); font-weight: 600; }
-.wave { width: 150px; height: 26px; opacity: 0; transition: opacity .3s; flex: none; }
-body.listening .wave, body.speaking .wave { opacity: .9; }
-body.text .statuswrap { display: none; }
-.msg { display: none; width: 100%; background: rgba(0,0,0,.4); border: 1px solid var(--line); border-radius: 12px;
-  color: var(--ink); font-family: inherit; font-size: 16px; padding: 12px 15px; outline: none; transition: .2s; }
-.msg::placeholder { color: var(--dim); }
-.msg:focus { border-color: var(--accent); box-shadow: var(--glow); }
-body.text .msg { display: block; }
+.meter {
+  flex: 1 1 auto; min-width: 0; height: 30px;
+  opacity: 0; transition: opacity .35s var(--swift);
+}
+body.listening .meter, body.speaking .meter { opacity: 1; }
+body.text .statusrow { display: none; }
 
-.rightcol { flex: none; text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
-.clock { font-family: "Orbitron"; font-weight: 700; font-size: 22px; color: var(--accent2); text-shadow: var(--glow); }
-.mini { font-size: 11px; letter-spacing: 1px; color: var(--dim); white-space: nowrap; }
+.inputrow { display: none; align-items: center; gap: 10px; }
+body.text .inputrow { display: flex; }
+.msg {
+  flex: 1; min-width: 0;
+  background: rgba(0, 0, 0, .42);
+  border: 1px solid var(--rim);
+  border-radius: 13px;
+  font-size: 15px; padding: 12px 15px; outline: none;
+  transition: border-color .22s, box-shadow .22s, background .22s;
+}
+.msg::placeholder { color: var(--dimmer); }
+.msg:focus {
+  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  background: rgba(0, 0, 0, .55);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.hint {
+  font-family: "JetBrains Mono", monospace; font-size: 10px;
+  color: var(--dimmer); border: 1px solid var(--rim);
+  border-radius: 5px; padding: 3px 7px; flex: none;
+}
 
-.toast { position: fixed; bottom: 150px; left: 50%; transform: translateX(-50%) translateY(10px);
-  background: var(--glass); border: 1px solid var(--accent); color: var(--accent2); padding: 10px 20px; border-radius: 10px;
-  font-size: 14px; letter-spacing: 1px; opacity: 0; transition: .3s; pointer-events: none; backdrop-filter: blur(12px); }
-.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+/* ── right column ────────────────────────────────────────────────────── */
+.right { flex: none; display: flex; flex-direction: column; align-items: flex-end; justify-content: center; }
+.clock {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 23px; font-weight: 500; letter-spacing: -0.5px;
+  color: var(--accent2);
+  /* Tabular figures stop the clock jittering as digits change width. */
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 22px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.telemetry { display: flex; gap: 10px; font-size: 10px; letter-spacing: .8px; color: var(--dim); }
+.telemetry .t { display: flex; align-items: baseline; gap: 3px; font-variant-numeric: tabular-nums; }
+.telemetry .t b { font-weight: 500; color: var(--ink); }
+.telemetry .t.hot b { color: var(--warn); }
+.telemetry .t.crit b { color: var(--bad); }
 
-/* Spotify Widget */
-.spotify-widget {
-  position: fixed;
-  bottom: 80px;
-  right: 20px;
-  width: 320px;
-  background: #0a0f19;
-  border: 1px solid rgba(55, 231, 255, 0.3);
-  border-radius: 12px;
-  display: flex;
-  padding: 12px;
-  gap: 12px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-  backdrop-filter: blur(10px);
-  opacity: 0;
-  transform: translateY(20px);
-  transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
-  pointer-events: none;
+/* ─────────────────────────────────────────────────────────────────────────
+   Action panel (top layer, light dismiss, focus returns to the invoker)
+   ───────────────────────────────────────────────────────────────────────── */
+.actionpanel {
+  position: fixed; inset: auto auto 150px 50%;
+  translate: -50% 0;
+  width: 330px; padding: 7px;
+  border: 1px solid var(--rim); border-radius: 15px;
+  background:
+    radial-gradient(120% 140% at 12% -20%, var(--ground-lit) 0%, transparent 55%),
+    linear-gradient(var(--ground), var(--ground));
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .65), inset 0 1px 0 var(--rim-lit);
+  color: var(--ink);
+  opacity: 0; translate: -50% 10px;
+  transition: opacity .26s var(--swift), translate .3s var(--spring), overlay .3s allow-discrete,
+              display .3s allow-discrete;
 }
-.spotify-widget.show {
-  opacity: 1;
-  transform: translateY(0);
-  pointer-events: all;
+.actionpanel:popover-open { opacity: 1; translate: -50% 0; }
+@starting-style { .actionpanel:popover-open { opacity: 0; translate: -50% 10px; } }
+.actionpanel::backdrop { background: transparent; }
+.apHead {
+  font-size: 9px; letter-spacing: 2.4px; color: var(--dimmer);
+  padding: 7px 10px 9px;
 }
-.spotify-widget img {
-  width: 80px;
-  height: 80px;
-  border-radius: 8px;
-  object-fit: cover;
+.apList { display: flex; flex-direction: column; gap: 2px; }
+.apItem {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 11px; border-radius: 9px; font-size: 13.5px; text-align: left; width: 100%;
+  transition: background .12s;
 }
-.sp-info {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  min-width: 0;
+.apItem[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.apItem .k {
+  margin-left: auto; font-family: "JetBrains Mono", monospace; font-size: 10px; color: var(--dimmer);
 }
-.sp-title {
-  font-family: 'Orbitron', sans-serif;
-  font-size: 14px;
-  font-weight: 600;
-  color: #fff;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+
+/* ── toast ───────────────────────────────────────────────────────────── */
+.toast {
+  position: fixed; bottom: 152px; left: 50%;
+  translate: -50% 12px;
+  padding: 11px 20px; border-radius: 11px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  background: linear-gradient(var(--ground), var(--ground));
+  box-shadow: 0 16px 40px rgba(0, 0, 0, .6), inset 0 1px 0 var(--rim-lit);
+  color: var(--accent2); font-size: 13.5px; letter-spacing: .6px;
+  opacity: 0; pointer-events: none;
+  transition: opacity .28s var(--swift), translate .34s var(--spring);
 }
-.sp-artist {
-  font-size: 12px;
-  color: #aaa;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.toast.show { opacity: 1; translate: -50% 0; }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   View transitions — the orb physically travels into the panel header on a
+   mode switch instead of one element vanishing and another appearing.
+   ───────────────────────────────────────────────────────────────────────── */
+::view-transition-group(reactor),
+::view-transition-group(bar),
+::view-transition-group(panel) { animation-duration: .42s; animation-timing-function: var(--swift); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
 }
-.sp-lyric {
-  font-size: 13px;
-  color: var(--accent);
-  margin-top: 4px;
-  min-height: 18px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-style: italic;
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Progressive enhancement — picked up automatically on Chromium 148+
+   (Electron 42). Written so nothing here is required for the design to work.
+   ───────────────────────────────────────────────────────────────────────── */
+@supports (corner-shape: squircle) {
+  /* Continuous curvature. Per corner the difference is subtle; across a whole panel it is the
+     gap between "rounded rectangle" and "designed object". */
+  .bar    { corner-shape: squircle; }
+  .panel  { corner-shape: squircle; }
+  .actionpanel { corner-shape: squircle; }
+  .msg    { corner-shape: squircle; }
 }
-.sp-controls {
-  display: flex;
-  gap: 10px;
-  margin-top: 8px;
+
+@supports (interpolate-size: allow-keywords) {
+  :root { interpolate-size: allow-keywords; }
+  .results { transition: height .3s var(--swift); }
 }
-.sp-controls button {
-  background: none;
-  border: none;
-  color: #fff;
-  font-size: 16px;
-  cursor: pointer;
-  padding: 0;
-  transition: color 0.2s;
-}
-.sp-controls button:hover {
-  color: var(--accent);
+
+@supports (anchor-name: --orb) {
+  .reactor { anchor-name: --orb; }
+  .actionpanel {
+    position-anchor: --orb;
+    position-area: top center;
+    inset: auto; translate: 0 -12px;
+    margin-bottom: 12px;
+  }
+  .actionpanel:popover-open { translate: 0 -12px; }
+  @starting-style { .actionpanel:popover-open { translate: 0 0; } }
 }
