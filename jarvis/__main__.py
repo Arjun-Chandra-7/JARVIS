@@ -214,6 +214,9 @@ def _preflight() -> None:
         for item in missing:
             print("   -", item)
 
+    from .audio import neural_vad
+    print(f"  speech detection: {neural_vad.describe()}")
+
     print("\ninput devices:")
     try:
         from .audio.mic import Microphone

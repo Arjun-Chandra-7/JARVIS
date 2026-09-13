@@ -206,10 +206,21 @@ class VoiceSession:
         norm = min(1.0, level / max(1.0, self.threshold * 2.2))
         self.on_event("level", f"{norm:.3f}")
 
+    def _speech_fn(self):
+        """The speech test for this session, built once and reset per utterance."""
+        if getattr(self, "_speech_pair", None) is None:
+            fn, reset, label = vad.speech_detector(self.threshold, self.sample_rate)
+            self._speech_pair = (fn, reset)
+            self.on_event("loading", f"voice activity detection: {label}")
+        return self._speech_pair
+
     def _record_transcript(self, wait_s: float) -> Optional[str]:
+        speech_fn, reset = self._speech_fn()
+        reset()
         pcm = vad.record_utterance(
             self.mic.read,
             on_level=self._emit_level,
+            speech_fn=speech_fn,
             sample_rate=self.sample_rate,
             frame_length=self.frame_length,
             threshold=self.threshold,
