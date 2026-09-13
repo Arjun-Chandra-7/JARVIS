@@ -85,12 +85,45 @@ def available(config) -> str | None:
     return "gemini" if config.gemini_api_key else None
 
 
+#  A short, pointed question is exactly what moondream is worst at. Asked "What application is
+#  open?" against a screenshot of VS Code it replied "xtr"; asked to describe the same image it
+#  produced an accurate paragraph naming the code editor. It is a captioner, not a VQA model at
+#  this size, so the division of labour is: the vision model describes, the language model answers.
+_MIN_USEFUL = 40
+
+
+def _looks_degenerate(text: Optional[str]) -> bool:
+    if not text:
+        return True
+    t = text.strip()
+    return len(t) < _MIN_USEFUL or t.startswith("(vision error")
+
+
 def describe(path: str, question: str, config) -> Optional[str]:
-    """Return a text description/answer about the image, or None if no vision backend is set up."""
-    q = question or _DEFAULT_Q
+    """Return a text description/answer about the image, or None if no vision backend is set up.
+
+    Gemini handles a direct question well and gets it verbatim. The local model is asked to
+    describe the image first; only if that succeeds is the user's question appended, and a
+    degenerate answer falls back to the description, which the brain can still reason over.
+    """
     prov = available(config)
-    if prov == "ollama":
-        return _ollama(path, q, config.ollama_vision_model)
     if prov == "gemini":
-        return _gemini(path, q, config.gemini_api_key)
-    return None
+        return _gemini(path, question or _DEFAULT_Q, config.gemini_api_key)
+    if prov != "ollama":
+        return None
+
+    model = config.ollama_vision_model
+    if not question:
+        return _ollama(path, _DEFAULT_Q, model)
+
+    # Ask the pointed question, but only trust a substantive answer.
+    focused = _ollama(path, f"{_DEFAULT_Q}\n\nPay particular attention to: {question}", model)
+    if not _looks_degenerate(focused):
+        return focused
+    described = _ollama(path, _DEFAULT_Q, model)
+    if _looks_degenerate(described):
+        return focused or described
+    return (
+        f"{described}\n\n(The screen description above is from a small local vision model; "
+        f"answer the user's question — \"{question}\" — from it.)"
+    )
