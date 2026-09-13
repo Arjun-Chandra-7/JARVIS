@@ -135,24 +135,9 @@ def audit_http(port: str) -> None:
 
 
 # --------------------------------------------------------------------------- brain + tools
-# Anything that messages a person, changes a setting, moves the pointer, spends money or opens a
-# window. Listed explicitly so the report says "not verified" instead of quietly passing.
-SIDE_EFFECTS = {
-    "run_bash", "write_file", "whatsapp_send", "message_person", "place_call", "instagram_dms",
-    "set_away", "set_available", "set_volume", "media_control", "set_brightness", "lock_screen",
-    "suspend_computer", "do_not_disturb", "open_url", "launch_app", "mouse_move", "mouse_click",
-    "type_text", "press_keys", "scroll_page", "find_and_click", "google_email_send",
-    "google_calendar_create", "google_tasks_add", "google_tasks_complete", "trigger_automation",
-    "remember_automation", "remember_contact", "remember_device", "set_timer", "set_reminder",
-    "phone_mirror", "phone_ring", "code_with_antigravity", "enable_full_laptop_autonomy",
-    "control_laptop_full", "start_pa_daemon", "stop_pa_daemon", "set_pa_status", "add_user_schedule",
-    "process_incoming_communication", "join_meet_and_take_notes", "stop_meet_notes",
-    "toggle_sports_widget", "screen_share_start", "screen_share_stop", "deep_research",
-    "whatsapp_scan", "linkedin_open_profile", "linkedin_open_console", "linkedin_approve_draft",
-    "linkedin_delete_scheduled", "linkedin_capture_idea", "linkedin_networking",
-    "linkedin_top_ideas", "linkedin_pending_drafts", "linkedin_read_draft", "linkedin_stats",
-    "capture_screen", "analyze_image", "log_activity", "catch_up", "read_project", "web_fetch",
-}
+# Which tools have side effects is declared on the tool itself (jarvis/tools/base.py) and read
+# from the registry below — this used to be a hand-copied set here, and it had already drifted:
+# two names that were no longer tools, and two tools listed nowhere at all.
 
 # Read-only tools worth actually calling, with arguments that are safe anywhere.
 SAFE_CALLS = {
@@ -185,8 +170,11 @@ def audit_tools() -> None:
     from jarvis.agent.groq_tools import build_registry
 
     section("Agent tools")
+    from jarvis.agent.groq_tools import side_effect_tools
+
     schemas, dispatch = build_registry(CONFIG, JobRunner(CONFIG), None)
     names = [s["function"]["name"] for s in schemas]
+    side_effects = side_effect_tools()
     record("tools", "registry", OK, f"{len(names)} tools registered")
 
     missing_desc = [n for n, s in zip(names, schemas) if not s["function"].get("description")]
@@ -210,7 +198,7 @@ def audit_tools() -> None:
             stale = "expired" in low or "not connected" in low or "isn't connected" in low
             record("tools", name, FAIL if bad else (WARN if stale else OK),
                    f"{ms}ms · {out.replace(chr(10), ' ')[:80]}")
-        elif name in SIDE_EFFECTS:
+        elif name in side_effects:
             record("tools", name, SKIP, "not called (side effects)")
         else:
             record("tools", name, SKIP, "no safe arguments defined")

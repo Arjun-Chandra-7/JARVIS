@@ -20,7 +20,7 @@ from typing import Any, Awaitable, Callable, Optional
 from ..config import Config
 from ..jobs.runner import JobRunner
 from ..memory import vault as vaultmod
-from .groq_tools import build_registry
+from .groq_tools import build_registry, parallel_safe_tools
 
 ToolCallback = Callable[[str, str], None]
 ConfirmCallback = Callable[[str], Awaitable[bool]]
@@ -150,18 +150,6 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
-# Tools that only read state can safely run at the same time. Anything that sends a message, moves
-# the mouse, writes a file or changes a setting stays strictly sequential and in the model's order.
-_PARALLEL_SAFE = frozenset({
-    "read_file", "list_dir", "web_search", "web_fetch", "recall", "system_stats", "capture_screen",
-    "analyze_image", "read_project", "whatsapp_inbox", "instagram_dms", "find_contact",
-    "contact_context", "conversation_search", "wifi_scan", "bluetooth_scan", "who_is_around",
-    "google_agenda", "google_email_check", "google_email_read", "google_tasks_list",
-    "list_automations", "check_coding_tasks", "check_pa_status", "get_activity_recordings",
-    "read_clipboard", "linkedin_stats", "linkedin_pending_drafts", "linkedin_read_draft",
-})
-
-
 def _is_rate_limit(exc: Exception) -> bool:
     if getattr(exc, "status_code", None) == 429:
         return True
@@ -219,6 +207,9 @@ class GroqAgent:
         # send FULL descriptions for a short, retrieved menu (see agent/tool_router.py).
         from .tool_router import ToolRouter, enabled as _router_enabled
 
+        # Which tools may run concurrently is declared on the tools themselves; asking the
+        # registry means this can never drift from the definitions the way a local set did.
+        self._parallel_safe = parallel_safe_tools()
         self._router_on = _router_enabled()
         self.router = ToolRouter(self.schemas, k=_int_env("JARVIS_TOOL_K", 14))
         self._recent_tools: list[str] = []
@@ -694,7 +685,7 @@ class GroqAgent:
 
         for tid, name, args in triples:
             self.on_tool(name, ", ".join(f"{k}={v}" for k, v in list(args.items())[:2]))
-            if name in _PARALLEL_SAFE:
+            if name in self._parallel_safe:
                 batch.append((tid, name, args))
                 continue
             await flush()                      # keep ordering: reads before this write land first
