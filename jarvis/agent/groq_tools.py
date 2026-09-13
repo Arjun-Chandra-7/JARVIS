@@ -186,6 +186,15 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         v.journal_append(config.vault_path, a.get("note", ""))
         return "logged."
 
+    @tool("what_am_i_doing",
+          "What the user is doing right now: focused window, open apps, whether they are away "
+          "from the keyboard, whether a call is holding the screen awake, and what is playing. "
+          "Use this before assuming what they are working on, and to decide whether to interrupt.",
+          {})
+    async def what_am_i_doing(a):
+        from .. import context
+        return context.describe()
+
     @tool("system_stats", "Machine health: CPU/mem/GPU/disk/battery/temps.", {})
     async def system_stats(a):
         from ..integrations import system_stats as s

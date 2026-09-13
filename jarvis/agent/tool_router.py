@@ -47,6 +47,7 @@ CORE_TOOLS = (
 # Hand-written cues for tools whose wording doesn't match how people actually ask. Pure bonus
 # signal — a miss here costs nothing, it just falls back to the description text.
 SYNONYMS: dict[str, str] = {
+    "what_am_i_doing": "what am i doing right now what is on my screen which app am i in am i busy focused window open windows what is playing am i away",
     "system_stats": "cpu usage ram memory gpu temperature battery disk load health machine hot slow",
     "capture_screen": "look at my screen see what i am doing read this screenshot what is on screen",
     "recall": "remember memory you told me earlier note vault what do you know about",

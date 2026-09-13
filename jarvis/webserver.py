@@ -404,6 +404,21 @@ async def weather():
     return {"weather": hud_state.weather()}
 
 
+@app.get("/context")
+async def context_now():
+    """What the user is doing — focused window, apps, attention, media."""
+    from . import context as ctx
+
+    try:
+        snap = await asyncio.to_thread(ctx.snapshot)
+        snap["summary"] = ctx.describe()
+        ok, why = ctx.is_interruptible()
+        snap["interruptible"] = {"ok": ok, "why": why}
+        return snap
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
+
+
 @app.get("/nearby")
 async def nearby():
     from . import nearby as _nb
