@@ -1,0 +1,6 @@
+# Timers and reminders. `{seconds:duration}` accepts "ten minutes", "1 hour 30", "90 seconds".
+[set_timer]
+[set|start|put] a timer for {seconds:duration}
+[set|start] {seconds:duration} timer
+timer for {seconds:duration}
+wake me [up] in {seconds:duration}

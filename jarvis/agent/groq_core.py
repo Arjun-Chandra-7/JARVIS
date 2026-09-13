@@ -210,6 +210,13 @@ class GroqAgent:
         # Which tools may run concurrently is declared on the tools themselves; asking the
         # registry means this can never drift from the definitions the way a local set did.
         self._parallel_safe = parallel_safe_tools()
+        # Deterministic command matching in front of the model (jarvis/intents/).
+        try:
+            from ..intents import IntentRouter, live_slots
+
+            self._intents = IntentRouter(slots=live_slots(config))
+        except Exception:  # noqa: BLE001 - the fast path is an optimisation, never a requirement
+            self._intents = None
         self._router_on = _router_enabled()
         self.router = ToolRouter(self.schemas, k=_int_env("JARVIS_TOOL_K", 14))
         self._recent_tools: list[str] = []
@@ -275,6 +282,34 @@ class GroqAgent:
             return self.router.select(user_text, extra=self._recent_tools)
         except Exception:  # noqa: BLE001 - retrieval is an optimisation, never a hard dependency
             return self.schemas
+
+    async def _try_intent(self, user_text: str) -> Optional[str]:
+        """Resolve a rote command directly, or None to let the model handle it.
+
+        The tool result is returned verbatim. These tools already answer in a sentence ("done.",
+        "Timer set for 10 minutes."), and paraphrasing them through the model would give back the
+        latency this exists to remove.
+        """
+        try:
+            if self._intents is None:
+                return None
+            hit = self._intents.resolve(user_text)
+            if hit is None:
+                return None
+            self.on_tool(hit.tool, "intent: " + hit.template)
+            result = str(await self.dispatch(hit.tool, hit.args))
+        except Exception:  # noqa: BLE001 - a shortcut that fails must defer, never break the turn
+            return None
+        # An unknown tool means the .intent file names something that no longer exists; fall
+        # through to the model rather than telling the user about our own misconfiguration.
+        if result.startswith("unknown tool:") or result.startswith("tool error"):
+            return None
+        from ..memory import search as memsearch
+
+        clean = user_text.strip()[:140]
+        await asyncio.to_thread(memsearch.record_turn, "you", clean, self.config.vault_path)
+        await asyncio.to_thread(memsearch.record_turn, "jarvis", result[:600], self.config.vault_path)
+        return result
 
     def _recall_context(self, user_text: str, k: int = 4) -> str:
         """Memory that looks relevant to this turn, as a short block to put in front of the model.
@@ -527,6 +562,14 @@ class GroqAgent:
         direct = await handle(user_text, self.config, getattr(self, "command_session", "local"))
         if direct is not None:
             return direct
+
+        # Rote commands never reach the model. "set a timer for ten minutes" is a regex match and
+        # a function call — tens of microseconds — where the model path costs a retrieval, a tool
+        # round trip and a sentence written about the result. A miss falls straight through, so
+        # the model stays the general case and this is only ever a shortcut.
+        fast = await self._try_intent(user_text)
+        if fast is not None:
+            return fast
         # episodic journal — the human-readable daily note, plus the searchable episode store
         clean = " ".join(l for l in user_text.splitlines() if not l.strip().startswith("["))[:140].strip()
         if clean:

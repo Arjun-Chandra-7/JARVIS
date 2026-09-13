@@ -1,0 +1,20 @@
+# Volume, brightness, media and power. These are the highest-frequency spoken commands.
+[set_volume]
+[set|turn] [the] volume [to] {percent:percent} [percent]
+volume {percent:percent} [percent]
+
+[media_control]
+{action} the music
+{action} the song
+
+[lock_screen]
+lock [the] [screen|computer|laptop]
+lock it
+
+[set_brightness]
+[set|turn] [the] brightness [to] {percent:percent} [percent]
+brightness {percent:percent} [percent]
+
+[system_stats]
+[system|machine] [status|stats|health]
+how [is|are] [the] [system|machine|laptop] doing

@@ -1,0 +1,12 @@
+# Situational questions that have a deterministic answer.
+[what_am_i_doing]
+what am i [doing|working on] [right now]
+what [am i|have i] got open
+
+[who_is_around]
+who [is|s] [around|nearby|here] [right now]
+is anyone [around|nearby|here]
+
+[whatsapp_inbox]
+[any] [new|unread] [whatsapp] messages
+who [has] messaged me
