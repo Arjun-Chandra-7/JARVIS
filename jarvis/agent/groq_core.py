@@ -283,10 +283,44 @@ class GroqAgent:
         except Exception:  # noqa: BLE001 - retrieval is an optimisation, never a hard dependency
             return self.schemas
 
-    def _complete(self, tools: Optional[list[dict]] = None):
+    def _recall_context(self, user_text: str, k: int = 4) -> str:
+        """Memory that looks relevant to this turn, as a short block to put in front of the model.
+
+        Waiting for the model to call `recall` never worked: a 3B model almost never decides to,
+        so Jarvis "forgot" things that were sitting in the vault. Retrieval is cheap and the store
+        already ranks well, so we just always look, and let the model ignore what it doesn't need.
+        """
+        try:
+            from ..memory import search as memsearch
+            from ..memory.store import get_store
+
+            hits = get_store(self.config.vault_path).search(
+                user_text, k=k, embed=memsearch._embedder()
+            )
+        except Exception:  # noqa: BLE001 - memory is an enhancement, never a hard dependency
+            return ""
+        lines = []
+        for h in hits:
+            where = {"episode": f"said earlier by {h['ref']}", "fact": "you told me"}.get(
+                h["kind"], h["ref"]
+            )
+            lines.append(f"- ({where}) {' '.join(h['text'].split())[:280]}")
+        if not lines:
+            return ""
+        return (
+            "Possibly relevant things you already know. Use them only if they actually bear on "
+            "what was just asked; never read this list out.\n" + "\n".join(lines)
+        )
+
+    def _complete(self, tools: Optional[list[dict]] = None, memo: str = ""):
+        # `memo` is injected per request and deliberately never stored in self.messages — recalled
+        # text is evidence for one answer, not part of the conversation to be trimmed and re-sent.
+        messages = self.messages
+        if memo:
+            messages = [messages[0], {"role": "system", "content": memo}] + messages[1:]
         return self.client.chat.completions.create(
             model=self.model,
-            messages=self.messages,
+            messages=messages,
             tools=tools if tools is not None else self.schemas,
             tool_choice="auto",
             temperature=0.4,
@@ -409,10 +443,15 @@ class GroqAgent:
         reply = ""
         linkedin_executed = False
         rl_waits = 0  # how many times we've waited out a rate-limit this turn
-        turn_tools = await asyncio.to_thread(self._tools_for, user_text)
+        # Tool retrieval and memory retrieval are independent lookups against the same embedder;
+        # run them together so the turn pays for one round trip, not two.
+        turn_tools, memo = await asyncio.gather(
+            asyncio.to_thread(self._tools_for, user_text),
+            asyncio.to_thread(self._recall_context, user_text),
+        )
         for _ in range(12):  # bounded tool rounds
             try:
-                resp = await asyncio.to_thread(self._complete, turn_tools)
+                resp = await asyncio.to_thread(self._complete, turn_tools, memo)
             except Exception as exc:  # noqa: BLE001
                 if _is_rate_limit(exc) and not self._on_local and self.config.brain in ("groq", "gemini"):
                     # 1) Groq only: switch to the high-limit fallback model (once)
