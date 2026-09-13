@@ -136,8 +136,18 @@ def _voice_health() -> dict:
 
 
 def _google_health() -> dict:
-    ok = CONFIG.google_token_file.exists()
-    return {"name": "Google", "label": "linked" if ok else "not linked", "ok": ok}
+    """A token file on disk is not the same as a working session — Testing-mode OAuth apps expire
+    their refresh token weekly, and the old check reported a green light for a dead credential."""
+    if not CONFIG.google_token_file.exists():
+        return {"name": "Google", "label": "not linked", "ok": False}
+    try:
+        from .integrations.google.auth import load_credentials
+
+        if load_credentials(CONFIG) is not None:
+            return {"name": "Google", "label": "linked", "ok": True}
+        return {"name": "Google", "label": "sign-in expired · --google-auth", "ok": False}
+    except Exception:  # noqa: BLE001 - google libs optional; fall back to the file check
+        return {"name": "Google", "label": "linked", "ok": True}
 
 
 def _phone_health() -> dict:

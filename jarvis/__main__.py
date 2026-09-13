@@ -79,7 +79,8 @@ def _voice_event(kind: str, text: str = "") -> None:
         "phone": f"  📱 {text}",
         "sleep": "  (back to sleep — say the wake word again)\n",
     }
-    print(labels.get(kind, f"  {kind} {text}"))
+    if kind != "level":   # ~15/s of mic amplitude — for the HUD's meter, not the console
+        print(labels.get(kind, f"  {kind} {text}"))
     _push_to_hud(kind, text)
 
 
@@ -213,6 +214,9 @@ def _preflight() -> None:
         for item in missing:
             print("   -", item)
 
+    from .audio import neural_vad
+    print(f"  speech detection: {neural_vad.describe()}")
+
     print("\ninput devices:")
     try:
         from .audio.mic import Microphone
@@ -331,6 +335,7 @@ async def _run_daemon() -> None:
     manager.add_battery_monitor()            # local low-battery warnings
     manager.add_resource_monitor()           # hot CPU / low-memory warnings
     manager.add_daily_rollup(23, 30)         # nightly journal digest
+    manager.add_memory_consolidation(3, 15)  # distil episodes into durable facts while idle
     from .routines.monitors import DEFAULT_MONITORS
 
     for mon in DEFAULT_MONITORS:             # proactive condition monitors (e.g. important email)
@@ -379,20 +384,50 @@ async def _run_meeting() -> None:
 
 
 def _run_index() -> None:
-    from .memory.embeddings import available
-    from .memory.index import VaultIndex
+    """Rebuild the hybrid memory index over the vault (keyword always, vectors if Ollama can)."""
+    from .memory.search import _embedder
+    from .memory.store import get_store
 
-    if not available():
-        print("Ollama isn't running. Install https://ollama.com and run:")
-        print("  ollama pull nomic-embed-text")
-        print("…then retry. (Semantic search is optional; keyword recall works without it.)")
-        return
-    print("Building semantic index over the vault…")
-    stats = VaultIndex(CONFIG.vault_path).build(
-        progress=lambda path, n: print(f"  {n} chunks indexed ({path})", end="\r")
+    store = get_store(CONFIG.vault_path)
+    embed = _embedder()
+    if embed is None:
+        # Keyword recall still works, so this is a warning rather than a refusal — but say exactly
+        # what is missing, because a running Ollama without the embed model pulled looks healthy
+        # from the outside and silently produced an empty semantic index for a long time.
+        print("No embedding model — indexing keyword-only. For semantic recall:")
+        print("  ollama serve   &&   ollama pull nomic-embed-text")
+    print(f"Indexing {CONFIG.vault_path} → {store.path}")
+    stats = store.sync_vault(
+        CONFIG.vault_path, embed=embed,
+        progress=lambda path, n: print(f"  {n} chunks ({path})", end="\r"),
     )
     print(f"\nDone: {stats}")
+    print(f"Store: {store.stats()}")
 
+    # The flat JSON index this replaced is dead weight once the store exists — a few megabytes of
+    # duplicated vectors that nothing reads. Clean it up rather than leaving it to confuse.
+    legacy = CONFIG.vault_path / ".jarvis" / "semindex.json"
+    if legacy.exists():
+        size_kb = legacy.stat().st_size / 1024
+        legacy.unlink()
+        print(f"Removed the old flat index ({size_kb:.0f} KB) — superseded by memory.db")
+
+
+
+def _run_consolidate() -> None:
+    """Run the nightly memory pass immediately and report what it changed."""
+    from .memory import consolidate as memcon
+    from .memory.store import get_store
+
+    store = get_store(CONFIG.vault_path)
+    print(f"store before: {store.stats()}")
+    result = memcon.consolidate(CONFIG)
+    if result.get("skipped"):
+        print(f"skipped: {result['skipped']}  (looked at {result['episodes']} episodes)")
+    else:
+        print(f"read {result['episodes']} episodes -> "
+              f"{result['added']} new facts, {result['superseded']} superseded")
+    print(f"store after:  {store.stats()}")
 
 
 async def _run_whatsapp() -> None:
@@ -562,7 +597,9 @@ def main() -> None:
     parser.add_argument("--google-auth", action="store_true", help="one-time Google (Calendar/Gmail/Tasks) auth")
     parser.add_argument("--phone-test", action="store_true", help="test the KDE Connect phone bridge")
     parser.add_argument("--web", action="store_true", help="launch the WebGL Jarvis HUD in your browser")
-    parser.add_argument("--index", action="store_true", help="build the semantic memory index (needs Ollama)")
+    parser.add_argument("--index", action="store_true", help="rebuild the memory index over the vault")
+    parser.add_argument("--consolidate", action="store_true",
+                        help="distil recent conversation into durable facts, now")
     parser.add_argument("--check", action="store_true", help="preflight: deps, keys, audio devices")
     parser.add_argument("--selftest", action="store_true", help="one live TTS→mic→STT round trip")
     parser.add_argument("--screen-test", action="store_true", help="diagnose screen capture (Wayland/X11)")
@@ -602,6 +639,8 @@ def main() -> None:
             _run_web()
         elif args.index:
             _run_index()
+        elif args.consolidate:
+            _run_consolidate()
         elif args.selftest:
             _voice_selftest()
         elif args.task:

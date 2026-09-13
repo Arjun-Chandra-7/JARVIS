@@ -13,8 +13,6 @@ from typing import Any
 
 import httpx
 
-_VOICE_SUFFIX = "\n\n(Reply in one or two short spoken sentences — plain speech, no markdown or lists.)"
-
 
 def web_base() -> str:
     return f"http://127.0.0.1:{os.environ.get('JARVIS_WEB_PORT', '8770')}"
@@ -39,12 +37,14 @@ class RemoteAgent:
         return None
 
     async def send(self, user_text: str) -> str:
-        msg = user_text + (_VOICE_SUFFIX if self.mode == "voice" else "")
-        # generous enough for a deep-research turn, but bounded so a hung call can't wedge the
-        # voice loop (which can't listen while it's waiting on a reply).
+        # Send exactly what was said. "Keep it short, it's being spoken aloud" is an instruction to
+        # the model, not part of the utterance — bolting it onto the text meant it was journalled,
+        # embedded and recalled as though the user had said it, and every vault day is littered
+        # with the sentence as a result. `session_id` already tells the server this turn is voice;
+        # groq_core turns that into a per-turn directive.
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=5.0)) as client:
-                r = await client.post(f"{self.base}/chat", json={"message": msg, "session_id": self.mode})
+                r = await client.post(f"{self.base}/chat", json={"message": user_text, "session_id": self.mode})
                 return (r.json() or {}).get("reply", "") or "(no reply)"
         except httpx.TimeoutException:
             return "That one took too long, sir — let me know if you'd like me to try again."

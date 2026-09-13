@@ -18,3 +18,9 @@ mobile/android/*.apk
 .git_backup/
 .claude/
 .ruff_cache/
+
+# local dev symlinks created by worktree sessions
+.venv
+overlay/node_modules
+whatsapp/node_modules
+_scratch_*.py

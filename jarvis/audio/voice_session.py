@@ -189,11 +189,57 @@ class VoiceSession:
             "id": event.get("id"), "repliable": event.get("repliable"),
         }
         if not away_now and notifications_enabled():  # while away, handle silently; muted = no readout
-            self._speak(f"{app} message from {who}. {msg}.")
+            # An incoming message is not urgent enough to talk over a call. Hold it instead —
+            # `catch_up` and the HUD feed still have it, so nothing is lost by waiting.
+            ok, why = self._good_moment()
+            if ok:
+                self._speak(f"{app} message from {who}. {msg}.")
+            else:
+                self.on_event("phone", f"held: {app} from {who} ({why})")
+
+    def _good_moment(self) -> tuple[bool, str]:
+        """Whether Jarvis should speak unprompted right now.
+
+        Only consulted for things Jarvis raises on its own — a direct answer to a spoken question
+        is always delivered, because the user is plainly available if they just asked.
+        """
+        try:
+            from .. import context
+
+            return context.is_interruptible()
+        except Exception:  # noqa: BLE001 - if we can't tell, don't go quiet
+            return True, "context unavailable"
+
+    def _emit_level(self, level: float) -> None:
+        """Publish mic amplitude to the HUD, rate-limited.
+
+        Frames arrive at ~60/s; the overlay only needs enough to look alive, and each event is an
+        HTTP POST. 15/s is smooth to the eye and cheap. Levels are normalised against the VAD
+        threshold rather than an absolute scale, so the visualiser matches what Jarvis considers
+        loud enough to be speech on this particular microphone.
+        """
+        now = time.monotonic()
+        if now - getattr(self, "_last_level_at", 0.0) < 0.066:
+            return
+        self._last_level_at = now
+        norm = min(1.0, level / max(1.0, self.threshold * 2.2))
+        self.on_event("level", f"{norm:.3f}")
+
+    def _speech_fn(self):
+        """The speech test for this session, built once and reset per utterance."""
+        if getattr(self, "_speech_pair", None) is None:
+            fn, reset, label = vad.speech_detector(self.threshold, self.sample_rate)
+            self._speech_pair = (fn, reset)
+            self.on_event("loading", f"voice activity detection: {label}")
+        return self._speech_pair
 
     def _record_transcript(self, wait_s: float) -> Optional[str]:
+        speech_fn, reset = self._speech_fn()
+        reset()
         pcm = vad.record_utterance(
             self.mic.read,
+            on_level=self._emit_level,
+            speech_fn=speech_fn,
             sample_rate=self.sample_rate,
             frame_length=self.frame_length,
             threshold=self.threshold,
@@ -247,7 +293,11 @@ class VoiceSession:
                 frame = self.mic.read()
             except Exception:  # noqa: BLE001
                 return
-            if vad.rms(frame) >= trigger:
+            level = vad.rms(frame)
+            # Without echo cancellation these frames are mostly Jarvis's own speaker output, which
+            # is exactly what the HUD should be drawing while he talks — it is the room's audio.
+            self._emit_level(level)
+            if level >= trigger:
                 run += 1
                 if run >= needed:
                     self.on_event("barge_in")
@@ -387,7 +437,11 @@ class VoiceSession:
             )
             alert = parse_alert(out)
             if alert:
-                self._speak(alert)
+                ok, why = self._good_moment()
+                if ok:
+                    self._speak(alert)
+                else:
+                    self.on_event("timing", f"held screen alert ({why}): {alert}")
 
     # --- AFK / welcome-back ---------------------------------------------
     @staticmethod

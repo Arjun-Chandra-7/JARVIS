@@ -54,6 +54,31 @@ class RoutineManager:
             job, CronTrigger(hour=hour, minute=minute), id="daily_rollup", replace_existing=True
         )
 
+    def add_memory_consolidation(self, hour: int, minute: int) -> None:
+        """Distil the day's episodes into durable facts while the machine is idle.
+
+        Separate from the journal rollup: that writes prose for a human to read, this writes
+        retrievable facts for the assistant to use, and supersedes ones it contradicts.
+        """
+        import asyncio
+
+        from ..memory import consolidate as memcon
+
+        async def job() -> None:
+            if not memcon.due():
+                return
+            try:
+                result = await asyncio.to_thread(memcon.consolidate, self.config)
+            except Exception:  # noqa: BLE001 - a nightly job must never kill the daemon
+                return
+            if result.get("added") or result.get("superseded"):
+                print(f"  memory: +{result['added']} facts, {result['superseded']} superseded")
+
+        self.scheduler.add_job(
+            job, CronTrigger(hour=hour, minute=minute), id="memory_consolidation",
+            replace_existing=True,
+        )
+
     def add_reminders_checker(self) -> None:
         from ..jobs import reminders
 

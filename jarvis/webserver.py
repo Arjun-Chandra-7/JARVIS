@@ -148,6 +148,86 @@ async def chat(c: Chat):
     return {"reply": reply}
 
 
+@app.post("/chat/stream")
+async def chat_stream(c: Chat):
+    """Same as /chat, but the reply is streamed as it is generated.
+
+    A local 3B model produces a two-sentence answer in a few seconds; waiting for all of it before
+    showing anything makes the assistant feel slower than it is. The HUD renders deltas as they
+    arrive, and the voice loop can begin speaking the first sentence while the rest is still
+    being written.
+
+    Tool calls are not streamed — they cannot be acted on until complete — so a turn that uses
+    tools simply emits nothing until the model starts writing its answer.
+    """
+    agent = _agent["a"]
+    if agent is None:
+        async def booting():
+            yield _sse("reply", "Brain still booting, sir — one moment.")
+            yield _sse("done", "")
+        return StreamingResponse(booting(), media_type="text/event-stream")
+
+    from .commands import clean_text
+    shown = clean_text(c.message) or c.message.strip()[:400]
+    hud_state.log_turn("you", shown)
+    await _emit("heard", shown)
+
+    queue: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    def on_delta(piece: str) -> None:
+        # Called from the worker thread that drives the model.
+        loop.call_soon_threadsafe(queue.put_nowait, ("delta", piece))
+
+    async def run() -> None:
+        async with _lock:
+            try:
+                agent.command_session = c.session_id
+                # Only the OpenAI-compatible brains can stream. The ChatGPT-web and Claude-SDK
+                # agents answer in one piece, and this endpoint still works for them — the client
+                # simply receives the whole reply as the final event.
+                if _supports_streaming(agent):
+                    reply = await agent.send(c.message, on_delta=on_delta)
+                else:
+                    reply = await agent.send(c.message)
+            except Exception as exc:  # noqa: BLE001
+                reply = f"[error] {exc}"
+        hud_state.log_turn("jarvis", reply)
+        await _emit("reply", reply)
+        await queue.put(("final", reply))
+
+    task = asyncio.create_task(run())
+
+    async def gen():
+        try:
+            while True:
+                kind, text = await queue.get()
+                if kind == "final":
+                    yield _sse("final", text)
+                    yield _sse("done", "")
+                    return
+                yield _sse("delta", text)
+        finally:
+            if not task.done():
+                task.cancel()
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+def _sse(kind: str, text: str) -> str:
+    return f"data: {json.dumps({'kind': kind, 'text': text})}\n\n"
+
+
+def _supports_streaming(agent) -> bool:
+    """Whether this brain's send() accepts an on_delta sink."""
+    import inspect
+
+    try:
+        return "on_delta" in inspect.signature(agent.send).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 @app.get("/coding/jobs")
 async def coding_jobs():
     from .integrations.coding_jobs import list_jobs
@@ -324,6 +404,21 @@ async def weather():
     return {"weather": hud_state.weather()}
 
 
+@app.get("/context")
+async def context_now():
+    """What the user is doing — focused window, apps, attention, media."""
+    from . import context as ctx
+
+    try:
+        snap = await asyncio.to_thread(ctx.snapshot)
+        snap["summary"] = ctx.describe()
+        ok, why = ctx.is_interruptible()
+        snap["interruptible"] = {"ok": ok, "why": why}
+        return snap
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
+
+
 @app.get("/nearby")
 async def nearby():
     from . import nearby as _nb
@@ -374,20 +469,15 @@ async def wipe_history():
     return {"ok": True}
 
 
-# Quick-action chips shown in the HUD. Each maps a label → a prompt sent to the brain.
-_SUGGESTIONS = [
-    {"label": "Catch me up", "icon": "inbox", "say": "What did I miss? Summarise messages, mail and anything important."},
-    {"label": "My agenda", "icon": "calendar", "say": "What's on my calendar today and what's my next meeting?"},
-    {"label": "Read screen", "icon": "eye", "say": "Take a screenshot and tell me what's on my screen."},
-    {"label": "System status", "icon": "activity", "say": "Give me a full system status report."},
-    {"label": "Unread mail", "icon": "mail", "say": "Check my email and summarise anything that needs a reply."},
-    {"label": "Focus mode", "icon": "moon", "say": "I'm going heads-down. Hold non-urgent notifications and cover my messages."},
-]
-
-
 @app.get("/suggestions")
 async def suggestions():
-    return {"suggestions": _SUGGESTIONS}
+    """Quick-action chips, derived from what is actually happening (see jarvis/suggestions.py)."""
+    from . import suggestions as sugg
+
+    try:
+        return {"suggestions": await asyncio.to_thread(sugg.build, CONFIG)}
+    except Exception as exc:  # noqa: BLE001 - chips are a nicety; never fail the HUD over them
+        return {"suggestions": [], "error": str(exc)}
 
 
 @app.get("/stats")

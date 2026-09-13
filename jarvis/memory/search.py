@@ -1,98 +1,125 @@
-"""Hybrid recall over the vault: semantic (Ollama, if available) + keyword, merged.
+"""Recall over everything Jarvis knows — vault notes, past conversation, and distilled facts.
 
-Keyword search uses a real `rg` binary when one is on PATH, otherwise a dependency-free Python
-walk (note: Claude Code ships `rg` as a shell function, which Python can't see — hence the
-fallback).
+This used to run two searches that never met: a semantic pass over a JSON vector index, and a
+separate `rg` keyword pass whose hits were printed underneath as a second list. A note that both
+signals liked weakly still lost to a note only one of them liked, because nothing ever compared
+them. `memory/store.py` now holds both indexes in one SQLite file and fuses their rankings, so this
+module is mostly about deciding what to search and how to phrase the answer for a language model.
+
+The store is kept in step lazily: if the vault has changed since the last sync we re-index the
+handful of touched files first, which keeps `recall` honest without anyone remembering to run
+`--index`.
 """
 
 from __future__ import annotations
 
-import re
-import shutil
-import subprocess
+import time
+from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from . import embeddings
-from .index import VaultIndex
+from .store import MemoryStore, get_store
+
+# Re-sync at most this often; a vault sweep is cheap but not free.
+_SYNC_INTERVAL_S = 120.0
+_last_sync: dict[str, float] = {}
 
 
-def _terms(query: str) -> list[str]:
-    return [t for t in re.findall(r"\w+", query) if len(t) > 2][:6]
+def _embedder(model: str = "nomic-embed-text"):
+    """An embed function, or None when Ollama can't actually produce vectors.
+
+    `embeddings.available()` only proves the Ollama server answers — it says nothing about the
+    embedding model being pulled. Asking for one vector settles it, and a wrong answer here is
+    what previously left semantic recall silently dead while reporting itself healthy.
+    """
+    if not embeddings.available(timeout=1.0):
+        return None
+    probe = embeddings.embed("ping", model, timeout=20.0)
+    if not probe:
+        return None
+    return lambda text: embeddings.embed(text, model, timeout=30.0)
 
 
-def _rg_files(pattern: str, vault: Path, max_files: int) -> list[str]:
-    rg = shutil.which("rg")
-    if not rg:
-        return []
-    try:
-        out = subprocess.run(
-            [rg, "-i", "-l", "-g", "*.md", "-g", "!Jarvis/private/**", pattern, str(vault)],
-            capture_output=True, text=True, timeout=10,
-        ).stdout
-    except Exception:  # noqa: BLE001
-        return []
-    return [line for line in out.splitlines() if line.strip()][:max_files]
-
-
-def _keyword_matches(query: str, vault: Path, max_files: int = 8) -> list[tuple[str, str]]:
-    terms = [t.lower() for t in _terms(query)]
-    if not terms:
-        return []
-
-    # Prefer a real rg binary if present (fast on large vaults).
-    rg_hits = _rg_files("|".join(re.escape(t) for t in terms), vault, max_files)
-    files = [Path(f) for f in rg_hits] if rg_hits else [
-        f for f in vault.rglob("*.md") if ".git" not in f.parts and ".jarvis" not in f.parts and "private" not in f.parts
-    ]
-
-    results: list[tuple[str, str]] = []
-    for f in files:
+def _newest_mtime(vault: Path) -> float:
+    newest = 0.0
+    for f in vault.rglob("*.md"):
+        if {".jarvis", ".git", "private"} & set(f.parts):
+            continue
         try:
-            text = f.read_text(errors="ignore")
+            newest = max(newest, f.stat().st_mtime)
         except OSError:
             continue
-        if not any(t in text.lower() for t in terms):
-            continue
-        snippet = ""
-        for line in text.splitlines():
-            if any(t in line.lower() for t in terms):
-                snippet = line.strip()[:200]
-                break
-        try:
-            rel = str(f.relative_to(vault))
-        except ValueError:
-            rel = str(f)
-        results.append((rel, snippet))
-        if len(results) >= max_files:
-            break
-    return results
+    return newest
 
 
-def recall(query: str, vault, k: int = 5) -> str:
+def sync(vault: Path, store: Optional[MemoryStore] = None, force: bool = False) -> dict:
+    """Fold vault changes into the store. Cheap and idempotent; safe to call before every recall."""
+    vault = Path(vault)
+    store = store or get_store(vault)
+    key = str(vault)
+    now = time.monotonic()
+    if not force and now - _last_sync.get(key, 0.0) < _SYNC_INTERVAL_S:
+        return {"skipped": True}
+    _last_sync[key] = now
+    return store.sync_vault(vault, embed=_embedder())
+
+
+def _when(ts: float) -> str:
+    try:
+        dt = datetime.fromtimestamp(ts)
+    except (OverflowError, OSError, ValueError):
+        return ""
+    days = (datetime.now() - dt).days
+    if days <= 0:
+        return f"today {dt:%H:%M}"
+    if days == 1:
+        return f"yesterday {dt:%H:%M}"
+    if days < 7:
+        return f"{dt:%A} {dt:%H:%M}"
+    return f"{dt:%d %b %Y}"
+
+
+def recall(query: str, vault, k: int = 6) -> str:
+    """Search memory and render the hits for a language model to read."""
     vault = Path(vault)
     query = (query or "").strip()
     if not query:
         return "Empty query."
 
-    sections: list[str] = []
+    store = get_store(vault)
+    try:
+        sync(vault, store)
+    except Exception:  # noqa: BLE001 - a stale index still beats no answer
+        pass
 
-    # Semantic (only if Ollama is up)
-    if embeddings.available():
-        index = VaultIndex(vault)
-        if not index.entries:
-            index.build()
-        matches = index.search(embeddings.embed(query), k=k)
-        if matches:
-            sections.append("Semantic matches:")
-            for path, chunk, score in matches:
-                sections.append(f"[{path}] (score {score:.2f})\n{chunk[:600]}")
+    hits = store.search(query, k=k, embed=_embedder())
+    if not hits:
+        return f"No matches for '{query}' in memory."
 
-    # Keyword
-    hits = _keyword_matches(query, vault)
-    if hits:
-        lines = [f"- {path}" + (f" — {snip}" if snip else "") for path, snip in hits]
-        sections.append("\nKeyword matches:\n" + "\n".join(lines))
+    lines: list[str] = []
+    for h in hits:
+        if h["kind"] == "episode":
+            head = f"[said {_when(h['ts'])} by {h['ref']}]"
+        elif h["kind"] == "fact":
+            head = "[remembered fact]"
+        else:
+            head = f"[{h['ref']}]"
+        body = h["text"].strip()
+        lines.append(f"{head}\n{body[:700]}")
+    return "\n\n".join(lines)
 
-    if not sections:
-        return f"No matches for '{query}' in the vault."
-    return "\n".join(sections)
+
+def remember(text: str, vault, ref: str = "profile") -> str:
+    """Store a durable fact. Used by the agent when the user states something worth keeping."""
+    store = get_store(Path(vault))
+    store.add_fact(text, ref=ref, embed=_embedder())
+    return f"Remembered: {text[:160]}"
+
+
+def record_turn(who: str, text: str, vault) -> None:
+    """Append one conversational turn to episodic memory. Best effort — never raises upward."""
+    try:
+        get_store(Path(vault)).add_episode(who, text, embed=_embedder())
+    except Exception:  # noqa: BLE001
+        pass

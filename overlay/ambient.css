@@ -1,8 +1,13 @@
-:root { --dim: #4a8a97; --good: #38f2b0; --bad: #ff5d78; --wa: #25d366; }
-body { --accent: #37e7ff; --accent2: #bff3ff; }
-body.listening { --accent: #46f2ff; --accent2: #d8ffff; }
-body.speaking  { --accent: #ffc062; --accent2: #ffe6c4; }
-body.thinking  { --accent: #8f6dff; --accent2: #d9ccff; }
+/* The ambient layer and the console (style.css) are one design. Same tokens, same rule about
+   motion: nothing loops at constant velocity unless it is depicting a sensor that really sweeps. */
+@property --angle { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+
+:root { --dim: #6e93a0; --good: #3ce8a9; --bad: #ff6b7f; --wa: #25d366;
+        --swift: cubic-bezier(0.16, 1, 0.3, 1); }
+body { --accent: #37e7ff; --accent2: #c9f5ff; }
+body.listening { --accent: #4df0ff; --accent2: #eaffff; }
+body.speaking  { --accent: #ffb84d; --accent2: #ffe7c2; }
+body.thinking  { --accent: #9d7cff; --accent2: #ded2ff; }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { width: 100vw; height: 100vh; overflow: hidden; background: transparent;
@@ -23,24 +28,33 @@ html, body { width: 100vw; height: 100vh; overflow: hidden; background: transpar
   background: linear-gradient(var(--accent), transparent 15%, transparent 85%, var(--accent)); opacity: .3; }
 .rail.left { left: 10px; } .rail.right { right: 10px; }
 
-.scan { position: fixed; left: 0; right: 0; height: 2px;
+.scan { position: fixed; left: 0; right: 0; height: 2px; top: 0;
   background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 55%, transparent), transparent);
-  animation: scan 9s linear infinite; opacity: .5; }
+  opacity: 0; transition: opacity .5s var(--swift); }
+/* A screen-wide sweep is a strong signal, so spend it on something real: Jarvis is thinking. */
+body.thinking .scan { opacity: .5; animation: scan 2.4s linear infinite; }
 @keyframes scan { from { top: 0; } to { top: 100%; } }
 
 /* identity top-left */
 .brand { position: fixed; top: 28px; left: 44px; display: flex; align-items: center; gap: 14px; }
 .ring { position: relative; width: 54px; height: 54px; display: grid; place-items: center; }
-.ring i { position: absolute; inset: 0; border-radius: 50%; border: 1.5px solid rgba(120,220,240,.32);
-  border-top-color: var(--accent); box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 55%, transparent); animation: spin 6s linear infinite; transition: border-color .6s; }
-.ring b { font-family: "Orbitron"; font-weight: 800; font-size: 23px; color: var(--accent); text-shadow: 0 0 16px var(--accent); }
+.ring i { position: absolute; inset: 0; border-radius: 50%; border: 1.5px solid rgba(120,220,240,.28);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 40%, transparent); transition: border-color .6s, box-shadow .6s; }
+/* At rest the ring is simply a ring. It only acquires a moving highlight when there is something
+   to report — otherwise the motion is decoration and the eye learns to ignore it. */
+body.listening .ring i,
+body.thinking  .ring i { border-top-color: var(--accent); animation: spin 1.6s linear infinite; }
+body.speaking  .ring i { border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  box-shadow: 0 0 26px color-mix(in srgb, var(--accent) 70%, transparent); }
+.ring b { font-weight: 600; font-size: 22px; color: var(--accent); text-shadow: 0 0 16px var(--accent); }
 @keyframes spin { to { transform: rotate(360deg); } }
-.title { font-family: "Orbitron"; font-weight: 800; letter-spacing: 8px; font-size: 25px; text-shadow: 0 0 20px color-mix(in srgb, var(--accent) 60%, transparent); }
+.title { font-weight: 600; letter-spacing: 9px; font-size: 21px; text-shadow: 0 0 20px color-mix(in srgb, var(--accent) 60%, transparent); }
 .status { font-size: 12px; letter-spacing: 3px; text-transform: uppercase; color: var(--accent); opacity: .8; margin-top: 3px; }
 
 /* clock top-right */
 .clockbox { position: fixed; top: 28px; right: 44px; text-align: right; }
-.clock { font-family: "Orbitron"; font-weight: 800; font-size: 32px; text-shadow: 0 0 18px color-mix(in srgb, var(--accent) 55%, transparent); }
+.clock { font-family: "JetBrains Mono", ui-monospace, monospace; font-weight: 500;
+  font-size: 30px; font-variant-numeric: tabular-nums; letter-spacing: -1px; text-shadow: 0 0 18px color-mix(in srgb, var(--accent) 55%, transparent); }
 .date { font-size: 12px; letter-spacing: 3px; color: var(--dim); text-transform: uppercase; }
 .wx { font-size: 12px; letter-spacing: 2px; color: var(--accent); opacity: .85; margin-top: 3px; text-transform: uppercase; }
 
@@ -49,7 +63,7 @@ html, body { width: 100vw; height: 100vh; overflow: hidden; background: transpar
   background: rgba(7,16,23,.42); border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
   box-shadow: 0 0 30px color-mix(in srgb, var(--accent) 10%, transparent), inset 0 0 30px rgba(0,0,0,.35);
   backdrop-filter: blur(6px); }
-.clabel { font-family: "Orbitron"; font-size: 10px; letter-spacing: 4px; color: var(--accent); opacity: .95;
+.clabel { font-weight: 600; font-size: 9px; letter-spacing: 3.4px; color: var(--accent); opacity: .95;
   display: flex; align-items: center; gap: 8px; margin-bottom: 11px; }
 .clabel b { margin-left: auto; color: var(--accent2); letter-spacing: 2px; }
 
@@ -77,12 +91,13 @@ html, body { width: 100vw; height: 100vh; overflow: hidden; background: transpar
 
 /* diagnostics */
 .trow { display: flex; align-items: center; gap: 10px; margin: 9px 0; }
-.trow label { font-family: "Orbitron"; font-size: 10px; letter-spacing: 2px; color: var(--dim); width: 30px; }
+.trow label { font-weight: 600; font-size: 9px; letter-spacing: 2px; color: var(--dim); width: 30px; }
 .tbar { flex: 1; height: 6px; background: rgba(120,220,240,.12); border-radius: 3px; overflow: hidden; }
 .tbar i { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent2));
   box-shadow: 0 0 10px var(--accent); border-radius: 3px; transition: width .8s, background .6s; }
 .tbar i.hot { background: linear-gradient(90deg, #ffb15a, var(--bad)); box-shadow: 0 0 10px var(--bad); }
-.trow b { font-family: "Orbitron"; font-size: 12px; width: 58px; text-align: right; color: var(--accent2); }
+.trow b { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px;
+  font-variant-numeric: tabular-nums; width: 58px; text-align: right; color: var(--accent2); }
 
 /* ===== MAP-STYLE HUMAN RADAR (horizontal proximity display) ===== */
 .hmap {
@@ -122,7 +137,7 @@ html, body { width: 100vw; height: 100vh; overflow: hidden; background: transpar
 /* range labels */
 .hlabel {
   position: absolute;
-  font-family: "Orbitron";
+  font-weight: 600;
   font-size: 7px;
   letter-spacing: 2px;
   color: var(--dim);
@@ -161,11 +176,9 @@ html, body { width: 100vw; height: 100vh; overflow: hidden; background: transpar
   background: var(--accent);
   box-shadow: 0 0 14px var(--accent), 0 0 30px color-mix(in srgb, var(--accent) 40%, transparent);
   border: 2px solid var(--accent2);
-  animation: pulse 2.4s ease-in-out infinite;
 }
-@keyframes pulse { 0%,100% { opacity: .6; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.15); } }
 .hyou-label {
-  font-family: "Orbitron";
+  font-weight: 600;
   font-size: 7px;
   letter-spacing: 3px;
   color: var(--accent);
@@ -213,7 +226,7 @@ html, body { width: 100vw; height: 100vh; overflow: hidden; background: transpar
   top: -16px;
   left: 50%;
   transform: translateX(-50%);
-  font-family: "Orbitron";
+  font-weight: 600;
   font-size: 7px;
   letter-spacing: 1px;
   white-space: nowrap;

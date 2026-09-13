@@ -188,6 +188,7 @@ ipcMain.on("launch-phone", () => {
   } catch (e) {}
 });
 
+ipcMain.on("hide-all", () => hideAll());
 ipcMain.on("quit", () => app.quit());
 
 // PRIVACY: auto-hide while screen-sharing (gmeet/discord use the ScreenCast portal)

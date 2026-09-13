@@ -22,22 +22,57 @@ SCOPES = [
 ]
 
 
+# Why the last credential load failed, so callers can say something useful instead of the
+# catch-all "Google not connected." Set by load_credentials(); read by status() and the tools.
+#   ""            connected (or never asked)
+#   "no-token"    never authorised on this machine
+#   "expired"     refresh token rejected — needs a fresh consent
+#   "broken"      token file unreadable / malformed
+_LAST_ERROR = ""
+
+
+def status(config) -> str:
+    """One line describing the Google connection, suitable for a tool result or the HUD."""
+    if load_credentials(config) is not None:
+        return ""
+    return {
+        "no-token": "Google isn't connected yet — run: python -m jarvis --google-auth",
+        "expired": (
+            "Google sign-in has expired — run: python -m jarvis --google-auth  "
+            "(OAuth apps left in Testing mode expire their refresh token every 7 days; "
+            "publishing the app in Google Cloud Console stops this recurring)"
+        ),
+        "broken": f"Google token at {config.google_token_file} is unreadable — re-run: python -m jarvis --google-auth",
+    }.get(_LAST_ERROR, "Google not connected.")
+
+
 def load_credentials(config):
     """Return valid Credentials (refreshing if needed), or None if not connected."""
+    global _LAST_ERROR
     token = config.google_token_file
     if not token.exists():
+        _LAST_ERROR = "no-token"
         return None
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
 
-    creds = Credentials.from_authorized_user_file(str(token), SCOPES)
+    try:
+        creds = Credentials.from_authorized_user_file(str(token), SCOPES)
+    except Exception:  # noqa: BLE001
+        _LAST_ERROR = "broken"
+        return None
     if creds and creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
             token.write_text(creds.to_json())
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 - almost always an expired/revoked refresh token
+            _LAST_ERROR = "expired"
             return None
-    return creds if creds and creds.valid else None
+    if creds and creds.valid:
+        _LAST_ERROR = ""
+        return creds
+    _LAST_ERROR = "expired"
+    return None
 
 
 def run_oauth_flow(config):
