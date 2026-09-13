@@ -333,12 +333,24 @@ class GroqAgent:
                 h["kind"], h["ref"]
             )
             lines.append(f"- ({where}) {' '.join(h['text'].split())[:280]}")
-        if not lines:
-            return ""
-        return (
-            "Possibly relevant things you already know. Use them only if they actually bear on "
-            "what was just asked; never read this list out.\n" + "\n".join(lines)
-        )
+
+        blocks = []
+        if lines:
+            blocks.append(
+                "Possibly relevant things you already know. Use them only if they actually bear "
+                "on what was just asked; never read this list out.\n" + "\n".join(lines)
+            )
+        # Standing notes from the vault, injected only when their trigger words appear. Unlike
+        # the retrieved memories above, these are instructions rather than evidence.
+        try:
+            from .. import knowledge
+
+            note_block = knowledge.context_for(self.config.vault_path, user_text)
+        except Exception:  # noqa: BLE001 - a malformed note must not cost the turn
+            note_block = ""
+        if note_block:
+            blocks.append(note_block)
+        return "\n\n".join(blocks)
 
     def _request_messages(self, memo: str = "") -> list[dict]:
         # `memo` and the summary are injected per request and deliberately never stored in

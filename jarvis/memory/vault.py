@@ -103,6 +103,14 @@ def ensure_vault(vault: Path, user_name: str = "you") -> bool:
     except OSError:
         pass
     _seed_files(vault, user_name)
+    # Standing knowledge notes (see jarvis/knowledge.py). Seeded with one self-explaining file
+    # because a directory nobody knows about is a feature nobody uses.
+    try:
+        from .. import knowledge
+
+        knowledge.ensure_example(vault)
+    except Exception:  # noqa: BLE001 - never block vault creation on an optional nicety
+        pass
     # Existing vaults predate private communication context. Keep it local even if ordinary notes
     # are versioned or later pushed to a remote.
     ignore = vault / ".gitignore"
