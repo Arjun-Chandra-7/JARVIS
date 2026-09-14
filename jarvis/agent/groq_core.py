@@ -18,6 +18,7 @@ from typing import Any, Awaitable, Callable, Optional
 from ..config import Config
 from ..jobs.runner import JobRunner
 from ..memory import vault as vaultmod
+from . import tool_contract, tool_router
 from .groq_tools import build_registry
 
 ToolCallback = Callable[[str, str], None]
@@ -31,8 +32,13 @@ You are running on Groq with function tools. Follow these rules exactly:
 1. TO TALK TO THE USER, JUST WRITE TEXT. Your normal reply is spoken aloud. NEVER use `type_text`,
    `press_keys`, or `run_bash` to "say" something — those control the computer, not the conversation.
    Typing a greeting with `type_text` is WRONG.
-2. MOST MESSAGES NEED NO TOOLS. Greetings, chit-chat, questions you already know → just answer.
-   Only call a tool when the request needs a real action or real data.
+2. NEVER STATE A FACT ABOUT THIS MACHINE OR THIS PERSON WITHOUT LOOKING IT UP. Battery, CPU,
+   memory, disk, temperature, time, weather, calendar, email, messages, files, contacts, and
+   anything about the user personally are things you MEASURE with a tool, not things you remember.
+   You do not know the battery level until `system_stats` tells you. Answering "your battery is at
+   85%" from memory is a fabrication even if it sounds plausible — call the tool, then report what
+   it returned. If no tool can tell you, say you don't know.
+   Chit-chat, greetings, opinions, and general knowledge need no tools — just answer those.
 3. PREFER THE SPECIFIC TOOL over run_bash: system info → `system_stats`; volume → `set_volume`;
    play/pause → `media_control`; open a site → `open_url`; memory → `recall`; timers → `set_timer`.
    Use `run_bash` only for genuine shell tasks with no dedicated tool.
@@ -191,10 +197,21 @@ class GroqAgent:
         self._on_local = False  # switched to local Ollama after a cloud rate-limit
         self.client = OpenAI(base_url=base_url, api_key=api_key, max_retries=0, timeout=45)
         self.schemas, self.dispatch = build_registry(config, self.job_runner, confirm_fn)
-        for s in self.schemas:  # trim descriptions hard — tool names are self-explanatory, and every
-            d = s["function"].get("description", "")   # token here is sent on EVERY request (rate limits)
-            if len(d) > 40:
-                s["function"]["description"] = d[:40]
+        if not config.tool_routing:
+            # Without routing every schema is sent on every request, so descriptions are clipped
+            # to protect the rate limit. With routing only ~10 tools go out and they can be whole.
+            for s in self.schemas:
+                d = s["function"].get("description", "")
+                if len(d) > 40:
+                    s["function"]["description"] = d[:40]
+
+        self._route_query = ""          # the utterance the tool shortlist is chosen for
+        self._last_outcome = None       # outcome of the most recent tool call
+        if config.tool_routing:
+            try:
+                tool_router.build_index(self.schemas)
+            except Exception:  # noqa: BLE001 - falls back to lexical routing
+                pass
 
         self.messages: list[dict] = [{"role": "system", "content": _compact_system(config)}]
         self._restore_history()
@@ -207,7 +224,13 @@ class GroqAgent:
         return Path(os.environ.get("JARVIS_STATE_DIR", "~/.local/share/jarvis")).expanduser() / "chat-history.json"
 
     def _restore_history(self, keep: int = 16) -> None:
-        """Reload the last few plain user/assistant turns so Jarvis remembers the last chat."""
+        """Reload the last few plain user/assistant turns so Jarvis remembers the last chat.
+
+        Restored turns are fenced with a note that they are old. Without it the model treats a
+        previous answer as current and simply repeats it: asked the battery level twice across
+        sessions it replays the earlier number verbatim instead of calling `system_stats` again,
+        so one wrong reading becomes permanent.
+        """
         import json
         try:
             turns = json.loads(self._history_path().read_text(encoding="utf-8"))
@@ -215,8 +238,18 @@ class GroqAgent:
             return
         clean = [t for t in turns if isinstance(t, dict)
                  and t.get("role") in ("user", "assistant") and isinstance(t.get("content"), str) and t["content"].strip()]
-        if clean:
-            self.messages[1:1] = clean[-keep:]
+        if not clean:
+            return
+        fence = {
+            "role": "system",
+            "content": (
+                "The following turns are from an EARLIER session, kept only so you remember what "
+                "was discussed. Every measurement, status, time, and number in them is STALE. If "
+                "the user asks about any of it again, call the tool and report the fresh value — "
+                "never repeat an old one."
+            ),
+        }
+        self.messages[1:1] = [fence] + clean[-keep:]
 
     def _save_history(self, keep: int = 16) -> None:
         import json
@@ -237,11 +270,28 @@ class GroqAgent:
     async def __aexit__(self, *exc: Any) -> None:
         return None
 
+    def _active_schemas(self):
+        """The tools shown to the model this turn.
+
+        Handing over all ~84 schemas measurably hurt: on qwen2.5:3b the same 17-command set went
+        11/17 with everything visible and 15/17 with the ten most relevant, and got faster too
+        (1.48 s -> 0.91 s median) because there was far less schema to re-read. Set
+        JARVIS_TOOL_ROUTING=0 to send everything again.
+        """
+        if not self.config.tool_routing or not self._route_query:
+            return self.schemas
+        try:
+            return tool_router.select(
+                self.schemas, self._route_query, keep=self.config.tool_routing_keep
+            )
+        except Exception:  # noqa: BLE001 - routing must never block a turn
+            return self.schemas
+
     def _complete(self):
         return self.client.chat.completions.create(
             model=self.model,
             messages=self.messages,
-            tools=self.schemas,
+            tools=self._active_schemas(),
             tool_choice="auto",
             temperature=0.4,
             max_tokens=512,
@@ -313,6 +363,7 @@ class GroqAgent:
         direct = await handle(user_text, self.config, getattr(self, "command_session", "local"))
         if direct is not None:
             return direct
+        self._route_query = user_text   # pick this turn's tool shortlist from what was asked
         # episodic journal
         clean = " ".join(l for l in user_text.splitlines() if not l.strip().startswith("["))[:140].strip()
         if clean:
@@ -411,13 +462,64 @@ class GroqAgent:
         return reply or "(no reply)"
 
     async def _execute(self, triples) -> None:
-        """Append the assistant tool_calls turn + each tool result. triples = [(id, name, args)]."""
+        """Append the assistant tool_calls turn + each tool result. triples = [(id, name, args)].
+
+        Every call is checked against its registered schema first. Mechanical mistakes (a string
+        where an integer belongs, `duration_seconds` for `seconds`) are repaired; anything
+        ambiguous comes back to the model as a precise correction instead of being guessed at or
+        run wrong. Nothing unvalidated reaches a tool.
+        """
         self.messages.append({
             "role": "assistant", "content": "",
             "tool_calls": [{"id": tid, "type": "function",
                             "function": {"name": name, "arguments": json.dumps(args)}} for tid, name, args in triples],
         })
+        known = [s.get("function", {}).get("name", "") for s in self.schemas]
         for tid, name, args in triples:
-            self.on_tool(name, ", ".join(f"{k}={v}" for k, v in list(args.items())[:2]))
-            result = await self.dispatch(name, args)
-            self.messages.append({"role": "tool", "tool_call_id": tid, "content": str(result)[:6000]})
+            resolved, note = tool_contract.resolve_name(name, known)
+            if resolved is None:
+                self.on_tool(name, f"rejected — {note}")
+                self.messages.append({
+                    "role": "tool", "tool_call_id": tid,
+                    "content": f"[failure] {note}. Available tools are the ones in your tool list.",
+                })
+                self._last_outcome = tool_contract.Outcome.FAILURE
+                continue
+
+            schema = next(
+                (s for s in self.schemas if s.get("function", {}).get("name") == resolved), None
+            )
+            check = tool_contract.validate(schema, args) if schema else None
+            if check is not None and not check.ok:
+                self.on_tool(resolved, f"invalid arguments — {'; '.join(check.problems)}")
+                self.messages.append({
+                    "role": "tool", "tool_call_id": tid,
+                    "content": check.message(resolved, schema),
+                })
+                self._last_outcome = tool_contract.Outcome.FAILURE
+                continue
+            if check is not None:
+                args = check.args
+                if check.repaired:
+                    self.on_tool(resolved, f"repaired arguments: {', '.join(check.repaired)}")
+
+            self.on_tool(resolved, ", ".join(f"{k}={v}" for k, v in list(args.items())[:2]))
+            try:
+                result = await self.dispatch(resolved, args)
+                outcome = tool_contract.Outcome.SUCCESS
+            except asyncio.CancelledError:
+                self.messages.append({
+                    "role": "tool", "tool_call_id": tid,
+                    "content": "[cancelled] the user cancelled this before it finished.",
+                })
+                self._last_outcome = tool_contract.Outcome.CANCELLED
+                raise
+            except Exception as exc:  # noqa: BLE001 - a tool must not kill the turn
+                result = f"{type(exc).__name__}: {exc}"
+                outcome = tool_contract.Outcome.FAILURE
+            self._last_outcome = outcome
+            body = str(result)[:6000]
+            self.messages.append({
+                "role": "tool", "tool_call_id": tid,
+                "content": body if outcome is tool_contract.Outcome.SUCCESS else f"[failure] {body}",
+            })

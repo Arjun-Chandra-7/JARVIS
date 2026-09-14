@@ -79,6 +79,10 @@ def snapshot() -> dict:
     except Exception:  # noqa: BLE001
         data["cpu_temp"] = None
 
+    # psutil returns None on machines whose firmware upower tells it to ignore — this laptop is
+    # one, so "what's my battery level" came back with no battery data at all and the model simply
+    # invented a number. power_supply reads /sys/class/power_supply directly and works here, so it
+    # is the fallback rather than leaving the field absent.
     try:
         bat = psutil.sensors_battery()
         if bat is not None:
@@ -89,6 +93,21 @@ def snapshot() -> dict:
             }
     except Exception:  # noqa: BLE001
         pass
+
+    if "battery" not in data:
+        try:
+            from .power_supply import read as _power_read
+
+            ps = _power_read()
+            if ps.get("present") and ps.get("percent") is not None:
+                data["battery"] = {
+                    "percent": int(ps["percent"]),
+                    "plugged": bool(ps.get("plugged")),
+                    "mins_left": None,
+                    "status": ps.get("status") or "",
+                }
+        except Exception:  # noqa: BLE001
+            pass
 
     data["uptime_h"] = round((time.time() - psutil.boot_time()) / 3600, 1)
     data["gpu"] = _gpu()

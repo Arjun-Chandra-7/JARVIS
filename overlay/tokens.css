@@ -1,0 +1,92 @@
+/* JARVIS design tokens — shared by the Electron overlay and the browser HUD.
+ *
+ * Restrained cinematic: obsidian and graphite surfaces, off-white type, and a single controlled
+ * ice-blue accent that is spent only on state and focus. Semantic colours stay distinct from the
+ * accent so "working" never reads as "succeeded".
+ *
+ * Everything is defined once here. If a colour is needed twice, it belongs in this file. */
+
+:root {
+  /* --- surfaces: darkest at the back, each step forward is lighter --- */
+  --surface-void: #06080a; /* behind everything; the transparent window's own ground */
+  --surface-base: #0b0d10; /* obsidian — the pill and panel body */
+  --surface-raised: #14171c; /* graphite — cards, input wells */
+  --surface-overlay: #1b1f26; /* menus, hovered cards */
+  --surface-hover: #22262e;
+
+  /* --- type --- */
+  --text-primary: #e9ecef; /* soft off-white; never pure #fff, it glares on a dark ground */
+  --text-secondary: #9aa4b0;
+  --text-muted: #6b7482;
+  --text-faint: #4a525e;
+
+  /* --- the one accent --- */
+  --accent: #7ec8e3; /* ice blue */
+  --accent-bright: #a9dff2; /* hover / active only */
+  --accent-dim: #40616f;
+  --accent-glow: rgba(126, 200, 227, 0.18);
+  --accent-line: rgba(126, 200, 227, 0.35);
+
+  /* --- semantic: distinct hues, never the accent --- */
+  --success: #6ee7a8;
+  --success-dim: rgba(110, 231, 168, 0.16);
+  --warning: #f5c86b;
+  --warning-dim: rgba(245, 200, 107, 0.16);
+  --error: #f2777a;
+  --error-dim: rgba(242, 119, 122, 0.16);
+
+  /* --- lines and edges --- */
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --border-focus: var(--accent);
+
+  /* --- elevation --- */
+  --shadow-pill: 0 6px 24px rgba(0, 0, 0, 0.55), 0 1px 0 rgba(255, 255, 255, 0.05) inset;
+  --shadow-panel: 0 18px 60px rgba(0, 0, 0, 0.65), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+
+  /* --- shape --- */
+  --radius-pill: 26px;
+  --radius-panel: 16px;
+  --radius-card: 10px;
+  --radius-chip: 6px;
+
+  /* --- spacing scale --- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* --- type scale --- */
+  --font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, "Ubuntu", sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", "Cascadia Code", Menlo, monospace;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 17px;
+
+  /* --- motion: 160-280ms, and a spring-ish curve for anything that grows --- */
+  --ease-out: cubic-bezier(0.22, 0.85, 0.24, 1);
+  --ease-in: cubic-bezier(0.4, 0, 0.9, 0.3);
+  --ease-spring: cubic-bezier(0.18, 0.95, 0.24, 1.02);
+  --dur-fast: 160ms;
+  --dur-base: 220ms;
+  --dur-slow: 280ms;
+
+  /* Translucency is deliberate and limited: enough to sit on a desktop, never enough to make
+   * text fight the wallpaper. Backdrop blur is expensive, so it is used on one surface only. */
+  --panel-alpha: 0.94;
+  --blur: 18px;
+}
+
+/* Someone who asks for less motion gets none of the decorative kind — transitions collapse to
+ * near-instant rather than being removed, so state changes are still legible. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 1ms;
+    --dur-base: 1ms;
+    --dur-slow: 1ms;
+  }
+}

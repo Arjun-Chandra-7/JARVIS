@@ -855,19 +855,31 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         except Exception as e:
             return f"Failed to toggle sports widget: {e}"
 
+    # Descriptions are what tell the model what a tool is FOR. Stripping them leaves only the
+    # name, which costs real accuracy — measured on qwen2.5:3b, keeping them lifts correct tool
+    # selection substantially. They were stripped to stay inside Groq's free-tier token budget, so
+    # that trade-off is kept for cloud brains and dropped for a local one, where tokens are free.
+    keep_descriptions = config.keep_tool_descriptions
+
     schemas = []
-    has_google = (config.vault_path / "credentials.json").exists() or Path.home().joinpath(".credentials", "credentials.json").exists()
+    # Google is "available" when the OAuth client and a saved token exist where config actually
+    # puts them (GOOGLE_CLIENT_SECRET_FILE, default ~/.config/jarvis/). This used to look for a
+    # credentials.json in the vault or ~/.credentials — neither of which --google-auth ever
+    # writes — so a fully linked Google account still had all eight of its tools dropped, and
+    # Jarvis would claim it could not see the calendar it was already authorised for.
+    has_google = config.google_client_secret.exists() or config.google_token_file.exists()
     for s, _ in reg.values():
         f = s.get("function", {})
         name = f.get("name", "")
         # Drop inactive tool suites to save thousands of tokens!
         if not has_google and name.startswith("google_"):
             continue
-            
-        if not name.startswith("linkedin_"):
+
+        if not keep_descriptions and not name.startswith("linkedin_"):
             f.pop("description", None)
-        for p_val in f.get("parameters", {}).get("properties", {}).values():
-            p_val.pop("description", None)
+        if not keep_descriptions:
+            for p_val in f.get("parameters", {}).get("properties", {}).values():
+                p_val.pop("description", None)
         schemas.append(s)
 
     async def dispatch(name: str, args: dict) -> str:

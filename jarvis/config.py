@@ -76,6 +76,29 @@ class Config:
     vision_provider: str = field(default_factory=lambda: os.environ.get("JARVIS_VISION", "auto").lower())
     ollama_vision_model: str = field(default_factory=lambda: os.environ.get("JARVIS_VISION_MODEL", "moondream"))
 
+    # --- tool routing ---
+    # Show the model only the tools relevant to the request. Measured on qwen2.5:3b over a
+    # 17-command set: 11/17 correct with all 84 schemas versus 15/17 with the ten most relevant,
+    # and 1.48 s -> 0.91 s median. Ranking uses nomic-embed-text via Ollama, falling back to
+    # lexical overlap. JARVIS_TOOL_ROUTING=0 restores the old send-everything behaviour.
+    tool_routing: bool = field(default_factory=lambda: _bool("JARVIS_TOOL_ROUTING", True))
+    tool_routing_keep: int = field(default_factory=lambda: _int("JARVIS_TOOL_ROUTING_KEEP", 10))
+
+    # --- tool exposure ---
+    # "auto" keeps tool descriptions for the local brain (no token budget) and strips them for
+    # cloud brains (Groq's free tier is tight). "on"/"off" force it either way.
+    tool_descriptions: str = field(
+        default_factory=lambda: os.environ.get("JARVIS_TOOL_DESCRIPTIONS", "auto").lower()
+    )
+
+    @property
+    def keep_tool_descriptions(self) -> bool:
+        if self.tool_descriptions in ("on", "1", "true", "yes"):
+            return True
+        if self.tool_descriptions in ("off", "0", "false", "no"):
+            return False
+        return self.brain == "ollama"
+
     # --- capabilities ---
     enable_web: bool = field(default_factory=lambda: _bool("JARVIS_ENABLE_WEB", True))
     allow_unconfirmed_shell: bool = field(
