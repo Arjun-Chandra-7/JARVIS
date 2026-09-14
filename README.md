@@ -79,6 +79,12 @@ JARVIS_TOOL_ROUTING_KEEP=10     # how many tools to shortlist per turn
 ## Commands
 
 ```bash
+jarvis start                     # backend + voice + desktop overlay
+jarvis stop                      # stop every Jarvis-owned process and service
+jarvis restart                   # verified stop, then a clean GUI start
+jarvis restart --headless        # restart without the desktop overlay
+jarvis status
+
 .venv/bin/python -m jarvis --text
 .venv/bin/python -m jarvis --voice
 .venv/bin/python -m jarvis --web
