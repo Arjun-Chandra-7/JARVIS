@@ -105,10 +105,11 @@ case "$1" in
         exec "$REPO/scripts/start.sh" --stop "$@"
         ;;
     restart|--restart)
+        # One operation, not stop-then-sleep-then-start: the restart path waits for
+        # :8770 to actually free up before bringing the backend back, and clears any
+        # unit left in `failed` so it can start cleanly.
         shift || true
-        "$REPO/scripts/start.sh" --stop || true
-        sleep 1
-        exec "$REPO/scripts/start.sh" --gui "$@"
+        exec "$REPO/scripts/start.sh" --restart "$@"
         ;;
     sleep|--sleep|wake|--wake)
         [ -x "$PY" ] || { echo "No virtualenv at $PY"; exit 1; }
