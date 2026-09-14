@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from ..config import Config
-from . import stt, tts, vad
+from . import endpoint, stt, tts, vad
 from .mic import Microphone
 from .wake import WakeWord
 
@@ -50,6 +50,17 @@ class VoiceSession:
         self.sample_rate = self.wake.sample_rate
         self.frame_length = self.wake.frame_length
         self.threshold = float(config.vad_threshold)
+
+        # Neural endpointing, with the old energy threshold as the fallback. Built here rather
+        # than per-utterance so the ONNX session and its LSTM state are created once.
+        self._endpointer = None
+        self._partials = None
+        if config.neural_endpointing:
+            try:
+                self._endpointer = endpoint.StreamingVad(self.sample_rate)
+            except endpoint.SileroUnavailable:
+                self._endpointer = None
+        self._speaking = threading.Event()   # True while Jarvis's own audio is playing
 
     # --- stages ----------------------------------------------------------
     async def _wait_for_wake_or_event(self):
@@ -192,25 +203,62 @@ class VoiceSession:
             self._speak(f"{app} message from {who}. {msg}.")
 
     def _record_transcript(self, wait_s: float) -> Optional[str]:
-        pcm = vad.record_utterance(
-            self.mic.read,
-            sample_rate=self.sample_rate,
-            frame_length=self.frame_length,
-            threshold=self.threshold,
-            silence_ms=self.config.silence_ms,
-            max_s=self.config.max_utterance_s,
-            wait_s=wait_s,
-        )
+        capture_start = time.monotonic()
+        speech_end = [0.0]
+
+        if self._endpointer is not None:
+            # Neural endpointing: fires ~90 ms after you actually stop, instead of waiting out a
+            # fixed 2 s of silence. Partials stream to the HUD while you are still talking.
+            partial = self._partials
+            if partial is not None:
+                partial.reset()
+
+            def on_partial(pcm_so_far: bytes) -> None:
+                if partial is not None:
+                    partial.submit(pcm_so_far)
+
+            pcm = endpoint.record_utterance(
+                self.mic.read,
+                sample_rate=self.sample_rate,
+                frame_length=self.frame_length,
+                silence_ms=self.config.endpoint_hangover_ms,
+                max_s=self.config.max_utterance_s,
+                wait_s=wait_s,
+                vad=self._endpointer,
+                on_speech_start=lambda: self.on_event("listening"),
+                on_partial=on_partial if partial is not None else None,
+                partial_every_ms=self.config.partial_every_ms,
+            )
+            speech_end[0] = time.monotonic()
+            if partial is not None:
+                partial.cancel()
+        else:
+            pcm = vad.record_utterance(
+                self.mic.read,
+                sample_rate=self.sample_rate,
+                frame_length=self.frame_length,
+                threshold=self.threshold,
+                silence_ms=self.config.silence_ms,
+                max_s=self.config.max_utterance_s,
+                wait_s=wait_s,
+            )
+            speech_end[0] = time.monotonic()
+
         if not pcm:
-            # nothing above the VAD threshold → mic muted/wrong device, or threshold too high
-            self.on_event("timing", f"no audio captured (VAD threshold={self.threshold})")
+            # nothing detected → mic muted/wrong device, or the threshold is too high
+            self.on_event("timing", f"no audio captured (endpointing="
+                                    f"{'silero' if self._endpointer else f'rms@{self.threshold}'})")
             return None
         duration = len(pcm) / 2 / self.sample_rate
         start = time.monotonic()
         text = self._transcribe(pcm)
+        stt_s = time.monotonic() - start
         self.on_event("timing",
-                      f"heard {duration:.1f}s clip, transcribed in {time.monotonic() - start:.1f}s "
+                      f"heard {duration:.1f}s clip, endpoint+capture {speech_end[0]-capture_start:.1f}s, "
+                      f"transcribed in {stt_s:.2f}s "
                       f"-> {'\"'+text+'\"' if text else 'EMPTY (STT found no words)'}")
+        if text:
+            self.on_event("transcript", text)   # committed transcript replaces any partial
         return text
 
     def _transcribe(self, pcm: bytes) -> str:
@@ -318,17 +366,19 @@ class VoiceSession:
             if power.asleep():          # muted while asleep; wake/sleep lines pass force=True
                 return
         text = self._clean_for_speech(text)
-        stop = threading.Event()
+        stop = self._stop_speaking = threading.Event()
         monitor: Optional[threading.Thread] = None
         if self.config.enable_barge_in:
             monitor = threading.Thread(target=self._barge_in_monitor, args=(stop,), daemon=True)
             monitor.start()
+        self._speaking.set()
         try:
             if self.backend == "local":
                 from . import local_tts
 
                 local_tts.speak(
-                    text, self.config.piper_model, self.config.audio_output_device, stop_event=stop
+                    text, self.config.piper_model, self.config.audio_output_device, stop_event=stop,
+                    on_first_audio=lambda: self.on_event("speaking", text),
                 )
             else:
                 tts.speak(
@@ -342,8 +392,34 @@ class VoiceSession:
                 )
         finally:
             stop.set()
+            self._speaking.clear()
             if monitor is not None:
                 monitor.join(timeout=1.0)
+            self._flush_mic()
+            self.on_event("spoken")
+
+    def stop_speaking(self) -> bool:
+        """Cut the current utterance short. Distinct from cancelling the task that produced it."""
+        ev = getattr(self, "_stop_speaking", None)
+        if ev is not None and not ev.is_set():
+            ev.set()
+            return True
+        return False
+
+    def _flush_mic(self) -> None:
+        """Drop whatever the microphone buffered while Jarvis was talking.
+
+        Without this the tail of Jarvis's own speech sits in the input buffer and is read back as
+        the start of the next utterance — he transcribes himself. Resetting the VAD's LSTM state
+        matters too, or its speech probability stays high into the next turn.
+        """
+        try:
+            for _ in range(8):
+                self.mic.read()
+        except Exception:  # noqa: BLE001 - a flush failure must not break the turn
+            pass
+        if self._endpointer is not None:
+            self._endpointer.reset()
 
     async def _watch_screen(self) -> None:
         """While live screen-share is on, notice big changes and speak up only on a real problem."""
@@ -629,14 +705,32 @@ class VoiceSession:
 
             live.set_active(True)
         try:
+            # The energy threshold is only needed for the fallback endpointer and for barge-in.
             if self.threshold <= 0:
                 self.on_event("calibrating")
                 self.threshold = vad.calibrate_threshold(self.mic.read)
             if self.backend == "local":
-                from . import local_stt
+                from . import local_stt, local_tts
 
-                self.on_event("loading", "warming up speech model…")
-                local_stt.warmup(self.config.whisper_model)
+                self.on_event("loading", "warming up speech models…")
+                local_stt.warmup(
+                    self.config.whisper_model,
+                    self.config.partial_model if self.config.live_partials else None,
+                )
+                # Load the Piper voice now: it costs ~1.6 s once here instead of on every reply.
+                local_tts.warmup(self.config.piper_model)
+                if self.config.live_partials and self._endpointer is not None:
+                    self._partials = local_stt.PartialTranscriber(
+                        on_text=lambda t: self.on_event("partial", t),
+                        sample_rate=self.sample_rate,
+                        model_name=self.config.partial_model,
+                        vocabulary=self.config.stt_vocabulary,
+                    )
+            self.on_event(
+                "loading",
+                f"endpointing: {'silero (neural)' if self._endpointer else 'energy threshold'}"
+                f" · stt: {self.config.whisper_model} beam {self.config.whisper_beam}",
+            )
             phrase = "Hey Jarvis" if self.backend == "local" else self.config.wake_keyword
             self.on_event("ready", f"wake word: '{phrase}'")
             self._speak(self._greeting())  # Jarvis speaks first

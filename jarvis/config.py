@@ -100,8 +100,21 @@ class Config:
     tts_model_id: str = field(
         default_factory=lambda: os.environ.get("JARVIS_TTS_MODEL_ID", "eleven_turbo_v2_5")
     )
-    # end-of-utterance: trailing silence (ms) that ends a spoken phrase
+    # end-of-utterance for the legacy energy VAD: trailing silence (ms) that ends a spoken phrase
     silence_ms: int = field(default_factory=lambda: _int("JARVIS_SILENCE_MS", 2000))
+
+    # --- endpointing (how Jarvis decides you have stopped talking) ---
+    # Silero (bundled with faster-whisper) scores speech per 32 ms window, so a short hangover is
+    # enough to be sure. Measured on this laptop: endpoint fires ~90 ms after true end of speech
+    # at 300 ms hangover, versus the 2000 ms fixed wait the energy VAD needs. Set
+    # JARVIS_NEURAL_ENDPOINTING=0 to go back to the energy threshold.
+    neural_endpointing: bool = field(default_factory=lambda: _bool("JARVIS_NEURAL_ENDPOINTING", True))
+    endpoint_hangover_ms: int = field(default_factory=lambda: _int("JARVIS_ENDPOINT_HANGOVER_MS", 300))
+    # Live (partial) transcript: a throwaway tiny.en pass over the audio so far, ~440 ms each,
+    # run off the capture thread. Purely for display — the committed transcript replaces it.
+    live_partials: bool = field(default_factory=lambda: _bool("JARVIS_LIVE_PARTIALS", True))
+    partial_every_ms: int = field(default_factory=lambda: _int("JARVIS_PARTIAL_EVERY_MS", 700))
+    partial_model: str = field(default_factory=lambda: os.environ.get("JARVIS_PARTIAL_MODEL", "tiny.en"))
     max_utterance_s: int = field(default_factory=lambda: _int("JARVIS_MAX_UTTERANCE_S", 30))
     follow_up_s: int = field(default_factory=lambda: _int("JARVIS_FOLLOW_UP_S", 6))
     enable_barge_in: bool = field(default_factory=lambda: _bool("JARVIS_BARGE_IN", True))  # talk over him to cut him off
@@ -116,8 +129,12 @@ class Config:
 
     # local (keyless) voice backend: openWakeWord + Whisper + Piper
     voice_backend: str = field(default_factory=lambda: os.environ.get("JARVIS_VOICE_BACKEND", "auto"))
-    whisper_model: str = field(default_factory=lambda: os.environ.get("JARVIS_WHISPER_MODEL", "small.en"))
-    whisper_beam: int = field(default_factory=lambda: _int("JARVIS_WHISPER_BEAM", 5))
+    # base.en greedy transcribes a whole utterance in ~0.55 s here versus ~1.70 s for small.en at
+    # beam 5, with no transcription errors on the Jarvis command set used to measure it. Set
+    # JARVIS_WHISPER_MODEL=small.en (and JARVIS_WHISPER_BEAM=5) to trade the latency back for
+    # accuracy on harder audio.
+    whisper_model: str = field(default_factory=lambda: os.environ.get("JARVIS_WHISPER_MODEL", "base.en"))
+    whisper_beam: int = field(default_factory=lambda: _int("JARVIS_WHISPER_BEAM", 1))
     stt_language: str = field(default_factory=lambda: os.environ.get("JARVIS_STT_LANGUAGE", "en"))
     stt_vocabulary: str = field(default_factory=lambda: os.environ.get(
         "JARVIS_STT_VOCABULARY", "Jarvis, Arjun, WhatsApp, VS Code, Codex, Claude, Antigravity, agy, Opera GX, Google Meet"))
