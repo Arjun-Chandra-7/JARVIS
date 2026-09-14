@@ -35,6 +35,47 @@ need their own account, device, or desktop service configured before use.
 - Human radar: webcam face detection gives bearing + metric range, acoustic FMCW gives
   range only, and paired devices give names. See `docs/HUMAN_RADAR.md`.
 
+## The overlay
+
+One always-on-top window that changes shape rather than four competing ones:
+
+| Form | What it is | How to get there |
+| --- | --- | --- |
+| **Pill** | Mic state and a dot when background work is running. Idles at ~1 % of one core. | default |
+| **Conversation** | Live transcript, typed input, audio-reactive meter, stop/cancel. | click the orb, or the invocation shortcut |
+| **Workspace** | Tabs for Tasks, Memory and System, plus a diagnostics inspector. | the expand button, or `Ctrl+K` |
+
+`Ctrl+Super+Space` toggles it (editable under **System → Diagnostics**), `Ctrl+Super+J` opens the
+workspace, `Ctrl+Super+H` hides it. `Esc` steps back: clear attached context, then collapse, then
+hide. Size and position are remembered per form, and it opens on whichever display the pointer is
+on. It hides itself automatically when a screen share starts.
+
+Three things it can do that are worth knowing about:
+
+- **Context lens** — "Explain selection" attaches whatever text you have highlighted (in any
+  application) to your next message; "Read my screen" attaches a reading of the screen. You see
+  exactly what was captured before it is sent, and it applies to that one request.
+- **Tasks** — background jobs with their steps, the files they changed, and a cancel that reports
+  honestly: queued work is dropped, a running process is only *asked* to stop.
+- **Memory** — search what Jarvis knows, see which file and line it came from and when it was
+  recorded, and correct or forget it. A correction keeps the old text in the note; "forget"
+  removes the line from recall but says plainly that the vault's git history still has it.
+
+## Voice tuning
+
+Defaults are set from measurements taken on this laptop (see `docs/upgrade/RESEARCH.md`);
+every one is reversible through the environment.
+
+```bash
+JARVIS_NEURAL_ENDPOINTING=0     # back to the old energy-threshold endpointing
+JARVIS_ENDPOINT_HANGOVER_MS=300 # silence before Jarvis decides you have finished
+JARVIS_WHISPER_MODEL=base.en    # small.en is more accurate on hard audio, ~3x slower
+JARVIS_WHISPER_BEAM=1
+JARVIS_LIVE_PARTIALS=0          # turn off the provisional transcript
+JARVIS_TOOL_ROUTING=0           # show the model every tool again
+JARVIS_TOOL_ROUTING_KEEP=10     # how many tools to shortlist per turn
+```
+
 ## Commands
 
 ```bash

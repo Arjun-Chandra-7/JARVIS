@@ -12,7 +12,7 @@
 // Position and size are remembered per form, the invocation shortcut is configurable, and the
 // window opens on whichever display the pointer is on.
 const { app, BrowserWindow, globalShortcut, ipcMain, screen, session, shell } = require("electron");
-const { spawn } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 const http = require("http");
 const path = require("path");
 const fs = require("fs");
@@ -359,6 +359,16 @@ function registerShortcuts() {
 // PRIVACY: get out of the way when a screen share starts (Meet/Discord use the ScreenCast portal).
 function watchScreencast() {
   try {
+    // A dbus-monitor spawned by a previous overlay survives if that overlay was killed rather
+    // than asked to quit — will-quit never runs, so the child is orphaned. They accumulate one
+    // per launch and hold inherited sockets, so clear any stale ones before starting another.
+    try {
+      // Synchronous: an async pkill races the spawn below and can kill the monitor we just made.
+      spawnSync("pkill",
+        ["-f", "dbus-monitor --session interface='org.freedesktop.portal.ScreenCast'"],
+        { stdio: "ignore", timeout: 2000 });
+    } catch { /* pkill missing: at worst one monitor lingers */ }
+
     const mon = spawn("dbus-monitor",
       ["--session", "interface='org.freedesktop.portal.ScreenCast'"],
       { stdio: ["ignore", "pipe", "ignore"] });

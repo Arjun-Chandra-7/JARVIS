@@ -1,128 +1,136 @@
 # JARVIS upgrade — checkpoint
 
-Living document. Records what is done, what was decided and why, what was measured, and the next
-concrete action, so a context reset never forces another full audit.
+Living record: what is done, what was decided and why, what was measured, and what is still open.
+Written so a context reset never forces another full audit.
 
 Branch: `worktree-fix-folder-move-paths`
+Research and adoption record: [`RESEARCH.md`](RESEARCH.md)
 
 ---
 
-## 0. Folder move repair — DONE (commit `191504d`, pushed)
+## 0. Folder move repair — DONE (`191504d`)
 
-`~/Dev` was moved to `~/Madara/Dev` (`~/Madara` is a separate 954 GB NVMe, `LinuxStorage`).
-Everything storing an absolute path outside the repo broke.
+`~/Dev` moved to `~/Madara/Dev` (`~/Madara` is a separate 954 GB NVMe). Everything storing an
+absolute path outside the repo broke: five systemd units, `~/.local/bin/jarvis`, the login
+autostart entry, the LinkedIn and Viralyst units, and **48 venv console scripts**.
 
-Repaired:
+The venv shebangs mattered most — `piper` is a console script, so **local TTS was failing with
+ENOENT and Jarvis could not speak at all**.
 
-| Thing | Was | Now |
-| --- | --- | --- |
-| 5 systemd user units | `/home/xor_sensei/Dev/Jarvis/...` | new path, enablement preserved |
-| `~/.local/bin/jarvis` | dangling symlink | re-pointed |
-| `~/.config/autostart/jarvis.desktop` | dead `start_jarvis.sh` | new path |
-| `linkedin-copilot.service` | `%h/Dev/Linkdin/repo` | `%h/Madara/Dev/Linkdin/repo` |
-| `viralyst-extractor.service` | `/home/.../Dev/Viralyst` | new path |
-| `~/Madara/Dev/jarvis` | dangling symlink to old path | removed |
-| **48 venv console scripts** | shebang `#!/home/xor_sensei/Dev/Jarvis/.venv/bin/python3` | new path |
+`scripts/relocate.sh` now re-points installed integration at a given checkout, rewriting only what
+is already installed and never changing enable/disable state.
 
-The venv shebangs mattered most: `piper` is a console script, so **local TTS was failing with
-ENOENT — Jarvis could not speak at all.** Fixed and verified (`piper --help` runs, synthesis works).
-
-In-repo fixes: `start_jarvis.sh` now resolves its own location; `linkedin.py` finds the copilot as a
-sibling checkout; new `scripts/relocate.sh` re-points installed integration at a given checkout
-(rewrites only what is installed, never changes enable/disable state).
-
-Still broken, unrelated to the move and **not fixed** (not Jarvis, needs owner input):
-`tunnel-client.service` has `EnvironmentFile=/home/xor_sensei/.env`, which does not exist.
+Still broken, unrelated, **not fixed** (needs its owner): `tunnel-client.service` has
+`EnvironmentFile=/home/xor_sensei/.env`, which does not exist.
 
 ---
 
 ## 1. Environment (verified 2026-09-14)
 
-| | |
-| --- | --- |
-| OS | Ubuntu 26.04 LTS, kernel 7.0.0-31-generic |
-| Session | **Wayland**, GNOME (`ubuntu:GNOME`) |
-| CPU | AMD Ryzen 5 7235HS — 4 cores / 8 threads |
-| RAM | 22 GiB total, ~14 GiB available at rest |
-| GPU | RTX 3050 Laptop, **4094 MiB VRAM**, ~569 MiB already used by the desktop |
-| Root disk | `/` 167 G, **38 G free (77 % used)** — do not fill |
-| Second NVMe | `~/Madara` 938 G, **926 G free**, ext4, writable — correct home for large downloads |
-| Ollama models | `/usr/share/ollama/.ollama/models`, 3.7 G, **on the root disk** |
-| Ollama daemon | `OLLAMA_KEEP_ALIVE=-1`, no `OLLAMA_MODELS` override |
-| sudo | **no passwordless sudo** |
-
-Already downloaded and reusable: faster-whisper `tiny.en` / `base.en` / `small.en` / `tiny`
-(HF cache, 2.8 G), Piper `en_GB-alan-medium`, `silero_vad.onnx`, openWakeWord models,
-Ollama `qwen2.5:3b`, `nomic-embed-text`, `moondream`.
-
-**Blocked:** moving Ollama's model store to `~/Madara` needs a root systemd drop-in
-(`OLLAMA_MODELS`), which needs sudo. A shell variable will not affect the running daemon.
-Until then, Ollama pulls land on the 38 G root disk. User-level caches (HF, Piper, ONNX) can be
-pointed at `~/Madara` without sudo.
+Ubuntu 26.04, kernel 7.0.0-31, **Wayland/GNOME**. Ryzen 5 7235HS (4c/8t), 22 GiB RAM,
+RTX 3050 Laptop **4094 MiB VRAM** (~570 MiB already used by the desktop).
+Root `/` 167 G with **38 G free**; `~/Madara` 938 G with **926 G free**, writable.
+Ollama models live on the **root** disk at `/usr/share/ollama/.ollama/models`.
+**No passwordless sudo**, so the Ollama store could not be moved (command is in RESEARCH.md).
 
 ---
 
-## 2. Baseline measurements
+## 2. Before / after — measured on this laptop
 
-Conditions: `jarvis-backend`, `jarvis-voice`, `jarvis-whatsapp`, `linkedin-copilot` all running;
-VS Code and a browser open. Wall-clock, `time.perf_counter`, medians.
+### Voice: end of speech to first spoken word
 
-### Voice chain — end of speech to first spoken word
-
-| Stage | Measured | n | Source |
+| Stage | Before | After | How |
 | --- | --- | --- | --- |
-| Silence wait before STT starts | **2.00 s** (fixed) | — | `JARVIS_SILENCE_MS` default 2000, RMS endpointing |
-| STT `small.en` beam 5, CPU int8 | **1.70 s** median (RTF 0.46) | 9 | `faster_whisper` |
-| Brain `qwen2.5:3b` (no tools) | 0.36 s – **2.24 s** | 3 each | Ollama `/api/chat` |
-| TTS synth before *any* audio | **1.44 – 1.73 s** | 3 each | Piper synthesises the whole reply first |
-| **Total** | **≈ 5.5 – 7.7 s** | | |
+| Endpoint decision | 2000 ms fixed | **~90 ms** | Silero VAD v5 (already inside faster-whisper) |
+| Transcription | 1.70 s (`small.en`, beam 5) | **0.55 s** (`base.en`, greedy) | measured, n=9 |
+| First audio out | 1440–1730 ms | **150–191 ms** | Piper voice kept loaded, streamed per sentence |
+| **Total before the brain** | **≈ 5.1 s** | **≈ 0.8 s** | |
 
-STT alternatives on the same clips (n=9 each):
+Plus a live partial transcript (`tiny.en`, ~440 ms/update, off the capture thread) shown as
+provisional until the committed transcript replaces it.
 
-| Model | beam | Load | Transcribe median | RTF |
-| --- | --- | --- | --- | --- |
-| `small.en` (current) | 5 | 1.4 s | 1.70 s | 0.46 |
-| `small.en` | 1 | 0.9 s | 1.57 s | 0.43 |
-| `base.en` | 1 | 0.6 s | **0.55 s** | 0.15 |
-| `tiny.en` | 1 | 0.5 s | 0.30 s | 0.08 |
+### Tool calling — 17 representative commands, scored on tool **and** arguments
 
-Not yet measured (marked unavailable until taken): overlay idle CPU / renderer RAM, startup time,
-end-to-end tool-task latency, peak VRAM under load, wake-word latency and false-accept rate.
+| | Correct | Median |
+| --- | --- | --- |
+| Before (all 84 schemas, clipped descriptions) | 11/17 (65 %) | 1.41 s |
+| After (semantic router, ~10 tools) | **15/17 (88 %)** | **0.98 s** |
 
----
+`qwen3.5:4b` was benchmarked and **rejected**: identical 88 % once shortlisted, but 13.7–17.2 s
+median because 3.8 GB does not fit 4 GB of VRAM and 58 % runs on CPU.
 
-## 3. Findings from tracing the code
+### Overlay idle cost (20 s, idle/pill)
 
-Real, verified issues — each is a concrete target:
+| | Before (4 windows) | After (1 window) |
+| --- | --- | --- |
+| Processes | 9 | 6 |
+| CPU | **52.7 % of one core** | **1.4 % of one core** |
+| Memory | 1128 MB | 739 MB |
 
-1. **Endpointing is energy-only.** `jarvis/audio/vad.py` is pure RMS with a fixed
-   `silence_ms` (2000 ms default). `silero_vad.onnx` is already downloaded to
-   `~/.local/share/jarvis/` but **nothing in the repo references silero** — a dead download.
-2. **STT is batch, CPU, `small.en`, beam 5.** No streaming, no partial transcript. The GPU is idle.
-3. **TTS blocks on whole-reply synthesis.** `local_tts.synth()` runs Piper over the entire reply
-   before the first sample plays, so long answers start with seconds of silence.
-4. **Barge-in is a heuristic without AEC.** `_barge_in_monitor` samples 0.6 s of speaker echo, then
-   needs ~0.6 s of sustained louder speech to cut in — slow, and it can mis-fire.
-5. **Two owners for the voice loop.** `overlay/main.js` `ensureBackend()` spawns `--voice`
-   unconditionally. `scripts/start.sh` sets `JARVIS_OVERLAY_SPAWN=0` so the normal path is safe, but
-   `scripts/overlay.sh` does not — launching that directly gives two voice loops fighting for the mic.
-6. **Overlay is four always-on-top windows** (ambient, console, spotify, cricket), not one
-   interface that transforms. Window position/size are not persisted; `place()` re-centres on the
-   primary display, ignoring multi-display and any drag the user made.
-7. **Ambient layer obstructs real work.** In the baseline capture the SUBSYSTEMS panel sits on top
-   of the VS Code file explorer and makes it unreadable.
-8. **Invocation shortcut is hard-coded** (`Ctrl+Super+Space`, `Ctrl+Alt+J`, `Ctrl+Super+H`).
-9. **Tests depend on the developer's `.env`.** `tests/test_brain_selection.py` fails without a real
-   `GROQ_API_KEY`; with `GROQ_API_KEY=test-dummy` the suite is 231/231 green.
+### Not measured / unverified
 
-Working well, keep: XDG-portal screenshots (`jarvis/vision/screenshot.py`) — correct Wayland path
-with fallbacks, verified working; narrow `preload.js` IPC surface; the systemd/service split.
-
-Screenshots: `docs/upgrade/before/overlay-baseline.jpg`.
+* Hindi and Hinglish speech accuracy — the adopted STT models are English-only by construction.
+* Wake-word false-accept rate (openWakeWord unchanged, not a measured problem).
+* Multi-display placement — only one display is attached here.
+* Peak VRAM during a full voice + vision turn.
+* Suspend/resume reconnect behaviour.
 
 ---
 
-## 4. Next concrete action
+## 3. Bugs found and fixed along the way
 
-Research phase (task #2): shortlist candidates for streaming STT, neural endpointing, streaming
-TTS, a tool-calling small model, and overlay motion — then benchmark the finalists on this laptop.
+1. **Google tools were silently dropped.** `has_google` looked for `credentials.json` in the vault
+   and `~/.credentials`, neither of which `--google-auth` writes. A fully linked account had all
+   eight Calendar/Gmail/Tasks tools removed from the model's list.
+2. **Battery was fabricated.** `system_stats` used `psutil.sensors_battery()`, which returns None
+   on this laptop, so the model had no data and invented "85 %" — twice, confidently. Now falls
+   back to `power_supply`, which reads `/sys` directly. Verified: 100 %, Full.
+3. **Stale answers were replayed.** Restored history was presented as current, so that invented
+   85 % came back verbatim on the next run instead of being re-measured. Restored turns are now
+   fenced as stale.
+4. **A question could trigger a write.** "What's on my calendar today" selected
+   `google_calendar_create`. Write tools now rank below read tools for interrogative input.
+5. **Nothing toggled with `el.hidden` was hiding.** A class `display: flex` outranks the UA
+   `[hidden]` rule, so the panel claimed "Working…" while the pill sat idle.
+6. **Task cards clipped their own content** — `overflow: hidden` on a grid item lets it shrink
+   below its content; cards collapsed to 26 px.
+7. **`dbus-monitor` leaked** one process per overlay launch when the overlay was killed rather
+   than asked to quit.
+8. **Two owners for the voice loop** — `overlay/main.js` spawned `--voice` unconditionally. It now
+   checks whether systemd already runs it.
+9. **Dead artefacts** — a `silero_vad.onnx` and a `tool-index-*.json` were on disk with nothing in
+   the repo referencing either. Both capabilities are now real and wired.
+
+---
+
+## 4. What was built
+
+| Area | Module | What it does |
+| --- | --- | --- |
+| Endpointing | `jarvis/audio/endpoint.py` | Silero streaming VAD, hysteresis, preroll, partial scheduling |
+| STT | `jarvis/audio/local_stt.py` | committed vs partial transcripts, bounded-concurrency partials |
+| TTS | `jarvis/audio/local_tts.py` | warm voice, sentence streaming, level callback |
+| Levels | `jarvis/audio/levels.py` | tmpfs level publishing (the event path would drop audio frames) |
+| Stop speech | `jarvis/audio/speech_control.py` | counter-based cross-process stop, distinct from cancel |
+| Tool routing | `jarvis/agent/tool_router.py` | embedding shortlist, read/write bias, always-on set |
+| Tool contract | `jarvis/agent/tool_contract.py` | validate/repair/refuse, outcome model |
+| Context lens | `jarvis/integrations/lens.py` | selection / clipboard / window / screen capture |
+| Memory control | `jarvis/memory/control.py` | search with provenance, correct, forget |
+| Cancellation | `jarvis/jobs/cancel.py` | drop queued, signal running, report what would not stop |
+| Overlay | `overlay/` | one window, three forms, real audio, persisted bounds |
+
+Tests: **231 → 358**, all passing.
+
+---
+
+## 5. Next concrete action
+
+Nothing is mid-flight. Optional follow-ups, in value order:
+
+1. Move the Ollama model store to `~/Madara` (needs sudo; command in RESEARCH.md), then
+   `ollama rm qwen3.5:4b` to reclaim 3.4 GB.
+2. Evaluate Hindi/Hinglish with a multilingual Whisper model and measure the latency cost before
+   changing the default.
+3. `set_reminder` still receives `{text: ...}` without `when` from the small model. The contract
+   layer catches it and the model self-corrects on retry; a clearer parameter name would avoid
+   the round trip.
