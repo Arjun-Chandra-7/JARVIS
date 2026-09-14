@@ -38,8 +38,8 @@ const els = {
   contextPreview: $("contextPreview"),
   contextClear: $("contextClear"),
   taskList: $("taskList"),
-  taskEmpty: $("taskEmpty"),
   taskBadge: $("taskBadge"),
+  cancelAllBtn: $("cancelAllBtn"),
   memorySearch: $("memorySearch"),
   memoryQuery: $("memoryQuery"),
   memoryResults: $("memoryResults"),
@@ -75,10 +75,26 @@ const STATE_LABEL = {
   connecting: "Connecting…",
 };
 
+// A voice process that dies mid-turn never sends the event that ends the turn, so without this
+// the panel spins on "Working…" indefinitely while the pill says idle. Time out and say so.
+const STALL_MS = { listening: 45000, thinking: 180000, speaking: 120000 };
+let stallTimer = 0;
+
+function armStallWatchdog(next) {
+  clearTimeout(stallTimer);
+  const limit = STALL_MS[next];
+  if (!limit) return;
+  stallTimer = setTimeout(() => {
+    if (state.activity !== next) return;
+    setActivity("idle", "No response — the voice service may have stopped");
+  }, limit);
+}
+
 function setActivity(next, detail = "") {
   state.activity = next;
   body.dataset.state = next;
   els.pillState.textContent = detail || STATE_LABEL[next] || next;
+  armStallWatchdog(next);
 
   const working = next === "thinking";
   const speaking = next === "speaking";
@@ -402,19 +418,26 @@ els.stopSpeakBtn.addEventListener("click", async () => {
   }
 });
 
-els.cancelBtn.addEventListener("click", async () => {
-  els.cancelBtn.disabled = true;
+async function cancelRunning(button, { alsoIdle = false } = {}) {
+  button.disabled = true;
   try {
     const r = await fetch(`${API}/tasks/cancel`, { method: "POST" });
     const j = await r.json();
-    // Honest reporting: queued work stops, but something already running may not be interruptible.
+    // Honest reporting: queued work stops, but something already running may refuse to.
     toast(j.message || "Cancelled");
-    if (j.cancelled) setActivity("idle", "Cancelled");
+    if (alsoIdle && j.cancelled) setActivity("idle", "Cancelled");
+    refreshTasks();
   } catch {
-    toast("Could not cancel");
+    toast("Could not cancel — backend unreachable");
   } finally {
-    els.cancelBtn.disabled = false;
+    button.disabled = false;
   }
+}
+
+els.cancelBtn.addEventListener("click", () => cancelRunning(els.cancelBtn, { alsoIdle: true }));
+els.cancelAllBtn.addEventListener("click", () => {
+  if (!confirmInline(els.cancelAllBtn, "Cancel all?")) return;
+  cancelRunning(els.cancelAllBtn);
 });
 
 // ---------------------------------------------------------------- tasks
@@ -429,11 +452,31 @@ async function refreshTasks() {
   }
 }
 
+/** Files a job changed, from the git snapshots the manager takes before and after. */
+function changedFiles(job) {
+  const before = new Set(((job.before || {}).status || []).map((l) => l.slice(3)));
+  const after = ((job.after || {}).status || []).map((l) => l.slice(3));
+  const added = after.filter((f) => !before.has(f));
+  return { count: added.length, sample: added.slice(0, 4) };
+}
+
+function relativeTime(iso) {
+  if (!iso) return "";
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return "";
+  const secs = Math.max(0, (Date.now() - then) / 1000);
+  if (secs < 60) return `${Math.round(secs)}s ago`;
+  if (secs < 3600) return `${Math.round(secs / 60)}m ago`;
+  if (secs < 86400) return `${Math.round(secs / 3600)}h ago`;
+  return `${Math.round(secs / 86400)}d ago`;
+}
+
 function renderTasks(jobs) {
   const running = jobs.filter((t) => (t.status || "").match(/running|queued|pending/i)).length;
   els.taskBadge.hidden = running === 0;
   els.taskBadge.textContent = String(running);
   els.workDot.hidden = running === 0;
+  els.cancelAllBtn.hidden = running === 0;
 
   if (!jobs.length) {
     els.taskList.innerHTML = '<p class="empty">Nothing running.</p>';
@@ -446,20 +489,40 @@ function renderTasks(jobs) {
         : status.match(/done|complete|finished/) ? "done"
         : status.match(/fail|error/) ? "failed"
         : status.match(/cancel/) ? "cancelled" : "";
-      const steps = (t.steps || []).slice(-6).map((s) =>
+
+      const title = t.prompt || t.task || t.title || t.id || "task";
+      const workspace = (t.workspace || "").split("/").filter(Boolean).pop() || "";
+      const when = relativeTime(t.finished_at || t.started_at || t.created_at);
+      const meta = [t.provider, workspace, when].filter(Boolean).join(" · ");
+
+      const explicitSteps = (t.steps || []).slice(-6).map((s) =>
         `<div class="step ${escapeHtml(s.status || "")}">
            <span class="step-mark">${s.status === "done" ? "✓" : s.status === "failed" ? "✕" : "·"}</span>
-           <span>${escapeHtml(s.text || s)}</span>
+           <span>${escapeHtml(s.text || String(s))}</span>
          </div>`).join("");
+
+      // Evidence a person can check: which files the job actually touched.
+      const { count, sample } = changedFiles(t);
+      const fileSteps = !explicitSteps && count
+        ? `<div class="steps">${sample.map((f) =>
+             `<div class="step done"><span class="step-mark">✓</span>
+                <span>${escapeHtml(f)}</span></div>`).join("")}${
+             count > sample.length
+               ? `<div class="step"><span class="step-mark">·</span>
+                    <span>and ${count - sample.length} more</span></div>`
+               : ""}</div>`
+        : "";
+
       return `<article class="card">
         <div class="card-head">
           <span class="status-dot ${cls}"></span>
-          <span class="card-title">${escapeHtml(t.task || t.title || t.id || "task")}</span>
+          <span class="card-title" title="${escapeHtml(title)}">${escapeHtml(title)}</span>
           <span class="card-meta">${escapeHtml(status)}</span>
         </div>
+        ${meta ? `<div class="card-meta">${escapeHtml(meta)}</div>` : ""}
         ${cls === "running" ? '<div class="progress"></div>' : ""}
-        ${steps ? `<div class="steps">${steps}</div>` : ""}
-        ${t.result ? `<div class="card-body">${escapeHtml(String(t.result).slice(0, 400))}</div>` : ""}
+        ${explicitSteps ? `<div class="steps">${explicitSteps}</div>` : fileSteps}
+        ${t.error ? `<div class="card-body" style="color:var(--error)">${escapeHtml(String(t.error).slice(0, 300))}</div>` : ""}
       </article>`;
     })
     .join("");

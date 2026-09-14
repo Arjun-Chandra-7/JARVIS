@@ -118,9 +118,14 @@
 
         <!-- ---------- tasks ---------- -->
         <section class="view" id="view-tasks" role="tabpanel" aria-labelledby="tab-tasks" hidden>
-          <div class="view-head">
-            <h2>Background work</h2>
-            <p class="hint">Long jobs keep running when the overlay is collapsed.</p>
+          <div class="view-head view-head-row">
+            <div>
+              <h2>Background work</h2>
+              <p class="hint">Long jobs keep running when the overlay is collapsed.</p>
+            </div>
+            <button class="ghost-btn danger" id="cancelAllBtn" type="button" hidden>
+              Cancel running
+            </button>
           </div>
           <div class="cards" id="taskList">
             <p class="empty" id="taskEmpty">Nothing running.</p>

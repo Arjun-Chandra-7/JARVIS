@@ -10,6 +10,11 @@
 
 * { box-sizing: border-box; }
 
+/* A class like `.activity { display: flex }` outranks the user-agent's `[hidden]` rule, so
+ * elements toggled with el.hidden stayed on screen — the activity strip claimed "Working…" while
+ * the pill sat idle. Make `hidden` win everywhere. */
+[hidden] { display: none !important; }
+
 html,
 body {
   margin: 0;
@@ -42,6 +47,8 @@ body {
 body[data-form="pill"] .shell {
   border-radius: var(--radius-pill);
   box-shadow: var(--shadow-pill);
+  /* The pill carries a few words, so it can afford to be lighter than the panel. */
+  background: color-mix(in srgb, var(--surface-base) calc(var(--pill-alpha) * 100%), transparent);
 }
 
 /* A hairline of accent along the top edge while listening — presence without noise. */
@@ -518,8 +525,12 @@ body[data-form="conversation"] #tab-system { display: none; }
 .chip-x:hover { color: var(--text-primary); }
 
 /* --------------------------- cards --------------------------- */
-.cards { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: grid;
-         gap: var(--space-2); align-content: start; }
+/* Flex, not grid: `overflow: hidden` on a card makes its automatic minimum size 0, so as a grid
+ * item it was free to shrink below its content — cards collapsed to 26px and clipped their own
+ * metadata. As flex items with flex-shrink 0 they keep their content height. */
+.cards { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex;
+         flex-direction: column; gap: var(--space-2); }
+.cards > .card { flex: 0 0 auto; }
 .card {
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
@@ -528,7 +539,13 @@ body[data-form="conversation"] #tab-system { display: none; }
   display: grid;
   gap: var(--space-2);
   animation: msg-in var(--dur-base) var(--ease-out);
+  /* The sweeping progress bar is translated past its own box; without this it escapes the
+   * card's rounded corner and draws a line across the list. */
+  overflow: hidden;
 }
+
+.view-head-row { display: flex; align-items: flex-start; justify-content: space-between;
+                 gap: var(--space-3); }
 .card-head { display: flex; align-items: center; gap: var(--space-2); }
 .card-title { flex: 1 1 auto; font-weight: 600; min-width: 0;
               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

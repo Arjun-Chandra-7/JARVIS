@@ -75,9 +75,12 @@
   --dur-base: 220ms;
   --dur-slow: 280ms;
 
-  /* Translucency is deliberate and limited: enough to sit on a desktop, never enough to make
-   * text fight the wallpaper. Backdrop blur is expensive, so it is used on one surface only. */
-  --panel-alpha: 0.94;
+  /* Translucency is deliberate and limited: enough to sit on a desktop, never enough to make text
+   * fight what is behind it. Verified against a full-screen video — at 0.94 the picture showed
+   * through the transcript, so the panel is near-opaque and only the pill stays airy. Backdrop
+   * blur is expensive and unreliable under XWayland, so legibility never depends on it. */
+  --panel-alpha: 0.985;
+  --pill-alpha: 0.93;
   --blur: 18px;
 }
 

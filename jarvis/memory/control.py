@@ -54,8 +54,18 @@ class Memory:
 
 
 def _classify(rel_path: str) -> str:
-    head = rel_path.split("/", 1)[0].lower()
-    if head in (d.lower() for d in _EXPLICIT_DIRS) or rel_path.lower().startswith("profile"):
+    """explicit = you told Jarvis; inferred = Jarvis worked it out and wrote it down.
+
+    The filename decides before the directory does: `Jarvis/profile.md` holds facts the user
+    stated about themselves even though it lives under the folder Jarvis writes into, and calling
+    those "inferred" understates how much they should be trusted.
+    """
+    lowered = rel_path.lower()
+    stem = lowered.rsplit("/", 1)[-1]
+    if stem.startswith(("profile", "people", "contacts")):
+        return "explicit"
+    head = lowered.split("/", 1)[0]
+    if head in (d.lower() for d in _EXPLICIT_DIRS):
         return "explicit"
     if head in (d.lower() for d in _INFERRED_DIRS):
         return "inferred"
