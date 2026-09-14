@@ -54,6 +54,10 @@ need their own account, device, or desktop service configured before use.
 `bash scripts/hud.sh` starts the local HUD. `bash scripts/hud.sh voice` also starts the wake-word
 loop. The web server binds to `127.0.0.1` by default.
 
+If you move or rename the Jarvis folder, run `bash scripts/relocate.sh` once: the systemd
+user units, the `jarvis` command on PATH, and the login autostart entry all store an absolute
+path outside the repo, and it re-points whichever of them you have installed.
+
 ## Privacy and safety
 
 Jarvis asks before destructive or outbound actions where its integration supports confirmation.

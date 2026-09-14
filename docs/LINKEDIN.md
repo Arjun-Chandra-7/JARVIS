@@ -1,13 +1,14 @@
 # LinkedIn Content Copilot
 
-Jarvis drives the LinkedIn Content Copilot (a separate project, by default at
-`~/Dev/Linkdin/repo`): it opens the console, reads the numbers out, and can
-capture an idea or approve a post by voice.
+Jarvis drives the LinkedIn Content Copilot (a separate project, found by
+default next to this checkout at `../Linkdin/repo`): it opens the console,
+reads the numbers out, and can capture an idea or approve a post by voice.
 
 ## Setup
 
 ```bash
 LINKEDIN_COPILOT_URL=http://127.0.0.1:8787
+# only if the copilot is not checked out next to Jarvis:
 LINKEDIN_COPILOT_DIR=$HOME/Dev/Linkdin/repo
 ```
 

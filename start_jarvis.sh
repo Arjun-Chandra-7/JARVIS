@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -e
 
+# Resolve this checkout from the script's own location, so moving or renaming the
+# Jarvis folder never breaks the login autostart entry that runs this file.
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+    DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+REPO="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+
 # Wait for desktop session, PipeWire audio, and display to be ready
 sleep 2
 
@@ -12,9 +22,9 @@ systemctl --user restart sunshine.service || true
 
 # Start WhatsApp bridge in background if not running
 if ! pgrep -f "wa_service.js" > /dev/null; then
-    cd /home/xor_sensei/Dev/Jarvis/whatsapp
+    cd "$REPO/whatsapp"
     nohup /usr/bin/node wa_service.js > /tmp/jarvis-whatsapp.log 2>&1 &
 fi
 
 # Start Jarvis with GUI overlay (no terminal or VS Code window opened)
-exec /home/xor_sensei/Dev/Jarvis/scripts/start.sh
+exec "$REPO/scripts/start.sh"

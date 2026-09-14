@@ -1,8 +1,8 @@
 """LinkedIn Content Copilot — Jarvis integration.
 
-Talks to the Linkdin-Bot backend (a separate project, normally at
-~/Dev/Linkdin) over its local HTTP API, opens its desktop console, and turns
-its state into something Jarvis can say out loud.
+Talks to the Linkdin-Bot backend (a separate project, normally checked out
+next to this one as ../Linkdin/repo) over its local HTTP API, opens its desktop
+console, and turns its state into something Jarvis can say out loud.
 
 Two deliberate limits, inherited from that project and kept here:
 
@@ -29,7 +29,28 @@ from typing import Any
 from . import apps
 
 DEFAULT_URL = "http://127.0.0.1:8787"
-PROJECT_DIR = Path(os.environ.get("LINKEDIN_COPILOT_DIR", str(Path.home() / "Dev" / "Linkdin" / "repo")))
+
+
+def _default_project_dir() -> Path:
+    """Locate the Linkdin-Bot checkout without hard-coding one person's layout.
+
+    It normally sits beside the Jarvis checkout (``<parent>/Linkdin/repo``), so we
+    look there first and only then at the historical ``~/Dev`` location. Moving the
+    projects together therefore needs no reconfiguration; set LINKEDIN_COPILOT_DIR
+    to override when they don't live side by side.
+    """
+    sibling = Path(__file__).resolve().parents[2].parent / "Linkdin" / "repo"
+    for candidate in (sibling, Path.home() / "Dev" / "Linkdin" / "repo"):
+        if candidate.is_dir():
+            return candidate
+    return sibling
+
+
+PROJECT_DIR = (
+    Path(os.environ["LINKEDIN_COPILOT_DIR"]).expanduser()
+    if os.environ.get("LINKEDIN_COPILOT_DIR")
+    else _default_project_dir()
+)
 TIMEOUT = 20
 
 _token: str | None = None

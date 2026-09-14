@@ -804,7 +804,7 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         try:
             status = httpx.get(f"{base}/status", timeout=3).json().get("connected", False)
             if not status:
-                return "WhatsApp bridge is not connected. Start it with: cd ~/Dev/Jarvis/whatsapp && node wa_service.js"
+                return "WhatsApp bridge is not connected. Start it with: systemctl --user start jarvis-whatsapp"
             contacts_list = httpx.get(f"{base}/contacts", timeout=5).json()
             inbox_list = httpx.get(f"{base}/inbox", timeout=5).json()
         except Exception as exc:  # noqa: BLE001
