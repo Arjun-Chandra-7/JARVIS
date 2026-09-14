@@ -400,6 +400,80 @@ async def stats():
         return {"error": str(exc)}
 
 
+@app.post("/lens/{kind}")
+async def lens_capture(kind: str):
+    """Capture one scoped piece of context (selection / clipboard / window / screen).
+
+    Deliberately pull, not push: it runs when asked, the overlay shows exactly what was taken
+    before anything is sent, and it applies to a single request.
+    """
+    from .integrations import lens
+
+    return await asyncio.to_thread(lens.capture, kind)
+
+
+@app.post("/speech/stop")
+async def speech_stop():
+    """Stop Jarvis talking. Distinct from cancelling the work that produced the words."""
+    from .audio import speech_control
+
+    stopped = speech_control.request_stop()
+    return {"ok": True, "stopped": stopped,
+            "message": "Stopped speaking." if stopped else "Jarvis was not speaking."}
+
+
+@app.post("/tasks/cancel")
+async def tasks_cancel():
+    """Cancel queued background work, and report honestly about anything already running."""
+    from .jobs import cancel as jobs_cancel
+
+    return await asyncio.to_thread(jobs_cancel.cancel_all)
+
+
+@app.get("/memory/search")
+async def memory_search(q: str, limit: int = 20):
+    from .memory import control
+
+    results = await asyncio.to_thread(control.search, CONFIG.vault_path, q, limit)
+    return {"query": q, "results": [m.as_dict() for m in results]}
+
+
+class MemoryEdit(BaseModel):
+    path: str
+    snippet: str = ""
+    replacement: str = ""
+
+
+@app.post("/memory/correct")
+async def memory_correct(edit: MemoryEdit):
+    from .memory import control
+
+    return await asyncio.to_thread(
+        control.correct, CONFIG.vault_path, edit.path, edit.snippet, edit.replacement
+    )
+
+
+@app.post("/memory/forget")
+async def memory_forget(edit: MemoryEdit):
+    from .memory import control
+
+    return await asyncio.to_thread(control.forget, CONFIG.vault_path, edit.path, edit.snippet)
+
+
+@app.get("/audio")
+async def audio_level():
+    """Live microphone / speech level for the HUD's audio-reactive visuals.
+
+    Published to tmpfs by the voice process rather than pushed over this server's event stream:
+    the event path is a blocking HTTP call made from the thread reading microphone frames, and at
+    ~20 Hz that would drop audio. Returns a zeroed idle reading when the value is stale, so the
+    HUD never animates a level no microphone is producing.
+    """
+    from .audio import levels
+
+    return levels.read()
+
+
 @app.get("/events")
 async def events():
     q: asyncio.Queue = asyncio.Queue()

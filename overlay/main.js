@@ -1,233 +1,405 @@
-// JARVIS console — a compact, always-on-top, FULLY INTERACTIVE floating HUD (not fullscreen), so
-// typing and buttons work like a normal window and the desktop stays usable around it.
-// The overlay also *is* Jarvis: it auto-starts the backend (:8770) and the always-listening
-// "Hey Jarvis" voice loop, so launching the overlay = a live, listening assistant.
-const { app, BrowserWindow, globalShortcut, ipcMain, screen, session } = require("electron");
+// JARVIS overlay — one window that changes shape, not four windows fighting for the screen.
+//
+// The previous overlay opened four always-on-top windows (a fullscreen ambient HUD, the console,
+// a Spotify widget and a cricket widget). The fullscreen layer sat on top of real work — in the
+// baseline capture its subsystem panel covered the VS Code file tree — and none of them shared
+// state. This is a single window in three forms:
+//
+//   pill          a small presence chip: mic state, activity, nothing else
+//   conversation  live transcript, input, audio-reactive feedback, stop/cancel
+//   workspace     resizable: conversation, task steps, result cards, memory, diagnostics
+//
+// Position and size are remembered per form, the invocation shortcut is configurable, and the
+// window opens on whichever display the pointer is on.
+const { app, BrowserWindow, globalShortcut, ipcMain, screen, session, shell } = require("electron");
 const { spawn } = require("child_process");
 const http = require("http");
 const path = require("path");
 const fs = require("fs");
 
+// GNOME's Wayland compositor gives Electron no way to stay reliably on top or position itself, so
+// the overlay runs through XWayland. This is a deliberate platform trade-off, not an oversight.
 app.commandLine.appendSwitch("ozone-platform", "x11");
-// Grant camera/mic access automatically (frameless windows can't show permission prompts)
 app.commandLine.appendSwitch("enable-features", "WebRTCPipeWireCapturer");
 
 const REPO = path.resolve(__dirname, "..");
 const PY = path.join(REPO, ".venv", "bin", "python");
 const PORT = process.env.JARVIS_WEB_PORT || "8770";
 
-let win = null;       // interactive console (bottom)
-let ambient = null;   // fullscreen, ALWAYS click-through, decorative HUD
-let visible = true;
-const COMPACT = { w: 620, h: 128 };
-const EXPANDED = { w: 620, h: 520 };
+const CONFIG_DIR = path.join(app.getPath("home"), ".config", "jarvis");
+const STATE_FILE = path.join(CONFIG_DIR, "overlay-state.json");
 
-// --------------------------------------------------------------------------- //
-// backend + voice as managed child processes (always-listening)               //
-// --------------------------------------------------------------------------- //
+// Minimum sizes stop a remembered size from making a form unusable.
+const FORMS = {
+  pill: { w: 280, h: 60, minW: 200, minH: 52, resizable: false },
+  conversation: { w: 660, h: 440, minW: 460, minH: 300, resizable: true },
+  workspace: { w: 1000, h: 680, minW: 680, minH: 420, resizable: true },
+};
+
+const DEFAULT_SHORTCUTS = {
+  toggle: "Control+Super+Space",
+  workspace: "Control+Super+J",
+  hide: "Control+Super+H",
+};
+
+let win = null;
+let form = "pill";
+let visible = true;
+let state = { bounds: {}, shortcuts: {}, form: "pill" };
+
+// --------------------------------------------------------------------------- persisted state
+function loadState() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+    state = { bounds: {}, shortcuts: {}, form: "pill", ...raw };
+  } catch {
+    /* first run */
+  }
+  state.shortcuts = { ...DEFAULT_SHORTCUTS, ...(state.shortcuts || {}) };
+}
+
+let saveTimer = null;
+function saveState() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      fs.mkdirSync(CONFIG_DIR, { recursive: true });
+      fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+    } catch {
+      /* losing a window position is not worth surfacing */
+    }
+  }, 400);
+}
+
+function rememberBounds() {
+  if (!win || win.isDestroyed() || !win.isVisible()) return;
+  const b = win.getBounds();
+  // Only remember a position the user could actually have chosen.
+  if (b.width > 0 && b.height > 0) state.bounds[form] = b;
+  saveState();
+}
+
+// --------------------------------------------------------------------------- placement
+function activeDisplay() {
+  // Follow the pointer, so invoking on a second monitor opens there rather than on the primary.
+  try {
+    return screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  } catch {
+    return screen.getPrimaryDisplay();
+  }
+}
+
+function clampToDisplay(bounds) {
+  const area = screen.getDisplayMatching(bounds).workArea;
+  const w = Math.min(bounds.width, area.width);
+  const h = Math.min(bounds.height, area.height);
+  return {
+    width: w,
+    height: h,
+    x: Math.round(Math.min(Math.max(bounds.x, area.x), area.x + area.width - w)),
+    y: Math.round(Math.min(Math.max(bounds.y, area.y), area.y + area.height - h)),
+  };
+}
+
+function defaultBounds(name) {
+  const spec = FORMS[name];
+  const area = activeDisplay().workArea;
+  return {
+    width: spec.w,
+    height: spec.h,
+    x: Math.round(area.x + (area.width - spec.w) / 2),
+    y: Math.round(area.y + area.height - spec.h - 40),
+  };
+}
+
+function applyForm(name, { animate = true } = {}) {
+  if (!win || !FORMS[name] || win.isDestroyed()) return;
+  if (name !== form) rememberBounds();
+  form = name;
+  state.form = name;
+
+  const spec = FORMS[name];
+  const remembered = state.bounds[name];
+  let target = remembered ? clampToDisplay(remembered) : defaultBounds(name);
+
+  // A remembered size smaller than the form can use would clip its content.
+  target.width = Math.max(target.width, spec.minW);
+  target.height = Math.max(target.height, spec.minH);
+  target = clampToDisplay(target);
+
+  win.setMinimumSize(spec.minW, spec.minH);
+  win.setResizable(spec.resizable);
+  win.setBounds(target, animate && process.platform === "darwin");
+  win.webContents.send("form", name);
+  saveState();
+}
+
+// --------------------------------------------------------------------------- backend
 const kids = [];
 function cleanEnv() {
   const env = { ...process.env };
-  delete env.LD_LIBRARY_PATH; delete env.LD_PRELOAD;   // drop snap/conda pollution
+  delete env.LD_LIBRARY_PATH;
+  delete env.LD_PRELOAD;
   env.JARVIS_WEB_PORT = PORT;
   return env;
 }
+
 function probe(port) {
   return new Promise((resolve) => {
-    const req = http.get({ host: "127.0.0.1", port, path: "/stats", timeout: 800 }, (r) => { r.destroy(); resolve(true); });
+    const req = http.get({ host: "127.0.0.1", port, path: "/stats", timeout: 800 }, (r) => {
+      r.destroy();
+      resolve(true);
+    });
     req.on("error", () => resolve(false));
-    req.on("timeout", () => { req.destroy(); resolve(false); });
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(false);
+    });
   });
 }
-function supervise(name, args, logfile) {
-  let stopped = false, backoff = 1000;
+
+function supervise(args, logfile) {
+  let backoff = 1000;
   const start = () => {
     const out = fs.openSync(logfile, "a");
-    const p = spawn(PY, ["-m", "jarvis", ...args], { cwd: REPO, env: cleanEnv(), stdio: ["ignore", out, out] });
+    const p = spawn(PY, ["-m", "jarvis", ...args], {
+      cwd: REPO, env: cleanEnv(), stdio: ["ignore", out, out],
+    });
     kids.push(p);
     p.on("exit", () => {
-      if (stopped || app.isQuiting) return;
+      if (app.isQuiting) return;
       setTimeout(start, backoff);
       backoff = Math.min(backoff * 2, 15000);
     });
     p.on("spawn", () => { backoff = 1000; });
   };
   start();
-  return () => { stopped = true; };
 }
+
+function voiceRunning() {
+  // systemd owns jarvis-voice in the normal install. Spawning a second voice loop would put two
+  // processes on one microphone, and the second one silently loses.
+  return new Promise((resolve) => {
+    const p = spawn("systemctl", ["--user", "is-active", "jarvis-voice.service"], {
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    let out = "";
+    p.stdout.on("data", (d) => (out += d));
+    p.on("close", () => resolve(out.trim() === "active"));
+    p.on("error", () => resolve(false));
+  });
+}
+
 async function ensureBackend() {
-  if (!fs.existsSync(PY)) { toast("No .venv — run pip install -r requirements.txt"); return; }
-  if (process.env.JARVIS_OVERLAY_SPAWN === "0") return;   // external launcher owns the processes
-  const up = await probe(PORT);
-  if (!up) supervise("web", ["--web"], "/tmp/jarvis-web.log");
-  // always-listening wake word; the voice loop pushes events to the HUD via /emit
-  supervise("voice", ["--voice"], "/tmp/jarvis-voice.log");
-}
-
-function toast(msg) { win && win.webContents.send("toast", msg); }
-
-function createAmbient() {
-  const a = screen.getPrimaryDisplay().workArea;
-  ambient = new BrowserWindow({
-    x: a.x, y: a.y, width: a.width, height: a.height,
-    transparent: true, frame: false, resizable: false, movable: false, skipTaskbar: true,
-    hasShadow: false, focusable: false, fullscreenable: false, backgroundColor: "#00000000",
-    webPreferences: { preload: `${__dirname}/preload.js`, contextIsolation: true, nodeIntegration: false },
-  });
-  ambient.setAlwaysOnTop(true, "screen-saver");
-  ambient.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  ambient.setIgnoreMouseEvents(true); // permanent → never steals a click, so it can't break anything
-  ambient.loadFile("ambient.html");
-}
-
-function place(size) {
-  if (!win) return;
-  const a = screen.getPrimaryDisplay().workArea;
-  const x = Math.round(a.x + (a.width - size.w) / 2);
-  const y = Math.round(a.y + a.height - size.h - 26); // anchored near the bottom
-  win.setBounds({ x, y, width: size.w, height: size.h });
-}
-
-function toggleOverlay() {
-  if (!win) return;
-  visible = !visible;
-  if (visible) { win.show(); ambient && ambient.showInactive(); spWin && spWin.showInactive(); }
-  else { win.hide(); ambient && ambient.hide(); spWin && spWin.hide(); }
-}
-function hideAll() { if (win) win.hide(); if (ambient) ambient.hide(); if (spWin) spWin.hide(); if (crWin) crWin.hide(); visible = false; }
-process.on("SIGUSR2", toggleOverlay);
-
-
-let spWin = null;
-function createSpotify() {
-  const a = screen.getPrimaryDisplay().workArea;
-  const w = 340, h = 100;
-  spWin = new BrowserWindow({
-    width: w, height: h,
-    x: a.x + a.width - w - 40,
-    y: a.y + a.height - h - 40,
-    transparent: true, frame: false, resizable: false, movable: true, skipTaskbar: true,
-    hasShadow: false, fullscreenable: false, focusable: false, backgroundColor: "#00000000",
-    webPreferences: { contextIsolation: false, nodeIntegration: true },
-  });
-  spWin.setAlwaysOnTop(true, "screen-saver");
-  spWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  spWin.loadFile("spotify.html");
-}
-
-
-let crWin = null;
-function createCricket() {
-  const a = screen.getPrimaryDisplay().workArea;
-  const w = 340, h = 180;
-  crWin = new BrowserWindow({
-    width: w, height: h,
-    x: a.x + 40,
-    y: a.y + a.height - h - 145,
-    transparent: true, frame: false, resizable: false, movable: true, skipTaskbar: true,
-    hasShadow: false, fullscreenable: false, focusable: false, backgroundColor: "#00000000",
-    webPreferences: { contextIsolation: false, nodeIntegration: true },
-    show: false
-  });
-  crWin.setAlwaysOnTop(true, "screen-saver");
-  crWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  crWin.loadFile("cricket.html");
-}
-
-ipcMain.on("sports_toggle", (_e, state) => {
-  if (state === "on") crWin && crWin.showInactive();
-  else if (state === "off") crWin && crWin.hide();
-  else {
-    if (crWin && crWin.isVisible()) crWin.hide();
-    else if (crWin) crWin.showInactive();
+  if (process.env.JARVIS_OVERLAY_SPAWN === "0") return;
+  if (!fs.existsSync(PY)) {
+    toast("No .venv — run pip install -r requirements.txt");
+    return;
   }
-});
+  if (!(await probe(PORT))) supervise(["--web"], "/tmp/jarvis-web.log");
+  if (!(await voiceRunning())) supervise(["--voice"], "/tmp/jarvis-voice.log");
+}
 
+function toast(msg) {
+  if (win && !win.isDestroyed()) win.webContents.send("toast", msg);
+}
+
+// --------------------------------------------------------------------------- window
 function createWindow() {
-  const a = screen.getPrimaryDisplay().workArea;
+  const bounds = state.bounds[state.form] ? clampToDisplay(state.bounds[state.form])
+                                          : defaultBounds(state.form);
+  form = state.form in FORMS ? state.form : "pill";
+
   win = new BrowserWindow({
+    ...bounds,
     icon: path.join(__dirname, "icon.png"),
-    width: COMPACT.w, height: COMPACT.h,
-    x: Math.round(a.x + (a.width - COMPACT.w) / 2),
-    y: Math.round(a.y + a.height - COMPACT.h - 26),
-    transparent: true, frame: false, resizable: false, movable: true, skipTaskbar: true,
-    hasShadow: false, fullscreenable: false, focusable: true, backgroundColor: "#00000000",
-    webPreferences: { preload: `${__dirname}/preload.js`, contextIsolation: true, nodeIntegration: false },
+    transparent: true,
+    frame: false,
+    resizable: FORMS[form].resizable,
+    movable: true,
+    skipTaskbar: true,
+    hasShadow: false,
+    fullscreenable: false,
+    // focusable so the text input and keyboard navigation work like a normal window; the window
+    // is shown without activation, so appearing never steals focus from what you were typing in.
+    focusable: true,
+    backgroundColor: "#00000000",
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      spellcheck: false,
+    },
   });
+
   win.setAlwaysOnTop(true, "screen-saver");
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   win.loadFile("index.html");
+  win.on("resize", rememberBounds);
+  win.on("move", rememberBounds);
+  win.once("ready-to-show", () => {
+    win.showInactive();
+    win.webContents.send("form", form);
+  });
+
+  // Anything the page tries to open goes to the real browser, never inside the overlay.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//.test(url)) shell.openExternal(url);
+    return { action: "deny" };
+  });
+  win.webContents.on("will-navigate", (e, url) => {
+    if (!url.startsWith("file://")) e.preventDefault();
+  });
 }
 
-ipcMain.on("mode", (_e, mode) => place(mode === "text" ? EXPANDED : COMPACT));
+function show({ focus = false, to = null } = {}) {
+  if (!win || win.isDestroyed()) return;
+  if (to) applyForm(to);
+  visible = true;
+  if (focus) {
+    win.show();
+    win.focus();
+  } else {
+    win.showInactive();
+  }
+  win.webContents.send("visibility", true);
+}
 
-// pinch-zoom → GNOME magnifier
-let lastZoom = 1;
-ipcMain.on("set-zoom", (_e, factor) => {
-  const f = Math.max(1, Math.min(5, factor));
-  if (Math.abs(f - lastZoom) < 0.08) return;
-  lastZoom = f;
-  const run = (s, k, v) => spawn("gsettings", ["set", s, k, String(v)], { stdio: "ignore" });
-  if (f <= 1.05) run("org.gnome.desktop.a11y.applications", "screen-magnifier-enabled", "false");
-  else {
-    run("org.gnome.desktop.a11y.magnifier", "mouse-tracking", "proportional");
-    run("org.gnome.desktop.a11y.applications", "screen-magnifier-enabled", "true");
-    run("org.gnome.desktop.a11y.magnifier", "mag-factor", f.toFixed(2));
+function hide() {
+  if (!win || win.isDestroyed()) return;
+  rememberBounds();
+  visible = false;
+  win.hide();
+  win.webContents.send("visibility", false); // lets the renderer stop its animation loops
+}
+
+function toggle() {
+  if (visible && win && win.isVisible()) hide();
+  else show({ focus: true, to: form === "pill" ? "conversation" : form });
+}
+
+process.on("SIGUSR2", toggle);
+
+// --------------------------------------------------------------------------- IPC (narrow)
+ipcMain.on("form", (_e, name) => {
+  if (FORMS[name]) applyForm(name);
+});
+ipcMain.on("hide", hide);
+ipcMain.on("focus-window", () => {
+  if (win && !win.isDestroyed()) win.focus();
+});
+ipcMain.on("quit", () => app.quit());
+ipcMain.handle("get-state", () => ({
+  form,
+  shortcuts: state.shortcuts,
+  port: PORT,
+  reduceMotion: !!state.reduceMotion,
+}));
+ipcMain.handle("set-shortcut", (_e, which, accelerator) => {
+  if (!DEFAULT_SHORTCUTS[which]) return { ok: false, error: "unknown shortcut" };
+  const previous = state.shortcuts[which];
+  try {
+    if (previous) globalShortcut.unregister(previous);
+    if (accelerator && !globalShortcut.register(accelerator, handlerFor(which))) {
+      // Re-register the old one so a rejected accelerator does not leave the user with none.
+      if (previous) globalShortcut.register(previous, handlerFor(which));
+      return { ok: false, error: "the system refused that combination" };
+    }
+    state.shortcuts[which] = accelerator;
+    saveState();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
   }
 });
 
 ipcMain.on("launch-phone", () => {
-  const a = screen.getPrimaryDisplay().workArea;
-  const w = 340, x = Math.round(a.x + a.width / 2 - w / 2), y = Math.round(a.y + a.height * 0.08);
+  const area = activeDisplay().workArea;
+  const w = 340;
+  const x = Math.round(area.x + area.width / 2 - w / 2);
+  const y = Math.round(area.y + area.height * 0.08);
   try {
-    const p = spawn("scrcpy", ["--window-title=JARVIS Phone", "--window-borderless", "--always-on-top",
-      `--window-x=${x}`, `--window-y=${y}`, `--window-width=${w}`, "--stay-awake"], { detached: true, stdio: "ignore" });
-    p.on("error", () => toast("Install scrcpy + connect phone via USB"));
+    const p = spawn("scrcpy", ["--window-title=JARVIS Phone", "--window-borderless",
+      "--always-on-top", `--window-x=${x}`, `--window-y=${y}`, `--window-width=${w}`,
+      "--stay-awake"], { detached: true, stdio: "ignore" });
+    p.on("error", () => toast("Install scrcpy and connect the phone over USB"));
     p.unref();
     toast("Opening phone…");
-  } catch (e) {}
+  } catch {
+    toast("Could not start scrcpy");
+  }
 });
 
-ipcMain.on("quit", () => app.quit());
+ipcMain.on("open-external", (_e, url) => {
+  if (typeof url === "string" && /^https?:\/\//.test(url)) shell.openExternal(url);
+});
 
-// PRIVACY: auto-hide while screen-sharing (gmeet/discord use the ScreenCast portal)
+function handlerFor(which) {
+  if (which === "toggle") return toggle;
+  if (which === "workspace") return () => show({ focus: true, to: "workspace" });
+  return hide;
+}
+
+function registerShortcuts() {
+  for (const which of Object.keys(DEFAULT_SHORTCUTS)) {
+    const accel = state.shortcuts[which];
+    if (!accel) continue;
+    try {
+      if (!globalShortcut.register(accel, handlerFor(which))) {
+        // Another application already owns it. Say so rather than failing silently.
+        setTimeout(() => toast(`Shortcut ${accel} is already taken`), 2500);
+      }
+    } catch {
+      /* malformed accelerator in the state file */
+    }
+  }
+}
+
+// PRIVACY: get out of the way when a screen share starts (Meet/Discord use the ScreenCast portal).
 function watchScreencast() {
   try {
-    const mon = spawn("dbus-monitor", ["--session", "interface='org.freedesktop.portal.ScreenCast'"],
+    const mon = spawn("dbus-monitor",
+      ["--session", "interface='org.freedesktop.portal.ScreenCast'"],
       { stdio: ["ignore", "pipe", "ignore"] });
     mon.stdout.on("data", (d) => {
-      if (/member=(Start|SelectSources|CreateSession)/.test(d.toString()) && visible) hideAll();
+      if (/member=(Start|SelectSources|CreateSession)/.test(d.toString()) && visible) hide();
     });
     kids.push(mon);
-  } catch (e) {}
+  } catch {
+    /* no dbus-monitor: the overlay simply stays visible */
+  }
 }
 
 app.whenReady().then(() => {
-  // Auto-grant camera + mic — frameless overlay windows can't show permission dialogs
-  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    const allowed = ["media", "mediaKeySystem", "display-capture", "accessibility-events"];
-    callback(allowed.includes(permission));
-  });
-  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
-    return ["media", "mediaKeySystem", "display-capture"].includes(permission);
-  });
+  loadState();
 
-  createAmbient();
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(["media", "mediaKeySystem", "display-capture"].includes(permission));
+  });
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) =>
+    ["media", "mediaKeySystem", "display-capture"].includes(permission));
+
   createWindow();
-  createSpotify();
-  createCricket();
   ensureBackend();
-  try { fs.writeFileSync("/tmp/jarvis-overlay.pid", String(process.pid)); } catch (e) {}
-  try { globalShortcut.register("Control+Super+Space", toggleOverlay); } catch (e) {}
-  try { globalShortcut.register("Control+Alt+J", toggleOverlay); } catch (e) {}
-  try { globalShortcut.register("Control+Super+H", hideAll); } catch (e) {}
+  registerShortcuts();
   watchScreencast();
+
+  try {
+    fs.writeFileSync("/tmp/jarvis-overlay.pid", String(process.pid));
+  } catch {
+    /* pid file is a convenience for scripts/stop.sh */
+  }
+
   app.on("activate", () => BrowserWindow.getAllWindows().length === 0 && createWindow());
 });
 
 app.on("will-quit", () => {
   app.isQuiting = true;
+  rememberBounds();
   globalShortcut.unregisterAll();
-  for (const k of kids) { try { k.kill("SIGTERM"); } catch (e) {} }
+  for (const k of kids) {
+    try { k.kill("SIGTERM"); } catch { /* already gone */ }
+  }
 });
 app.on("window-all-closed", () => app.quit());

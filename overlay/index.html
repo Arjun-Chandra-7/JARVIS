@@ -1,79 +1,179 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Orbitron:wght@600;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="style.css" />
+    <!-- No webfont fetch: the overlay must render instantly and work offline. -->
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="app.css" />
+    <title>JARVIS</title>
   </head>
-  <body class="voice">
-    <div class="hud">
-      <!-- expanded panel (text mode): conversation + systems + actions -->
-      <section class="expand">
-        <div class="ehead">
-          <span>J.A.R.V.I.S</span>
-          <div class="sysdots" id="sysdots" title="subsystems"></div>
-          <em id="ehint">online</em>
-        </div>
-        <div id="log" class="log"></div>
-        <div class="actions">
-          <button class="act" data-say="What did I miss? Summarise WhatsApp, messages and mail." title="Catch me up"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg></button>
-          <button class="act" data-say="Check my WhatsApp and summarise anything that needs a reply." title="WhatsApp"><svg viewBox="0 0 24 24"><path d="M21 11.5a8.5 8.5 0 0 1-12.6 7.4L3 20l1.2-5.2A8.5 8.5 0 1 1 21 11.5z"/></svg></button>
-          <button class="act" data-say="What's on my calendar today and what's my next meeting?" title="Agenda"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg></button>
-          <button class="act" data-say="Take a screenshot and tell me what's on my screen." title="Read screen"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></button>
-          <button class="act" data-say="Give me a full system status report." title="Status"><svg viewBox="0 0 24 24"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg></button>
-          <button class="act" data-cmd="__phone" title="Mirror phone"><svg viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg></button>
-          <button class="act" id="awayBtn" data-say="I'm heads-down — hold non-urgent notifications and cover my messages." title="Focus / Away"><svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg></button>
-        </div>
-      </section>
+  <body data-form="pill" data-state="idle">
+    <!-- ================= FORM A — quiet presence ================= -->
+    <!-- A small chip. Mic state, a hint of activity, nothing that competes with real work. -->
+    <div class="shell" id="shell">
+      <header class="pillbar" id="pillbar">
+        <button
+          class="orb"
+          id="orb"
+          type="button"
+          aria-label="Open JARVIS conversation"
+          title="Open conversation (click) · drag to move"
+        >
+          <span class="orb-ring" aria-hidden="true"></span>
+          <span class="orb-core" aria-hidden="true"></span>
+          <svg class="orb-mic" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="9" y="3" width="6" height="11" rx="3" />
+            <path d="M6 11a6 6 0 0 0 12 0M12 17v4M8 21h8" />
+          </svg>
+        </button>
 
-      <!-- Spotify Widget -->
-      <div id="spotify-widget" class="spotify-widget">
-        <img id="sp-art" src="" alt="Album Art">
-        <div class="sp-info">
-          <div id="sp-title" class="sp-title"></div>
-          <div id="sp-artist" class="sp-artist"></div>
-          <div id="sp-lyric" class="sp-lyric"></div>
-          <div class="sp-controls">
-            <button onclick="spCmd('previous')">⏮</button>
-            <button onclick="spCmd('play-pause')" id="sp-play">⏸</button>
-            <button onclick="spCmd('next')">⏭</button>
+        <div class="pill-mid">
+          <div class="pill-state" id="pillState">Starting…</div>
+          <canvas
+            class="meter"
+            id="meter"
+            width="320"
+            height="20"
+            aria-hidden="true"
+          ></canvas>
+        </div>
+
+        <div class="pill-right">
+          <span class="work-dot" id="workDot" hidden title="Background work in progress"></span>
+          <button class="icon-btn" id="expandBtn" type="button" aria-label="Expand to workspace"
+                  title="Workspace">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 10V4h6M20 14v6h-6M20 10V4h-6M4 14v6h6" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- ================= FORM B/C — conversation and workspace ================= -->
+      <main class="panel" id="panel">
+        <nav class="tabs" id="tabs" role="tablist" aria-label="JARVIS views">
+          <button class="tab is-active" role="tab" id="tab-chat" aria-selected="true"
+                  aria-controls="view-chat" type="button">Conversation</button>
+          <button class="tab" role="tab" id="tab-tasks" aria-selected="false"
+                  aria-controls="view-tasks" type="button">
+            Tasks <span class="badge" id="taskBadge" hidden>0</span>
+          </button>
+          <button class="tab" role="tab" id="tab-memory" aria-selected="false"
+                  aria-controls="view-memory" type="button">Memory</button>
+          <button class="tab" role="tab" id="tab-system" aria-selected="false"
+                  aria-controls="view-system" type="button">System</button>
+          <div class="tabs-spacer"></div>
+          <button class="icon-btn" id="collapseBtn" type="button"
+                  aria-label="Collapse to pill" title="Collapse (Esc)">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /></svg>
+          </button>
+        </nav>
+
+        <!-- ---------- conversation ---------- -->
+        <section class="view is-active" id="view-chat" role="tabpanel" aria-labelledby="tab-chat">
+          <div class="log" id="log" tabindex="0" aria-live="polite" aria-label="Conversation"></div>
+
+          <div class="scroll-pin" id="scrollPin" hidden>
+            <button type="button" id="scrollPinBtn">New messages ↓</button>
           </div>
-        </div>
-      </div>
 
-      <!-- console bar (always visible) -->
-      <section class="bar">
-        <div class="eye" title="optics">
-          <video id="cam" autoplay muted playsinline></video>
-          <canvas id="handfx"></canvas>
-          <span class="presence" id="presence"></span>
-        </div>
-
-        <!-- the MIC ORB: scroll or click to switch voice <-> text -->
-        <div class="orb" id="orb" title="scroll or click to switch voice / text">
-          <span class="r r1"></span><span class="r r2"></span><span class="r r3"></span>
-          <div class="core"></div>
-          <svg class="mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4M8 21h8"/></svg>
-        </div>
-
-        <div class="mid">
-          <div class="statuswrap">
-            <div class="status" id="status">initialising…</div>
-            <canvas class="wave" id="wave" width="360" height="26"></canvas>
+          <!-- What JARVIS is doing right now, with the controls that stop it. -->
+          <div class="activity" id="activity" hidden>
+            <span class="activity-spinner" aria-hidden="true"></span>
+            <span class="activity-text" id="activityText">Working…</span>
+            <button class="ghost-btn" id="stopSpeakBtn" type="button" hidden>Stop speaking</button>
+            <button class="ghost-btn danger" id="cancelBtn" type="button" hidden>Cancel</button>
           </div>
-          <input id="msg" class="msg" type="text" placeholder="message Jarvis…   ( ↵ send · scroll orb for voice )" autocomplete="off" />
-        </div>
 
-        <div class="rightcol">
-          <div class="clock" id="clock">--:--</div>
-          <div class="mini" id="mini">—</div>
-        </div>
-      </section>
+          <form class="composer" id="composer">
+            <div class="context-chip" id="contextChip" hidden>
+              <span class="context-kind" id="contextKind">Selection</span>
+              <span class="context-preview" id="contextPreview"></span>
+              <button class="chip-x" id="contextClear" type="button"
+                      aria-label="Remove attached context">×</button>
+            </div>
+            <div class="composer-row">
+              <input
+                id="input"
+                class="input"
+                type="text"
+                placeholder="Ask JARVIS…"
+                autocomplete="off"
+                spellcheck="false"
+                aria-label="Message JARVIS"
+              />
+              <button class="send-btn" id="sendBtn" type="submit" aria-label="Send">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15M13 6l6 6-6 6" /></svg>
+              </button>
+            </div>
+            <div class="quick" id="quick">
+              <button type="button" class="chip" data-lens="selection">Explain selection</button>
+              <button type="button" class="chip" data-lens="screen">Read my screen</button>
+              <button type="button" class="chip" data-say="What did I miss? Summarise WhatsApp, messages and mail.">Catch me up</button>
+              <button type="button" class="chip" data-say="What's on my calendar today and what's my next meeting?">Agenda</button>
+            </div>
+          </form>
+        </section>
+
+        <!-- ---------- tasks ---------- -->
+        <section class="view" id="view-tasks" role="tabpanel" aria-labelledby="tab-tasks" hidden>
+          <div class="view-head">
+            <h2>Background work</h2>
+            <p class="hint">Long jobs keep running when the overlay is collapsed.</p>
+          </div>
+          <div class="cards" id="taskList">
+            <p class="empty" id="taskEmpty">Nothing running.</p>
+          </div>
+        </section>
+
+        <!-- ---------- memory ---------- -->
+        <section class="view" id="view-memory" role="tabpanel" aria-labelledby="tab-memory" hidden>
+          <div class="view-head">
+            <h2>Memory</h2>
+            <p class="hint">What JARVIS knows, where it came from, and when it was recorded.</p>
+          </div>
+          <form class="memory-search" id="memorySearch">
+            <input id="memoryQuery" class="input" type="search" placeholder="Search memory…"
+                   aria-label="Search memory" autocomplete="off" />
+            <button class="ghost-btn" type="submit">Search</button>
+          </form>
+          <div class="cards" id="memoryResults">
+            <p class="empty">Search to see what JARVIS has stored.</p>
+          </div>
+        </section>
+
+        <!-- ---------- system ---------- -->
+        <section class="view" id="view-system" role="tabpanel" aria-labelledby="tab-system" hidden>
+          <div class="view-head">
+            <h2>System</h2>
+            <p class="hint">Subsystem health and the diagnostics inspector.</p>
+          </div>
+          <div class="systems" id="systems"></div>
+          <div class="telemetry" id="telemetry"></div>
+
+          <details class="inspector" id="inspector">
+            <summary>Diagnostics</summary>
+            <div class="setting">
+              <label for="shortcutInput">Invocation shortcut</label>
+              <div class="setting-row">
+                <input id="shortcutInput" class="input mono" type="text" spellcheck="false"
+                       aria-describedby="shortcutHelp" />
+                <button class="ghost-btn" id="shortcutSave" type="button">Save</button>
+              </div>
+              <p class="hint" id="shortcutHelp">
+                Electron accelerator, e.g. <code>Control+Super+Space</code>.
+              </p>
+              <p class="hint" id="shortcutStatus" role="status"></p>
+            </div>
+            <pre class="log-dump mono" id="eventDump" aria-label="Recent backend events"></pre>
+          </details>
+        </section>
+      </main>
     </div>
 
-    <div id="toast" class="toast"></div>
-    <script src="renderer.js"></script>
-    <script type="module" src="gestures.js"></script>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script src="app.js"></script>
   </body>
 </html>

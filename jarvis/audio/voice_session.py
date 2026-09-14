@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from ..config import Config
-from . import endpoint, stt, tts, vad
+from . import endpoint, levels, speech_control, stt, tts, vad
 from .mic import Microphone
 from .wake import WakeWord
 
@@ -227,6 +227,7 @@ class VoiceSession:
                 vad=self._endpointer,
                 on_speech_start=lambda: self.on_event("listening"),
                 on_partial=on_partial if partial is not None else None,
+                on_level=lambda lvl, prob: levels.publish(lvl, "listening", prob),
                 partial_every_ms=self.config.partial_every_ms,
             )
             speech_end[0] = time.monotonic()
@@ -372,6 +373,13 @@ class VoiceSession:
             monitor = threading.Thread(target=self._barge_in_monitor, args=(stop,), daemon=True)
             monitor.start()
         self._speaking.set()
+        speech_control.set_speaking(True)
+        # A stop requested before this utterance started must not silence it.
+        stop_token = speech_control.token()
+        watcher = threading.Thread(
+            target=self._watch_stop_request, args=(stop, stop_token), daemon=True
+        )
+        watcher.start()
         try:
             if self.backend == "local":
                 from . import local_tts
@@ -379,6 +387,7 @@ class VoiceSession:
                 local_tts.speak(
                     text, self.config.piper_model, self.config.audio_output_device, stop_event=stop,
                     on_first_audio=lambda: self.on_event("speaking", text),
+                    on_level=lambda lvl: levels.publish(lvl, "speaking"),
                 )
             else:
                 tts.speak(
@@ -393,10 +402,20 @@ class VoiceSession:
         finally:
             stop.set()
             self._speaking.clear()
+            speech_control.set_speaking(False)
+            levels.publish(0.0, "")     # idle: stop the HUD animating a level nothing is producing
             if monitor is not None:
                 monitor.join(timeout=1.0)
             self._flush_mic()
             self.on_event("spoken")
+
+    def _watch_stop_request(self, stop: threading.Event, since: int) -> None:
+        """Poll the cross-process stop signal while speaking; cheap and ends with the utterance."""
+        while not stop.wait(0.1):
+            if speech_control.should_stop(since):
+                self.on_event("barge_in")
+                stop.set()
+                return
 
     def stop_speaking(self) -> bool:
         """Cut the current utterance short. Distinct from cancelling the task that produced it."""

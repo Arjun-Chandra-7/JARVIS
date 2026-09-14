@@ -145,6 +145,7 @@ def record_utterance(
     vad: Optional[StreamingVad] = None,
     on_speech_start: Optional[Callable[[], None]] = None,
     on_partial: Optional[Callable[[bytes], None]] = None,
+    on_level: Optional[Callable[[float, float], None]] = None,
     partial_every_ms: int = 700,
 ) -> Optional[bytes]:
     """Capture one spoken phrase, ending as soon as Silero says the speech stopped.
@@ -184,8 +185,16 @@ def record_utterance(
         arr = np.asarray(frame, dtype=np.int16)
         was_started = decision.started
 
+        last_prob = 0.0
         for prob in vad.push(arr):
+            last_prob = prob
             decision.update(prob)
+
+        if on_level is not None:
+            # Peak-normalised so the HUD reacts to how loud the room actually is, not to a gain
+            # setting. Cheap: one pass over a frame we have already loaded.
+            peak = float(np.abs(arr).max()) / 32768.0 if arr.size else 0.0
+            on_level(peak, last_prob)
 
         if not decision.started:
             preroll.append(arr.copy())

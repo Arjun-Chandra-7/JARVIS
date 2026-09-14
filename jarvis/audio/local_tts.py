@@ -145,12 +145,26 @@ def synth_stream(
             yield _synth_chunk_cli(chunk, model_path)
 
 
+def _peak(pcm: bytes) -> float:
+    """Loudest sample in a block, 0..1 — what the HUD's speaking animation follows."""
+    if not pcm:
+        return 0.0
+    import array
+
+    a = array.array("h")
+    a.frombytes(pcm[: len(pcm) - (len(pcm) % 2)])
+    if not a:
+        return 0.0
+    return min(1.0, max(abs(min(a)), abs(max(a))) / 32768.0)
+
+
 def speak(
     text: str,
     model_path: str,
     output_device: int = -1,
     stop_event: Optional[threading.Event] = None,
     on_first_audio: Optional[callable] = None,
+    on_level: Optional[callable] = None,
 ) -> None:
     """Speak `text`, starting playback on the first sentence.
 
@@ -209,7 +223,10 @@ def speak(
             for i in range(0, len(pcm), chunk):
                 if stop_event is not None and stop_event.is_set():
                     break
-                stream.write(pcm[i : i + chunk])
+                block = pcm[i : i + chunk]
+                if on_level is not None:
+                    on_level(_peak(block))
+                stream.write(block)
     finally:
         if stream is not None:
             stream.stop()

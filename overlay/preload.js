@@ -1,13 +1,42 @@
+// The only bridge between the page and the main process. Everything here is a named, argument-
+// checked message — the renderer never gets `ipcRenderer`, `require`, or a way to invoke an
+// arbitrary channel, so a bug (or injected text) in the page cannot reach the shell.
 const { contextBridge, ipcRenderer } = require("electron");
 
-// Only one process can hold /dev/video0. Default owner is the backend presence service;
-// JARVIS_OVERLAY_CAMERA=1 hands it to the overlay instead (in-browser gestures).
+const FORMS = ["pill", "conversation", "workspace"];
+const SHORTCUTS = ["toggle", "workspace", "hide"];
+
 contextBridge.exposeInMainWorld("jarvis", {
-  overlayCamera: process.env.JARVIS_OVERLAY_CAMERA === "1",
-  setMode: (mode) => ipcRenderer.send("mode", mode),
-  setZoom: (f) => ipcRenderer.send("set-zoom", f),
-  launchPhone: () => ipcRenderer.send("launch-phone"),
+  // --- window shape -------------------------------------------------------
+  setForm: (name) => {
+    if (FORMS.includes(name)) ipcRenderer.send("form", name);
+  },
+  hide: () => ipcRenderer.send("hide"),
+  focusWindow: () => ipcRenderer.send("focus-window"),
   quit: () => ipcRenderer.send("quit"),
-  sportsToggle: (state) => ipcRenderer.send("sports_toggle", state),
-  onToast: (cb) => ipcRenderer.on("toast", (_e, msg) => cb(msg)),
+
+  // --- settings -----------------------------------------------------------
+  getState: () => ipcRenderer.invoke("get-state"),
+  setShortcut: (which, accelerator) => {
+    if (!SHORTCUTS.includes(which)) {
+      return Promise.resolve({ ok: false, error: "unknown shortcut" });
+    }
+    if (typeof accelerator !== "string" || accelerator.length > 64) {
+      return Promise.resolve({ ok: false, error: "invalid accelerator" });
+    }
+    return ipcRenderer.invoke("set-shortcut", which, accelerator);
+  },
+
+  // --- actions ------------------------------------------------------------
+  launchPhone: () => ipcRenderer.send("launch-phone"),
+  openExternal: (url) => {
+    if (typeof url === "string" && /^https?:\/\//.test(url)) {
+      ipcRenderer.send("open-external", url);
+    }
+  },
+
+  // --- main -> renderer ---------------------------------------------------
+  onToast: (cb) => ipcRenderer.on("toast", (_e, msg) => cb(String(msg))),
+  onForm: (cb) => ipcRenderer.on("form", (_e, name) => cb(String(name))),
+  onVisibility: (cb) => ipcRenderer.on("visibility", (_e, vis) => cb(!!vis)),
 });
