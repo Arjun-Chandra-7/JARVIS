@@ -35,13 +35,6 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
     if asleep():
         return "I'm asleep, sir. Say “Jarvis, wake up” to bring me back."
 
-    # "open X" has exactly one meaning, so resolve it here rather than asking the model — which,
-    # measured, called no tool at all on three of five attempts at "open friends".
-    from .open_command import handle as _open_handle
-    opened = await _open_handle(raw, config)
-    if opened is not None:
-        return opened
-
     from .preferences import set_notifications
     if re.search(r"\bnotifications?\b", command) and re.search(
         r"\b(?:turn|switch|set|mute|unmute|disable|enable|stop|start|silence|resume|read|reading)\b", command
@@ -91,5 +84,13 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
                     r"|bluetooth(?: devices?| scan)|what(?:'?s| is) (?:on |around )?bluetooth", command):
         from .presence import bluetooth
         return await asyncio.to_thread(bluetooth.report, config)
+    # Last, so the specific handlers above keep priority: "open phone" and "open meet" are theirs.
+    # Everything else shaped like "open X" has one meaning, and measured, routing it through the
+    # local 3B model called no tool at all on three of five attempts at "open friends".
+    from .open_command import handle as open_something
+    opened = await open_something(raw, config)
+    if opened is not None:
+        return opened
+
     from .integrations import coding_jobs
     return await coding_jobs.handle_message(raw, session_id=session_id)
