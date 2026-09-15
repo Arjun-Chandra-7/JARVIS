@@ -431,6 +431,20 @@ def find_and_drag(start_target: str, end_target: str, duration_ms: int = 500,
     return "Both targets were located, but the mouse drag failed."
 
 
+def _browser_is_in_front() -> bool:
+    """True when the focused window belongs to the browser Jarvis can drive."""
+    from . import accessibility, browser
+
+    if not browser.control_ready():
+        return False
+    try:
+        tree = accessibility.snapshot()
+    except Exception:  # noqa: BLE001
+        return False
+    name = f"{tree.get('app', '')} {tree.get('window', '')}".lower()
+    return any(mark in name for mark in ("opera", "chrome", "chromium", "firefox", "brave"))
+
+
 def click_target(target: str, button: str = "left", double: bool = False, config=None) -> str:
     """Use a named control: its own accessibility action first, a pointer only when it has none.
 
@@ -444,7 +458,27 @@ def click_target(target: str, button: str = "left", double: bool = False, config
     A pointer is still needed for anything with no accessibility tree: games, canvases, video,
     remote desktops. Those go through find_and_click, which looks at the screen.
     """
+    import asyncio
+
     from . import accessibility
+
+    # The browser first, when the browser is what you are looking at. A web page is the richest
+    # document model on the machine — every element, its text, its position, whether it is
+    # visible — and it was being skipped entirely: Chromium publishes no accessibility tree
+    # worth the name, so "click the next button on my screen" fell through to reading a
+    # screenshot and answered "I could not confirm 'next button' at the proposed screen
+    # position". The page knew exactly where that button was the whole time.
+    if _browser_is_in_front():
+        from . import browser
+
+        try:
+            found = asyncio.run(browser.click_text(target))
+        except RuntimeError:          # already inside a loop; the caller will use the async path
+            found = None
+        except Exception:  # noqa: BLE001 - fall through to the other mechanisms
+            found = None
+        if isinstance(found, dict) and found.get("ok") and found.get("changed") is not False:
+            return found.get("message") or f"Clicked “{target}” on the page."
 
     tree = accessibility.snapshot()
     where = tree.get("app") or "the active app"

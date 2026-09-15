@@ -217,3 +217,51 @@ def test_nothing_found_says_nothing():
     from jarvis.integrations.browser import describe_results
 
     assert describe_results("friends", []) == ""
+
+
+# ------------------------------------------------------------------ drawing on a canvas
+def test_a_stroke_needs_at_least_two_points():
+    """A canvas is the one thing on a page with no model inside it, so strokes are all there is;
+    a single point is a click, not a line."""
+    import asyncio
+
+    from jarvis.integrations import browser
+
+    got = asyncio.run(browser.draw_path([[(10, 10)]]))
+    assert got["ok"] is False
+
+
+def test_nothing_to_draw_is_refused_rather_than_faked():
+    import asyncio
+
+    from jarvis.integrations import browser
+
+    assert asyncio.run(browser.draw_path([]))["ok"] is False
+    assert asyncio.run(browser.draw_path(None))["ok"] is False
+
+
+def test_strokes_stay_separate(monkeypatch):
+    """Lifting between strokes is what makes them separate lines rather than one scribble."""
+    import asyncio
+
+    from jarvis.integrations import browser
+
+    events = []
+
+    class FakeSession:
+        async def call(self, method, params=None, **kw):
+            if method == "Input.dispatchMouseEvent":
+                events.append(params["type"])
+            return {}
+
+        async def js(self, *a, **k):
+            return None
+
+    async def fake_with_page(fn, timeout=25.0, **kw):
+        return await fn(FakeSession())
+
+    monkeypatch.setattr(browser, "_with_page", fake_with_page)
+    got = asyncio.run(browser.draw_path([[(0, 0), (5, 5)], [(9, 9), (1, 1)]]))
+    assert got["strokes"] == 2
+    assert events.count("mousePressed") == 2
+    assert events.count("mouseReleased") == 2

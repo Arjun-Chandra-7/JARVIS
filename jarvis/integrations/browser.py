@@ -1125,3 +1125,72 @@ async def go_back() -> dict:
         return {"ok": True, "now": now, "message": "Went back."}
 
     return await _with_page(do, surface=True)
+
+
+async def draw_path(strokes: list, settle_s: float = 0.0) -> dict:
+    """Draw on whatever is under the pointer — a canvas, a whiteboard, a drawing app in a tab.
+
+    A canvas is the one thing on a web page with no document model inside it: the DOM says
+    "there is a canvas here" and nothing about what is drawn on it. So this is the one place a
+    pointer is genuinely the right tool rather than a fallback, and CDP dispatches trusted events
+    that a canvas cannot tell from a hand.
+
+    `strokes` is a list of strokes, each a list of (x, y) points in CSS pixels relative to the
+    page. Each stroke is one press, a run of moves, and a release — lifting between strokes is
+    what makes them separate lines rather than one continuous scribble.
+    """
+    cleaned: list[list[tuple[int, int]]] = []
+    for stroke in strokes or []:
+        points = [(int(x), int(y)) for x, y in stroke if x is not None and y is not None]
+        if len(points) >= 2:
+            cleaned.append(points)
+    if not cleaned:
+        return {"ok": False, "error": "nothing to draw"}
+
+    async def do(session: _Session):
+        drawn = 0
+        for points in cleaned:
+            x, y = points[0]
+            await session.call("Input.dispatchMouseEvent",
+                               {"type": "mouseMoved", "x": x, "y": y})
+            await session.call("Input.dispatchMouseEvent",
+                               {"type": "mousePressed", "x": x, "y": y,
+                                "button": "left", "clickCount": 1})
+            for x, y in points[1:]:
+                await session.call("Input.dispatchMouseEvent",
+                                   {"type": "mouseMoved", "x": x, "y": y,
+                                    "button": "left", "buttons": 1})
+            x, y = points[-1]
+            await session.call("Input.dispatchMouseEvent",
+                               {"type": "mouseReleased", "x": x, "y": y,
+                                "button": "left", "clickCount": 1})
+            drawn += 1
+            if settle_s:
+                await asyncio.sleep(settle_s)
+        return {"ok": True, "strokes": drawn,
+                "message": f"Drew {drawn} stroke{'s' if drawn != 1 else ''}."}
+
+    return await _with_page(do, surface=True, timeout=120.0)
+
+
+async def canvas_box() -> Optional[dict]:
+    """Where the drawing surface is on the page, so strokes can be scaled to fit it."""
+
+    async def do(session: _Session):
+        return await session.js(r"""
+        (() => {
+          let best = null;
+          for (const el of document.querySelectorAll('canvas, svg, [role="img"][contenteditable]')) {
+            const r = el.getBoundingClientRect();
+            if (r.width < 80 || r.height < 80) continue;
+            if (!best || r.width * r.height > best.w * best.h) {
+              best = {x: Math.round(r.left), y: Math.round(r.top),
+                      w: Math.round(r.width), h: Math.round(r.height),
+                      tag: el.tagName.toLowerCase()};
+            }
+          }
+          return best;
+        })()""")
+
+    got = await _with_page(do)
+    return got if isinstance(got, dict) and got.get("w") else None
