@@ -376,9 +376,10 @@ def resolve_site(name: str) -> str:
     n = (name or "").strip()
     low = n.lower().rstrip(" .!?")
     # "open f.r.i.e.n.d.s" — spoken letter-by-letter titles arrive dotted.
-    if re.fullmatch(r"(?:[a-z]\.){2,}[a-z]?", low):
-        low = low.replace(".", "")
-        n = low
+    spoken = spoken_title(n)
+    if spoken.lower() != low:
+        low = spoken.lower()
+        n = spoken
     if low in SITES:
         return SITES[low]
     for key, url in SITES.items():
@@ -407,6 +408,19 @@ async def current_page() -> dict:
 # "F.R.I.E.N.D.S" is how a spelled-out title arrives from speech, and it matches a domain pattern
 # almost exactly — single letters separated by dots. Titles are not destinations.
 _DOTTED_ACRONYM = re.compile(r"^(?:[a-z]\.){2,}[a-z]?\.?$", re.IGNORECASE)
+
+
+def spoken_title(name: str) -> str:
+    """What to actually search for. "F.R.I.E.N.D.S" -> "friends".
+
+    Speech renders a spelled-out title with dots between the letters, and searching a site for the
+    literal dotted string finds nothing — verified on Netflix, which returned no results for
+    "f.r.i.e.n.d.s" and the right show for "friends".
+    """
+    raw = (name or "").strip().rstrip(" .!?")
+    if _DOTTED_ACRONYM.match(raw):
+        return raw.replace(".", "")
+    return raw
 
 
 def _is_known_destination(name: str) -> bool:
@@ -492,6 +506,7 @@ _SEARCH_FIELD_JS = """
 
 async def search_here(query: str) -> dict:
     """Use the current site's own search box. {ok: False} when the page has none."""
+    query = spoken_title(query)
 
     async def do(session: _Session):
         found = await session.js(_SEARCH_FIELD_JS) or {}
