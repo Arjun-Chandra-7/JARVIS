@@ -330,6 +330,7 @@ _LIST_JS = r"""
     if (st.visibility === "hidden" || st.display === "none") continue;
     const t = norm(el.getAttribute("aria-label") || el.innerText || el.getAttribute("title"));
     if (!t || t.length > 80) continue;
+    if (/^(more to explore|top searches|explore titles)/i.test(t)) continue;
     if (seen.has(t)) continue;
     seen.add(t);
     out.push(t);
@@ -650,7 +651,11 @@ _RESULTS_JS = r"""
 (() => {
   const norm = s => (s || "").replace(/\s+/g, " ").trim();
   const root = document.querySelector('main, [role="main"]') || document.body;
-  const chrome = e => e.closest('nav, header, footer, [role="navigation"], [role="banner"]');
+  // Cookie notices and other modals live inside main and shout louder than the results:
+  // "Privacy Preference Center, Essential Cookies - Cookie Details button opens Cookie List".
+  const chrome = e => e.closest(
+    'nav, header, footer, [role="navigation"], [role="banner"], [role="dialog"],' +
+    '[aria-modal="true"], #onetrust-consent-sdk, [id*="cookie"], [class*="consent"]');
   const label = e => norm(e.getAttribute('aria-label')
                           || ((e.querySelector('img') || {}).alt)
                           || e.innerText);
@@ -661,8 +666,12 @@ _RESULTS_JS = r"""
   const out = [], seen = new Set();
   for (const el of nodes) {
     if (chrome(el)) continue;
+    // Take the innermost labelled element. A wrapper's label is every title glued together:
+    // "More to explore: Breaking Bad Collection The Bad News Bears in Breaking Training".
+    if (el.querySelector('[aria-label], [data-uia*="link"]')) continue;
     const t = label(el);
     if (!t || t.length > 80) continue;
+    if (/^(more to explore|top searches|explore titles)/i.test(t)) continue;
     const k = t.toLowerCase();
     if (seen.has(k)) continue;
     seen.add(k);
@@ -674,11 +683,50 @@ _RESULTS_JS = r"""
 """
 
 
-async def results_here() -> list:
-    """The titles a search turned up on the page we are on."""
+_BLOCKER_JS = r"""
+(() => {
+  const norm = s => (s || "").replace(/\s+/g, " ").trim();
+  for (const el of document.querySelectorAll(
+      '[role="dialog"], [aria-modal="true"], #onetrust-consent-sdk, [id*="cookie"], [class*="consent"]')) {
+    const r = el.getBoundingClientRect();
+    const st = getComputedStyle(el);
+    if (st.display === "none" || st.visibility === "hidden") continue;
+    if (r.width < 200 || r.height < 60) continue;
+    return norm(el.getAttribute("aria-label") || el.innerText).slice(0, 120);
+  }
+  return "";
+})()
+"""
+
+
+async def blocking_overlay() -> str:
+    """A cookie notice or modal sitting over the page, or "" when the page is clear."""
 
     async def do(session: _Session):
-        return await session.js(_RESULTS_JS) or []
+        return await session.js(_BLOCKER_JS) or ""
+
+    got = await _with_page(do)
+    return got if isinstance(got, str) else ""
+
+
+async def results_here(wait_s: float = 4.0) -> list:
+    """The titles a search turned up on the page we are on.
+
+    Results are rendered after the page loads, so looking once immediately came back empty and a
+    search that worked was reported as having found nothing. Poll until they appear.
+    """
+
+    async def do(session: _Session):
+        deadline = time.time() + wait_s
+        found: list = []
+        while True:
+            got = await session.js(_RESULTS_JS) or []
+            if isinstance(got, list) and len(got) >= 3:
+                return got
+            found = got if isinstance(got, list) else found
+            if time.time() >= deadline:
+                return found
+            await asyncio.sleep(0.4)
 
     got = await _with_page(do)
     return got if isinstance(got, list) else []
@@ -695,6 +743,28 @@ def describe_results(query: str, items: list) -> str:
             first = " — it's the first result." if n == 0 else f" — it's result {n + 1}."
             return f"Found {item}{first}"
     return f"I don't see {query}. Results include: {', '.join(items[:5])}."
+
+
+def describe_blocker(text: str) -> str:
+    """How to report an overlay. Dismissing a consent notice is the user's decision, not Jarvis's."""
+    if not text:
+        return ""
+    low = text.lower()
+    if "cookie" in low or "consent" in low or "privacy" in low:
+        return ("A cookie notice is covering the page, so nothing on it can be clicked. "
+                "Say “accept cookies” and I'll dismiss it.")
+    return f"Something is covering the page: {text[:60]}"
+
+
+async def _describe_page(query: str) -> str:
+    """What the search found — or why it could not find anything."""
+    items = await results_here()
+    said = describe_results(query, items)
+    if said.startswith("I don't see") or not said:
+        blocked = describe_blocker(await blocking_overlay())
+        if blocked:
+            return blocked
+    return said
 
 
 async def search_here(query: str) -> dict:
@@ -716,7 +786,7 @@ async def search_here(query: str) -> dict:
             return True
 
         await _with_page(go, surface=True)
-        return {"ok": True, "found": describe_results(query, await results_here())}
+        return {"ok": True, "found": await _describe_page(query)}
 
     async def do(session: _Session):
         found = await session.js(_SEARCH_FIELD_JS) or {}
@@ -769,7 +839,7 @@ async def search_here(query: str) -> dict:
     got = await _with_page(do, surface=True)
     if not got.get("ok"):
         return {"ok": False}
-    return {"ok": True, "found": describe_results(query, await results_here())}
+    return {"ok": True, "found": await _describe_page(query)}
 
 
 async def click_text(phrase: str, nth: int = 1) -> dict:
