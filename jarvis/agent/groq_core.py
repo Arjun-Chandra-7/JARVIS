@@ -206,6 +206,8 @@ class GroqAgent:
                     s["function"]["description"] = d[:40]
 
         self._route_query = ""          # the utterance the tool shortlist is chosen for
+        self._failed_calls: dict[str, int] = {}     # calls that already failed this turn
+        self._failed_calls_advice: dict[str, str] = {}
         self._last_outcome = None       # outcome of the most recent tool call
         if config.tool_routing:
             try:
@@ -293,12 +295,29 @@ class GroqAgent:
             messages=self.messages,
             tools=self._active_schemas(),
             tool_choice="auto",
-            temperature=0.4,
+            temperature=self.config.temperature,
             max_tokens=512,
         )
 
+    # Words that make a request plausibly about LinkedIn. Without this gate the classifier ran on
+    # every single turn and pre-empted normal tool selection: "select the profile of Arjun" (a
+    # Netflix profile) was answered by opening the user's LinkedIn profile, because a 3B model
+    # sees "profile" and reaches for the one labelled option that contains it.
+    _LINKEDIN_HINTS = (
+        "linkedin", "linked in", "my network", "connection request", "invitation",
+        "my post", "my posts", "publish", "scheduled post", "draft post", "impressions",
+        "followers", "content copilot", "copilot",
+    )
+
+    def _looks_like_linkedin(self, user_text: str) -> bool:
+        low = (user_text or "").lower()
+        return any(hint in low for hint in self._LINKEDIN_HINTS)
+
     def _classify_linkedin_intent(self, user_text: str) -> str | None:
-        """Recover semantic LinkedIn navigation when a model declines to call a tool."""
+        """Recover semantic LinkedIn navigation when a model declines to call a tool.
+
+        Only called for requests that already mention LinkedIn — see `_looks_like_linkedin`.
+        """
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
@@ -364,6 +383,8 @@ class GroqAgent:
         if direct is not None:
             return direct
         self._route_query = user_text   # pick this turn's tool shortlist from what was asked
+        self._failed_calls.clear()
+        self._failed_calls_advice.clear()
         # episodic journal
         clean = " ".join(l for l in user_text.splitlines() if not l.strip().startswith("["))[:140].strip()
         if clean:
@@ -373,10 +394,14 @@ class GroqAgent:
                 pass
 
         now = datetime.now().astimezone()
-        try:
-            linkedin_intent = await asyncio.to_thread(self._classify_linkedin_intent, user_text)
-        except Exception:  # noqa: BLE001 - normal tool routing remains available
-            linkedin_intent = None
+        # Gated: this classifier bypasses tool selection entirely, so it must only run when the
+        # request is actually about LinkedIn.
+        linkedin_intent = None
+        if self._looks_like_linkedin(user_text):
+            try:
+                linkedin_intent = await asyncio.to_thread(self._classify_linkedin_intent, user_text)
+            except Exception:  # noqa: BLE001 - normal tool routing remains available
+                linkedin_intent = None
         if linkedin_intent:
             args = {"view": "dashboard"} if linkedin_intent == "linkedin_open_console" else {}
             self.on_tool(linkedin_intent, "semantic intent")
@@ -431,7 +456,7 @@ class GroqAgent:
                     )
                     linkedin_executed = any(name.startswith("linkedin_") for name, _ in salvaged)
                     continue
-                if not linkedin_executed:
+                if not linkedin_executed and self._looks_like_linkedin(user_text):
                     try:
                         intent = await asyncio.to_thread(self._classify_linkedin_intent, user_text)
                     except Exception:  # noqa: BLE001 - normal response remains available
@@ -476,6 +501,21 @@ class GroqAgent:
         })
         known = [s.get("function", {}).get("name", "") for s in self.schemas]
         for tid, name, args in triples:
+            # A small model that gets a tool wrong often re-issues the identical call rather than
+            # taking the redirect it was given, then gives up. Refuse the repeat and point at the
+            # alternative instead of spending the turn on it.
+            signature = f"{name}:{json.dumps(args, sort_keys=True, default=str)}"
+            if self._failed_calls.get(signature, 0) >= 1:
+                advice = self._failed_calls_advice.get(signature, "")
+                self.on_tool(name, "blocked — identical call already failed this turn")
+                self.messages.append({
+                    "role": "tool", "tool_call_id": tid,
+                    "content": (f"[failure] You already called {name} with exactly these arguments "
+                                f"this turn and it failed. Do not repeat it. "
+                                + (advice or "Use a different tool.")),
+                })
+                continue
+
             resolved, note = tool_contract.resolve_name(name, known)
             if resolved is None:
                 self.on_tool(name, f"rejected — {note}")
@@ -484,6 +524,7 @@ class GroqAgent:
                     "content": f"[failure] {note}. Available tools are the ones in your tool list.",
                 })
                 self._last_outcome = tool_contract.Outcome.FAILURE
+                self._failed_calls[signature] = self._failed_calls.get(signature, 0) + 1
                 continue
 
             schema = next(
@@ -497,6 +538,8 @@ class GroqAgent:
                     "content": check.message(resolved, schema),
                 })
                 self._last_outcome = tool_contract.Outcome.FAILURE
+                self._failed_calls[signature] = self._failed_calls.get(signature, 0) + 1
+                self._failed_calls_advice[signature] = check.message(resolved, schema)[:300]
                 continue
             if check is not None:
                 args = check.args
@@ -519,6 +562,13 @@ class GroqAgent:
                 outcome = tool_contract.Outcome.FAILURE
             self._last_outcome = outcome
             body = str(result)[:6000]
+            # A tool that reports its own failure in the text (a redirect, "not found", a refusal)
+            # counts as failed even though dispatch returned normally — otherwise the repeat-guard
+            # never sees it.
+            said_no = body.lstrip().upper().startswith(("WRONG TOOL", "[FAILURE]", "NO INSTALLED"))
+            if outcome is not tool_contract.Outcome.SUCCESS or said_no:
+                self._failed_calls[signature] = self._failed_calls.get(signature, 0) + 1
+                self._failed_calls_advice[signature] = body[:300]
             self.messages.append({
                 "role": "tool", "tool_call_id": tid,
                 "content": body if outcome is tool_contract.Outcome.SUCCESS else f"[failure] {body}",

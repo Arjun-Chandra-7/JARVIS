@@ -64,6 +64,33 @@ ALIASES: dict[str, str] = {
     "lock_screen": "lock the computer, lock screen, secure my laptop",
     "phone_mirror": "mirror my phone, show my phone, scrcpy, phone on screen",
     "open_url": "open a website, go to, browse to, visit",
+    # Deliberately no application names here: "open opera gx" means launch the app, and listing
+    # browser names in this alias made the router rank opening a *website* called "opera gx" first.
+    "browser_open": "open a website, go to a web page, netflix youtube github hotstar, "
+                    "put something on to watch, browse to a url, visit a site online",
+    "browser_click": "select the profile of someone on netflix, choose a viewing profile, "
+                     "click, select, choose, pick, tap, press the button on the page, "
+                     "open the show, play the movie, choose the episode, click on that",
+    # Pinned to LinkedIn itself: on "select the profile of Arjun" (a Netflix profile) the model
+    # reached for this, because it was the only offered tool whose text contained "profile".
+    "linkedin_open_profile": "my own public linkedin profile page, my linkedin url, "
+                             "show my linkedin profile to someone",
+    "browser_type": "search for on this site, type into the search box, look up on netflix, "
+                    "find the show, enter into the field",
+    "browser_read": "what is on the page, what can i click, what does the screen show, "
+                    "read the page, what are my options",
+    "browser_key": "press enter escape space, play pause the video, fullscreen, mute the video",
+    "browser_scroll": "scroll the page down up",
+    "browser_back": "go back to the previous page",
+    "browser_enable_control": "restart opera with control, enable browser control, "
+                              "let jarvis click in the browser",
+    "open_app": "open opera gx, open vs code, open spotify, open settings, open the terminal, "
+                "launch an installed application or program on this computer, start an app",
+    "list_apps": "what apps do i have installed, which applications, list programs",
+    # Scoped to native windows: inside a web page browser_click is exact, this one guesses from a
+    # screenshot, and the model reached for it for page clicks when both were offered.
+    "find_and_click": "click a button in a native desktop application window, not a web page, "
+                      "click something in vs code or a settings window by looking at the screen",
     "read_clipboard": "clipboard, what did i copy, copied text",
     "whatsapp_send": "message someone on whatsapp, text them, send a whatsapp",
     "message_person": "tell someone, message them about, let them know",
@@ -91,8 +118,14 @@ def _doc_for(schema: dict) -> str:
 
 
 def _fingerprint(schemas: list[dict], model: str) -> str:
+    """Cache key over everything that changes what a tool's vector should be.
+
+    The alias *text* has to be in here, not just its keys: editing the words a tool is matched
+    against must rebuild the index, or the cache quietly serves vectors for the old wording and
+    the edit appears to do nothing.
+    """
     names = sorted(s.get("function", {}).get("name", "") for s in schemas)
-    blob = json.dumps({"m": model, "n": names, "a": sorted(ALIASES)}, sort_keys=True)
+    blob = json.dumps({"m": model, "n": names, "a": ALIASES}, sort_keys=True)
     return hashlib.sha256(blob.encode()).hexdigest()[:16]
 
 

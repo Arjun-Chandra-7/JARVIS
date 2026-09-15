@@ -7,10 +7,13 @@ subprocess env is sanitized so a snap-confined launcher's leaked LD_LIBRARY_PATH
 
 from __future__ import annotations
 
+import glob
 import os
 import re
 import shutil
 import subprocess
+from pathlib import Path
+from typing import Optional
 
 _SNAP = ("LD_LIBRARY_PATH", "LD_PRELOAD", "GTK_PATH", "GIO_MODULE_DIR", "GSETTINGS_SCHEMA_DIR")
 _SINK = "@DEFAULT_AUDIO_SINK@"
@@ -85,13 +88,95 @@ def media_control(action: str) -> str | None:
 
 
 # --- brightness (GNOME SettingsDaemon) -----------------------------------
+def get_brightness() -> Optional[int]:
+    """Current screen brightness as a percentage, or None when there is no backlight."""
+    r = _run(["brightnessctl", "-m"])
+    if r and r.returncode == 0 and r.stdout:
+        # device,class,current,percent%,max
+        parts = r.stdout.strip().splitlines()[0].split(",")
+        if len(parts) >= 4 and parts[3].endswith("%"):
+            try:
+                return int(parts[3].rstrip("%"))
+            except ValueError:
+                pass
+    for path in sorted(glob.glob("/sys/class/backlight/*")):
+        try:
+            cur = int(Path(path, "brightness").read_text().strip())
+            mx = int(Path(path, "max_brightness").read_text().strip())
+            if mx > 0:
+                return round(cur / mx * 100)
+        except (OSError, ValueError):
+            continue
+    return None
+
+
 def set_brightness(percent: int) -> bool:
+    """Set screen brightness.
+
+    The previous implementation only spoke to org.gnome.SettingsDaemon.Power.Screen, an interface
+    that no longer exists on current GNOME — so this silently did nothing on this machine and
+    reported failure without saying why. brightnessctl is the portable path and ships with a udev
+    rule, so it works without the caller being in the `video` group; a direct sysfs write is the
+    fallback for systems where that group membership does exist.
+    """
     pct = max(1, min(100, int(percent)))
+
+    if shutil.which("brightnessctl"):
+        r = _run(["brightnessctl", "-m", "set", f"{pct}%"])
+        if r and r.returncode == 0:
+            return True
+
+    for path in sorted(glob.glob("/sys/class/backlight/*")):
+        try:
+            mx = int(Path(path, "max_brightness").read_text().strip())
+            Path(path, "brightness").write_text(str(max(1, round(mx * pct / 100))))
+            return True
+        except (OSError, ValueError):
+            continue
+
+    # Last resort: the old GNOME interface, for desktops that still expose it.
     r = _run([
         "gdbus", "call", "--session", "--dest", "org.gnome.SettingsDaemon.Power",
         "--object-path", "/org/gnome/SettingsDaemon/Power",
         "--method", "org.freedesktop.DBus.Properties.Set",
         "org.gnome.SettingsDaemon.Power.Screen", "Brightness", f"<int32 {pct}>",
+    ])
+    return bool(r and r.returncode == 0)
+
+
+def brightness_blocker() -> Optional[str]:
+    """Why brightness cannot be set, phrased so it can be read aloud. None when it works.
+
+    Worth diagnosing rather than returning a bare failure: on this machine the backlight is
+    root:video and the user is not in that group, so every path fails for one fixable reason.
+    """
+    devices = sorted(glob.glob("/sys/class/backlight/*"))
+    if not devices:
+        return "This machine exposes no backlight device, so I cannot change screen brightness."
+
+    for path in devices:
+        if os.access(os.path.join(path, "brightness"), os.W_OK):
+            return None
+
+    if shutil.which("brightnessctl"):
+        r = _run(["brightnessctl", "-m", "get"])
+        if r and r.returncode == 0:
+            device = os.path.basename(devices[0])
+            return (f"I can read the brightness but not change it: {device} is owned by the "
+                    f"'video' group and this account is not in it. One command fixes it "
+                    f"permanently — sudo usermod -aG video $USER — then log out and back in.")
+    return ("Nothing on this system will let me set the brightness without root. Adding this "
+            "account to the 'video' group (sudo usermod -aG video $USER) is the usual fix.")
+
+
+def set_keyboard_brightness(percent: int) -> bool:
+    """Keyboard backlight. GNOME exposes this one even where it does not manage the screen."""
+    pct = max(0, min(100, int(percent)))
+    r = _run([
+        "gdbus", "call", "--session", "--dest", "org.gnome.SettingsDaemon.Power",
+        "--object-path", "/org/gnome/SettingsDaemon/Power",
+        "--method", "org.freedesktop.DBus.Properties.Set",
+        "org.gnome.SettingsDaemon.Power.Keyboard", "Brightness", f"<int32 {pct}>",
     ])
     return bool(r and r.returncode == 0)
 

@@ -562,9 +562,32 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
 
     @tool("set_brightness", "Set screen brightness percent (1-100).", {"percent": {"type": "string"}}, ["percent"])
     async def set_brightness(a):
+        # This used to return "done." whether or not anything happened — and on this machine
+        # nothing did, because the backlight is not writable by the user. Report the truth, and
+        # the one command that fixes it.
         from ..integrations import system_control as sc
-        sc.set_brightness(_i(a.get("percent"), 70))
-        return "done."
+        want = _i(a.get("percent"), 70)
+        if sc.set_brightness(want):
+            now = sc.get_brightness()
+            return f"Brightness set to {now if now is not None else want} percent."
+        blocker = sc.brightness_blocker()
+        return blocker or "I could not change the brightness."
+
+    @tool("get_brightness", "Read the current screen brightness percent.", {})
+    async def get_brightness(a):
+        from ..integrations import system_control as sc
+        now = sc.get_brightness()
+        return f"Brightness is at {now} percent." if now is not None else \
+            (sc.brightness_blocker() or "No backlight on this machine.")
+
+    @tool("set_keyboard_brightness", "Set the keyboard backlight percent (0-100).",
+          {"percent": {"type": "string"}}, ["percent"])
+    async def set_keyboard_brightness(a):
+        from ..integrations import system_control as sc
+        want = _i(a.get("percent"), 50)
+        return (f"Keyboard backlight set to {want} percent."
+                if sc.set_keyboard_brightness(want)
+                else "This keyboard has no controllable backlight.")
 
     @tool("lock_screen", "Lock the screen.", {})
     async def lock_screen(a):
@@ -580,13 +603,148 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         sc.do_not_disturb(_b(a.get("on", True)))
         return "done."
 
-    @tool("open_url", "Open a URL in the browser (Opera).", {"url": {"type": "string"}}, ["url"])
+    # ---------------- precise browser control (Opera GX over DevTools) ----------------
+    # These act on the live DOM, so they chain: open a site, click what is on it, then click
+    # what that revealed. Each call re-reads the page rather than assuming what is there.
+    @tool("browser_open",
+          "Open a WEBSITE by name or URL, e.g. 'netflix', 'youtube', 'github.com'. "
+          "Only for web pages — to start an installed application use open_app.",
+          {"site": {"type": "string", "description": "website name or URL"}}, ["site"])
+    async def browser_open(a):
+        from ..integrations import browser
+        site = a.get("site", "")
+        state = browser.ensure(browser.resolve_site(site))
+        if not state["ok"]:
+            # Without control we can still open the page — just not click inside it.
+            if state["state"] == "needs_restart":
+                from ..integrations import apps
+                opened = apps.open_url(browser.resolve_site(site))
+                return (f"Opened {site}. {state['message']}" if opened
+                        else f"Could not open {site}. {state['message']}")
+            return state["message"]
+        res = await browser.open_site(site)
+        return res.get("message") or res.get("error", "Could not open it.")
+
+    @tool("browser_click",
+          "Click something in the web page that is open right now, by its visible text: a Netflix "
+          "or streaming PROFILE name, a show or movie title, a button, a link, a menu item. This "
+          "is the tool for 'select the profile of X' and 'open <show name>' while browsing.",
+          {"text": {"type": "string", "description": "the visible text to click"},
+           "nth": {"type": "integer", "description": "which match, 1 = best (default)"}}, ["text"])
+    async def browser_click(a):
+        from ..integrations import browser
+        if not browser.control_ready():
+            return browser.ensure()["message"]
+        res = await browser.click_text(a.get("text", ""), _i(a.get("nth", 1)) or 1)
+        if res.get("ok"):
+            now = res.get("now") or {}
+            extra = f" Now on: {now.get('title')}." if now.get("title") else ""
+            return f"{res['message']}{extra}"
+        alts = res.get("alternatives") or []
+        hint = f" I can see: {', '.join(alts)}." if alts else ""
+        return f"{res.get('error', 'Click failed.')}{hint}"
+
+    @tool("browser_type",
+          "Type into a field on the page, found by its label or placeholder, and press Enter. "
+          "Use for site search boxes.",
+          {"field": {"type": "string", "description": "label or placeholder of the field"},
+           "text": {"type": "string"},
+           "submit": {"type": "boolean", "description": "press Enter afterwards (default true)"}},
+          ["field", "text"])
+    async def browser_type(a):
+        from ..integrations import browser
+        if not browser.control_ready():
+            return browser.ensure()["message"]
+        res = await browser.type_into(a.get("field", ""), a.get("text", ""),
+                                      _b(a.get("submit", True)))
+        return res.get("message") or res.get("error", "Could not type that.")
+
+    @tool("browser_read",
+          "Look at whatever web page is open right now and list its title and everything "
+          "clickable on it. Call this directly when asked what is on the page or what can be "
+          "clicked — you do not need to be told which page it is.", {})
+    async def browser_read(a):
+        from ..integrations import browser
+        if not browser.control_ready():
+            return browser.ensure()["message"]
+        res = await browser.read_page()
+        if not res.get("ok"):
+            return res.get("error", "Could not read the page.")
+        items = res.get("items") or []
+        return (f"{res.get('title', '')} ({res.get('url', '')})\n"
+                + ("Clickable: " + "; ".join(items[:25]) if items else "Nothing clickable found."))
+
+    @tool("browser_key",
+          "Press a key in the browser: enter, escape, space (play/pause), f (fullscreen), "
+          "up, down, left, right, m (mute), k.",
+          {"key": {"type": "string"}}, ["key"])
+    async def browser_key(a):
+        from ..integrations import browser
+        if not browser.control_ready():
+            return browser.ensure()["message"]
+        res = await browser.press_key(a.get("key", ""))
+        return res.get("message") or res.get("error", "Could not press that.")
+
+    @tool("browser_scroll", "Scroll the web page up or down.",
+          {"direction": {"type": "string"}, "amount": {"type": "integer"}})
+    async def browser_scroll(a):
+        from ..integrations import browser
+        if not browser.control_ready():
+            return browser.ensure()["message"]
+        res = await browser.scroll(a.get("direction", "down") or "down",
+                                   _i(a.get("amount", 600)) or 600)
+        return res.get("message") or res.get("error", "Could not scroll.")
+
+    @tool("browser_back", "Go back to the previous web page.", {})
+    async def browser_back(a):
+        from ..integrations import browser
+        if not browser.control_ready():
+            return browser.ensure()["message"]
+        res = await browser.go_back()
+        return res.get("message") or res.get("error", "Could not go back.")
+
+    @tool("browser_enable_control",
+          "Restart Opera GX so Jarvis can click inside pages. Closes the current tabs — only do "
+          "this when the user has agreed.", {})
+    async def browser_enable_control(a):
+        from ..integrations import browser
+        if browser.control_ready():
+            return "Opera GX is already under control."
+        if not await _confirm("restart Opera GX (this closes your current tabs)"):
+            return "user declined."
+        state = browser.ensure(allow_restart=True)
+        return state["message"]
+
+    @tool("open_app",
+          "Open an installed application by the name you would say out loud — 'Opera GX', "
+          "'VS Code', 'Spotify', 'Settings'. For websites use browser_open instead.",
+          {"name": {"type": "string"}}, ["name"])
+    async def open_app(a):
+        from ..integrations import desktop_apps
+        return desktop_apps.open_app(a.get("name", ""))["message"]
+
+    @tool("list_apps", "List installed applications whose name matches a word.",
+          {"like": {"type": "string"}})
+    async def list_apps(a):
+        from ..integrations import desktop_apps
+        like = a.get("like", "") or ""
+        if like:
+            names = desktop_apps.candidates(like, limit=12)
+            return ", ".join(names) if names else f"No installed app matches “{like}”."
+        return ", ".join(sorted(app.name for app in desktop_apps.installed())[:40])
+
+    # Registered only when precise control is off. With control on it is a trap: two tools do the
+    # same job, the blunt one wins often enough to matter, and because it takes a raw URL the model
+    # invents plausible-looking ones (observed: a fabricated netflix.com/title/... link). browser_open
+    # accepts URLs too, so nothing is lost.
+    @tool("open_url", "Open a URL in the browser (Opera GX).", {"url": {"type": "string"}}, ["url"])
     async def open_url(a):
         from ..integrations import apps
         opened = apps.open_url(a.get("url", ""))
         return f"Opened {opened}." if opened else "I couldn't open a browser window."
 
-    @tool("launch_app", "Launch a desktop app by name.", {"name": {"type": "string"}}, ["name"])
+    @tool("launch_app", "Launch a desktop app by its exact binary or .desktop id. Prefer open_app, "
+                        "which understands spoken names.", {"name": {"type": "string"}}, ["name"])
     async def launch_app(a):
         from ..integrations import apps
         return apps.launch_app(a.get("name", "")) or "not found."
@@ -626,7 +784,7 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         from ..integrations import desktop_control as dc
         return "scrolled." if dc.scroll(a.get("direction", "down") or "down", _i(a.get("amount", 5), 5)) else "scroll failed."
 
-    @tool("find_and_click", "Find a button, icon, or text element on screen via vision and click it directly.", {"target": {"type": "string"}, "button": {"type": "string"}, "double": {"type": "boolean"}}, ["target"])
+    @tool("find_and_click", "Click something in a NATIVE DESKTOP APPLICATION window by finding it visually. Slow and approximate — for anything inside a web page use browser_click, which is exact.", {"target": {"type": "string"}, "button": {"type": "string"}, "double": {"type": "boolean"}}, ["target"])
     async def find_and_click(a):
         from ..integrations import desktop_control as dc
         return dc.find_and_click(a.get("target", ""), button=a.get("button", "left") or "left", double=_b(a.get("double", False)), config=config)
@@ -875,6 +1033,8 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         if not has_google and name.startswith("google_"):
             continue
 
+        if config.browser_control and name in ("open_url", "launch_app"):
+            continue        # superseded by browser_open / open_app, which are precise
         if not keep_descriptions and not name.startswith("linkedin_"):
             f.pop("description", None)
         if not keep_descriptions:

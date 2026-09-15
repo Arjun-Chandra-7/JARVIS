@@ -76,6 +76,23 @@ class Config:
     vision_provider: str = field(default_factory=lambda: os.environ.get("JARVIS_VISION", "auto").lower())
     ollama_vision_model: str = field(default_factory=lambda: os.environ.get("JARVIS_VISION_MODEL", "moondream"))
 
+    # --- browser ---
+    # Opera GX is the browser on this machine, and the one precision control drives. `opera`
+    # (plain) stays selectable; anything on PATH works.
+    browser: str = field(default_factory=lambda: os.environ.get("JARVIS_BROWSER", "opera-gx"))
+    # Chromium's DevTools port, on loopback, is what lets Jarvis click inside a page instead of
+    # guessing pixel coordinates from a screenshot. Set JARVIS_BROWSER_CONTROL=0 to disable.
+    browser_control: bool = field(default_factory=lambda: _bool("JARVIS_BROWSER_CONTROL", True))
+    browser_debug_port: int = field(default_factory=lambda: _int("JARVIS_BROWSER_DEBUG_PORT", 9333))
+
+    # How adventurous the brain is. Tool selection is a classification problem, not a creative
+    # one: measured over 16 spoken commands, qwen2.5:3b picked the right tool 14/16 at 0.1 and
+    # 12/16 at 0.4, and the wrong picks at 0.4 were inconsistent between runs. Replies stay
+    # perfectly natural at this setting.
+    temperature: float = field(
+        default_factory=lambda: float(os.environ.get("JARVIS_TEMPERATURE", "0.15"))
+    )
+
     # --- tool routing ---
     # Show the model only the tools relevant to the request. Measured on qwen2.5:3b over a
     # 17-command set: 11/17 correct with all 84 schemas versus 15/17 with the ten most relevant,

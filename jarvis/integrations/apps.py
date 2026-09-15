@@ -1,6 +1,6 @@
 """Launching and opening things — on the laptop and (best-effort) on the phone.
 
-Laptop: open URLs in the user's browser (Opera by default) and launch desktop apps.
+Laptop: open URLs in the user's browser (Opera GX by default) and launch desktop apps.
 Phone: KDE Connect can open a URL, ring the phone, or run a preconfigured command — Android does
 not allow launching arbitrary apps remotely, so that's the ceiling.
 """
@@ -37,21 +37,28 @@ def _spawn(argv: list[str]) -> bool:
 
 
 # --- laptop ---------------------------------------------------------------
-def open_url(url: str, browser: str = "opera", *, new_window: bool = False) -> str | None:
-    """Open a URL in `browser` and report whether the launch was accepted."""
+_OPERA_BINARIES = {"opera", "opera-stable", "opera-gx", "opera-gx-stable", "opera-beta"}
+
+
+def open_url(url: str, browser: str = "", *, new_window: bool = False) -> str | None:
+    """Open a URL in `browser` (default: the configured one) and say whether it was accepted."""
+    if not browser:
+        from ..config import CONFIG
+        browser = CONFIG.browser
     if not url.startswith(("http://", "https://", "file://")):
         url = "https://" + url
-    exe = shutil.which(browser) or shutil.which("opera") or shutil.which("xdg-open")
+    exe = (shutil.which(browser) or shutil.which("opera-gx") or shutil.which("opera")
+           or shutil.which("xdg-open"))
     if not exe:
         return None
     argv = [exe]
-    if new_window and Path(exe).name in {"opera", "opera-stable"}:
+    if new_window and Path(exe).name in _OPERA_BINARIES:
         argv.append("--new-window")
     argv.append(url)
     if not _spawn(argv):
         # Opera may return nonzero after handing a URL to its existing window.
         # Its live process is enough evidence that the launch was accepted.
-        if Path(exe).name not in {"opera", "opera-stable"}:
+        if Path(exe).name not in _OPERA_BINARIES:
             return None
         try:
             running = subprocess.run(
