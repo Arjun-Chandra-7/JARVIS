@@ -41,6 +41,16 @@ def _int(name: str, default: int) -> int:
         return default
 
 
+def _best_whisper() -> str:
+    """Chosen by what the machine can run: see jarvis.audio.local_stt.best_model."""
+    try:
+        from .audio.local_stt import best_model
+
+        return best_model()
+    except Exception:  # noqa: BLE001 - config must never fail to build
+        return os.environ.get("JARVIS_WHISPER_MODEL", "base")
+
+
 @dataclass
 class Config:
     # --- brain ---
@@ -182,7 +192,7 @@ class Config:
     # base is the default: multilingual, and about half a second dearer than what it replaces.
     # Set JARVIS_WHISPER_MODEL=small for noticeably better Hindi if you will accept ~4 s, or
     # =tiny for the fastest replies when you are speaking English.
-    whisper_model: str = field(default_factory=lambda: os.environ.get("JARVIS_WHISPER_MODEL", "base"))
+    whisper_model: str = field(default_factory=lambda: _best_whisper())
     whisper_beam: int = field(default_factory=lambda: _int("JARVIS_WHISPER_BEAM", 1))
     # "auto" lets Whisper decide per utterance, which is what switching between English, Hindi and
     # Hinglish mid-sentence requires. Pin it to "en" or "hi" only if you never change language.

@@ -240,6 +240,28 @@ class _Session:
         self._ws = ws
         self._id = 0
 
+    async def send(self, method: str, params: Optional[dict] = None) -> None:
+        """Send without waiting for the reply.
+
+        Every call below waits for its own response, which is one websocket round trip each. For
+        a drawing that is one round trip per point, and it is the round trips — not the browser —
+        that decide how much detail fits in a reasonable time. A mouse move needs no reply: there
+        is nothing in it to be told. Replies are drained afterwards so they do not pile up.
+        """
+        self._id += 1
+        await self._ws.send(json.dumps({"id": self._id, "method": method, "params": params or {}}))
+
+    async def drain(self, budget: float = 2.0) -> None:
+        """Clear whatever the browser replied to the sends above."""
+        deadline = time.time() + budget
+        while time.time() < deadline:
+            try:
+                await asyncio.wait_for(self._ws.recv(), timeout=0.02)
+            except (asyncio.TimeoutError, TimeoutError):
+                return
+            except Exception:  # noqa: BLE001 - a closed socket is not this method's problem
+                return
+
     async def call(self, method: str, params: Optional[dict] = None, timeout: float = 20.0) -> dict:
         self._id += 1
         mid = self._id
@@ -1135,13 +1157,46 @@ async def go_back() -> dict:
     return await _with_page(do, surface=True)
 
 
+# Replaying a stroke inside the page, in one call, instead of one dispatched event per point.
+#
+# CDP delivers each mouse event on its own round trip — about twenty milliseconds — so a detailed
+# drawing spent half a minute on the wire. Sending them without waiting is fast and wrong: the
+# renderer coalesces moves that arrive inside one frame and whole strokes came back as broken
+# dashes. Handing the page the points and letting it dispatch them is one round trip per stroke,
+# arrives in order by construction, and cannot be coalesced because the events never go through
+# the browser's input pipeline at all.
+#
+# The cost is that these events carry isTrusted = false. Most drawing surfaces do not care;
+# anything that does is caught by the ink check below and redrawn the slow, trusted way.
+_REPLAY_JS = r"""
+(points => {
+  const first = points[0];
+  const el = document.elementFromPoint(first[0], first[1]);
+  if (!el) return {ok: false, why: "nothing at that point"};
+  const fire = (type, x, y, buttons) => {
+    const common = {bubbles: true, cancelable: true, composed: true,
+                    clientX: x, clientY: y, screenX: x, screenY: y,
+                    button: 0, buttons, pointerId: 1, pointerType: "mouse",
+                    isPrimary: true, view: window};
+    el.dispatchEvent(new PointerEvent("pointer" + type, common));
+    el.dispatchEvent(new MouseEvent("mouse" + type, common));
+  };
+  fire("move", first[0], first[1], 0);
+  fire("down", first[0], first[1], 1);
+  for (let i = 1; i < points.length; i++) fire("move", points[i][0], points[i][1], 1);
+  const last = points[points.length - 1];
+  fire("up", last[0], last[1], 0);
+  return {ok: true, points: points.length};
+})(%s)
+"""
+
+
 async def draw_path(strokes: list, settle_s: float = 0.0) -> dict:
     """Draw on whatever is under the pointer — a canvas, a whiteboard, a drawing app in a tab.
 
     A canvas is the one thing on a web page with no document model inside it: the DOM says
     "there is a canvas here" and nothing about what is drawn on it. So this is the one place a
-    pointer is genuinely the right tool rather than a fallback, and CDP dispatches trusted events
-    that a canvas cannot tell from a hand.
+    pointer is genuinely the right tool rather than a fallback.
 
     `strokes` is a list of strokes, each a list of (x, y) points in CSS pixels relative to the
     page. Each stroke is one press, a run of moves, and a release — lifting between strokes is
@@ -1158,27 +1213,16 @@ async def draw_path(strokes: list, settle_s: float = 0.0) -> dict:
     async def do(session: _Session):
         drawn = 0
         for points in cleaned:
-            x, y = points[0]
-            await session.call("Input.dispatchMouseEvent",
-                               {"type": "mouseMoved", "x": x, "y": y})
-            await session.call("Input.dispatchMouseEvent",
-                               {"type": "mousePressed", "x": x, "y": y,
-                                "button": "left", "clickCount": 1})
-            for x, y in points[1:]:
-                await session.call("Input.dispatchMouseEvent",
-                                   {"type": "mouseMoved", "x": x, "y": y,
-                                    "button": "left", "buttons": 1})
-            x, y = points[-1]
-            await session.call("Input.dispatchMouseEvent",
-                               {"type": "mouseReleased", "x": x, "y": y,
-                                "button": "left", "clickCount": 1})
-            drawn += 1
+            got = await session.js(_REPLAY_JS % json.dumps(points), timeout=30.0)
+            if isinstance(got, dict) and got.get("ok"):
+                drawn += 1
             if settle_s:
                 await asyncio.sleep(settle_s)
-        return {"ok": True, "strokes": drawn,
-                "message": f"Drew {drawn} stroke{'s' if drawn != 1 else ''}."}
+        return {"ok": drawn > 0, "strokes": drawn,
+                "message": f"Drew {drawn} stroke{'s' if drawn != 1 else ''}.",
+                "error": "" if drawn else "the page ignored the strokes"}
 
-    return await _with_page(do, surface=True, timeout=120.0)
+    return await _with_page(do, surface=True, timeout=180.0)
 
 
 async def canvas_box() -> Optional[dict]:

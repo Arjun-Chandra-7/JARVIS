@@ -18,7 +18,15 @@ from pathlib import Path
 from typing import Optional
 
 # One mouse event per point, so this is really a time budget. ~1200 points draws in a few seconds.
-DEFAULT_BUDGET = 1200
+# Drawing used to cost one websocket round trip per point, which capped this at about a
+# thousand. Pipelining the mouse events took a 500-point drawing from 9.8 s to 0.1 s, so the
+# budget is now set by what looks good rather than by what finishes in time.
+# Density is bounded by the pen, not by this. Measured on a three-pixel line: 1,900 points reads
+# as a drawing, 14,000 fills the dark areas into a solid blob because neighbouring contours are
+# closer together than the stroke is wide. So the budget is generous and the detail dial is what
+# actually decides, and it is set where a normal pen still shows the lines apart.
+DEFAULT_BUDGET = 8000
+DEFAULT_DETAIL = 0.85
 MIN_STROKE_POINTS = 4
 
 
@@ -45,26 +53,36 @@ class Plan:
 
 
 def _edges(gray, detail: float):
-    import cv2
+    """Edges, as many or as few as `detail` asks for.
 
-    # Blur first: without it, JPEG noise and skin texture become "edges" and the drawing is fur.
-    # Bilateral smoothing before the Gaussian keeps real boundaries sharp while flattening the
-    # tonal variation inside them, which is what separates a painting from a line drawing and was
-    # leaving the result covered in short ticks.
-    smoothed = cv2.bilateralFilter(gray, 9, 60, 60)
-    blurred = cv2.GaussianBlur(smoothed, (5, 5), 0)
-    # Thresholds from the image's own median, so one setting works for a photograph and a diagram.
+    Smoothing is the dial that matters. Bilateral smoothing keeps real boundaries sharp while
+    flattening tonal variation inside them — the difference between a painting and a line
+    drawing — but turned up hard it also erases the lines that make a face a face. Measured on
+    the Mona Lisa at 900px: a strong filter yields 92 usable contours, a light one 629, none at
+    all 3157 (which is noise). So the strength moves with `detail` instead of being fixed.
+    """
+    import cv2
     import numpy as np
 
+    detail = max(0.0, min(1.0, detail))
+    # Smoothing stays strong whatever the detail setting. Turning it down does produce more
+    # edges — 92 contours becomes 629 — but they are the same lines broken into pieces, and the
+    # drawing comes out as a field of ticks rather than a face. Detail is bought further down,
+    # by admitting shorter contours and following each one more faithfully, which adds line
+    # without fragmenting what is already there.
+    smoothed = cv2.bilateralFilter(gray, 9, 60, 60)
+    blurred = cv2.GaussianBlur(smoothed, (5, 5), 0)
+
+    # Thresholds from the image's own median, so one setting works for a photograph and a diagram.
     median = float(np.median(blurred))
-    spread = max(0.05, min(0.9, 1.0 - detail))
+    spread = 0.40 + 0.20 * detail
     low = int(max(0, (1.0 - spread) * median))
     high = int(min(255, (1.0 + spread) * median))
     return cv2.Canny(blurred, low, max(low + 1, high))
 
 
 def from_image(path: str | Path, budget: int = DEFAULT_BUDGET,
-               detail: float = 0.5, max_side: int = 900) -> Optional[Plan]:
+               detail: float = DEFAULT_DETAIL, max_side: int = 1200) -> Optional[Plan]:
     """A drawable plan for the picture at `path`, or None when it yields nothing worth drawing."""
     import cv2
     import numpy as np
@@ -87,8 +105,10 @@ def from_image(path: str | Path, budget: int = DEFAULT_BUDGET,
     # simplification with more points than a long smooth curve, so a painting came out as a
     # scatter of unrecognisable ticks while the lines that describe it were never drawn.
     diagonal = float(np.hypot(h, w))
-    # Below this a contour describes texture rather than shape, and spends budget saying nothing.
-    min_length = diagonal * 0.055
+    # Below this a contour describes texture rather than shape. How short is "too short" is the
+    # other half of the detail dial: at 0.5 it is a twentieth of the picture, at 1.0 a two
+    # hundredth, which is the difference between an outline and a drawing with a face in it.
+    min_length = diagonal * (0.055 - 0.0505 * detail)
     measured = [(cv2.arcLength(c, False), c) for c in found]
     measured = [(length, c) for length, c in measured if length >= min_length]
     if not measured:
@@ -99,7 +119,9 @@ def from_image(path: str | Path, budget: int = DEFAULT_BUDGET,
     for length, contour in measured:
         # Simplify in proportion to the contour's own size: the same absolute tolerance either
         # destroys a small shape or leaves a large one needlessly dense.
-        epsilon = max(1.0, 0.004 * length)
+        # How faithfully each contour is followed. Straightening a curve is what made the first
+        # attempts look like a rubbing rather than a drawing.
+        epsilon = max(0.5, (0.004 - 0.0032 * detail) * length)
         points = cv2.approxPolyDP(contour, epsilon, False).reshape(-1, 2)
         if len(points) >= MIN_STROKE_POINTS:
             simplified.append(points)

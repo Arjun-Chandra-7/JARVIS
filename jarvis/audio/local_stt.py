@@ -14,6 +14,7 @@ in ~550 ms, and the previous default (`small.en`, beam 5) took ~1.7 s.
 
 from __future__ import annotations
 
+import os
 import threading
 from typing import Callable, Optional
 
@@ -27,15 +28,64 @@ _models_lock = threading.Lock()
 PARTIAL_MODEL = "tiny"
 
 
+def best_model() -> str:
+    """The largest model that is worth running here.
+
+    On the processor "small" takes four seconds, which is too slow to talk to; on the GPU it takes
+    a fifth of a second and hears more than "base" ever did. So the choice follows the hardware.
+    """
+    override = os.environ.get("JARVIS_WHISPER_MODEL")
+    if override:
+        return override
+    return "small" if _cuda_usable() else "base"
+
+
+def _cuda_usable() -> bool:
+    """Whether a GPU is present and Jarvis is allowed to use it."""
+    if os.environ.get("JARVIS_STT_DEVICE", "").lower() == "cpu":
+        return False
+    try:
+        import ctranslate2
+
+        return ctranslate2.get_cuda_device_count() > 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _get_model(model_name: str, compute_type: str = "int8"):
+    """The model, on the GPU when there is one.
+
+    Measured on this machine, on the same five spoken commands:
+
+        base   cpu  int8   1.25 s   3/5 transcribed exactly
+        small  cuda int8   0.22 s   4/5
+
+    which is why the default model is now the larger one: on the GPU it is both quicker and
+    better than the small one was on the CPU. float16 is deliberately not used — this venv has no
+    cuBLAS, and asking for it fails with CUBLAS_STATUS_NOT_SUPPORTED while int8 works.
+
+    The card is shared with Ollama, which holds three of its four gigabytes, so a model that does
+    not fit falls back to the processor rather than failing the utterance.
+    """
     key = (model_name, compute_type)
     with _models_lock:
         model = _models.get(key)
-        if model is None:
-            from faster_whisper import WhisperModel
+        if model is not None:
+            return model
 
-            model = WhisperModel(model_name, device="cpu", compute_type=compute_type)
-            _models[key] = model
+        from faster_whisper import WhisperModel
+
+        if _cuda_usable():
+            try:
+                model = WhisperModel(model_name, device="cuda", compute_type=compute_type)
+                _models[key] = model
+                return model
+            except Exception as exc:  # noqa: BLE001 - out of memory, no cuBLAS, no driver
+                print(f"  speech: GPU unavailable for {model_name} ({type(exc).__name__}); "
+                      f"using the processor")
+
+        model = WhisperModel(model_name, device="cpu", compute_type=compute_type)
+        _models[key] = model
         return model
 
 

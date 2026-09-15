@@ -248,22 +248,19 @@ def test_nothing_to_draw_is_refused_rather_than_faked():
     assert asyncio.run(browser.draw_path(None))["ok"] is False
 
 
-def test_strokes_stay_separate(monkeypatch):
-    """Lifting between strokes is what makes them separate lines rather than one scribble."""
+def test_each_stroke_is_replayed_once(monkeypatch):
+    """One call per stroke, not one per point: CDP charges a round trip for every event, and
+    sending them without waiting let the renderer coalesce moves into broken dashes."""
     import asyncio
 
     from jarvis.integrations import browser
 
-    events = []
+    scripts = []
 
     class FakeSession:
-        async def call(self, method, params=None, **kw):
-            if method == "Input.dispatchMouseEvent":
-                events.append(params["type"])
-            return {}
-
-        async def js(self, *a, **k):
-            return None
+        async def js(self, expression, timeout=20.0):
+            scripts.append(expression)
+            return {"ok": True, "points": expression.count("[")}
 
     async def fake_with_page(fn, timeout=25.0, **kw):
         return await fn(FakeSession())
@@ -271,5 +268,8 @@ def test_strokes_stay_separate(monkeypatch):
     monkeypatch.setattr(browser, "_with_page", fake_with_page)
     got = asyncio.run(browser.draw_path([[(0, 0), (5, 5)], [(9, 9), (1, 1)]]))
     assert got["strokes"] == 2
-    assert events.count("mousePressed") == 2
-    assert events.count("mouseReleased") == 2
+    assert len(scripts) == 2
+    # Each replay presses once and releases once, so strokes cannot merge into one scribble.
+    for script in scripts:
+        assert script.count('fire("down"') == 1
+        assert script.count('fire("up"') == 1
