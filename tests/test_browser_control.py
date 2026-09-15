@@ -273,3 +273,39 @@ def test_each_stroke_is_replayed_once(monkeypatch):
     for script in scripts:
         assert script.count('fire("down"') == 1
         assert script.count('fire("up"') == 1
+
+
+def test_the_drawable_area_is_the_clear_part_not_the_whole_stage(monkeypatch):
+    """A whiteboard floats its toolbar and panels over the board. A stroke starting under one is
+    delivered to the panel, not the board, and vanishes — which is why two thirds of a drawing
+    went missing on a real site while a bare canvas looked perfect."""
+    import asyncio
+
+    from jarvis.integrations import browser
+
+    async def fake_with_page(fn, timeout=25.0, **kw):
+        class S:
+            async def js(self, expression, timeout=20.0):
+                # what the real probe returned on onlinewhiteboard.org
+                return {"x": 150, "y": 103, "w": 449, "h": 828, "tag": "svg", "covered": 43}
+        return await fn(S())
+
+    monkeypatch.setattr(browser, "_with_page", fake_with_page)
+    box = asyncio.run(browser.canvas_box())
+    assert box["w"] < 898              # narrower than the stage: the panels are excluded
+    assert box["covered"] == 43
+
+
+def test_a_surface_that_is_mostly_covered_is_still_refused(monkeypatch):
+    import asyncio
+
+    from jarvis.integrations import browser
+
+    async def fake_with_page(fn, timeout=25.0, **kw):
+        class S:
+            async def js(self, expression, timeout=20.0):
+                return None            # nothing clear enough to draw on
+        return await fn(S())
+
+    monkeypatch.setattr(browser, "_with_page", fake_with_page)
+    assert asyncio.run(browser.canvas_box()) is None

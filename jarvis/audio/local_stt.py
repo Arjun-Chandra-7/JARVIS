@@ -89,6 +89,36 @@ def _get_model(model_name: str, compute_type: str = "int8"):
         return model
 
 
+def _transcribe(model_name: str, audio, **kwargs):
+    """Transcribe, and if the GPU refuses mid-utterance, do it on the processor instead.
+
+    Construction succeeding does not mean transcription will: the card is shared with Ollama, and
+    a model that loaded when there was room can still run out of it a minute later. Falling back
+    at the point of failure keeps the utterance rather than losing it — the only cost is that one
+    sentence is slower.
+    """
+    def run(model):
+        # faster_whisper hands back a lazy generator, so the work — and the failure — happens on
+        # iteration, not on the call. Consuming it here is what puts it inside the guard below.
+        segments, info = model.transcribe(audio, **kwargs)
+        return list(segments), info
+
+    try:
+        return run(_get_model(model_name))
+    except RuntimeError as exc:
+        if "out of memory" not in str(exc).lower():
+            raise
+        from faster_whisper import WhisperModel
+
+        with _models_lock:
+            _models.pop((model_name, "int8"), None)
+            fallback = _models.get((model_name, "cpu"))
+            if fallback is None:
+                fallback = WhisperModel(model_name, device="cpu", compute_type="int8")
+                _models[(model_name, "cpu")] = fallback
+        return run(fallback)
+
+
 def warmup(model_name: str = "base", partial_model: Optional[str] = PARTIAL_MODEL) -> None:
     """Load the models ahead of time so the first transcription isn't slow."""
     _get_model(model_name)
@@ -121,8 +151,8 @@ def transcribe(
     if not pcm_bytes:
         return ""
     audio = _to_float32(pcm_bytes, sample_rate)
-    model = _get_model(model_name)
-    segments, _info = model.transcribe(
+    segments, _info = _transcribe(
+        model_name,
         audio,
         language=None if language == "auto" else language,
         initial_prompt=vocabulary,
@@ -149,8 +179,8 @@ def transcribe_partial(
     if not pcm_bytes:
         return ""
     audio = _to_float32(pcm_bytes, sample_rate)
-    model = _get_model(model_name)
-    segments, _info = model.transcribe(
+    segments, _info = _transcribe(
+        model_name,
         audio,
         # Hard-coded "en" here meant the live partial was always read as English even when the
         # committed transcript was not — so a Hindi sentence appeared as English gibberish while

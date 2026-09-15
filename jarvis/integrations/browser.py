@@ -1226,22 +1226,81 @@ async def draw_path(strokes: list, settle_s: float = 0.0) -> dict:
 
 
 async def canvas_box() -> Optional[dict]:
-    """Where the drawing surface is on the page, so strokes can be scaled to fit it."""
+    """The part of the drawing surface that can actually be drawn on.
+
+    Three things went wrong on a real whiteboard that never showed up on a bare <canvas>:
+
+    * the biggest surface on the page was an <svg> stage, not a canvas, and its box was measured
+      while the page was scrolled — giving a rectangle starting at y = -240, so every stroke in
+      the top quarter was dispatched at a point that is not on screen and vanished;
+    * the app's own toolbar, colour panel and sidebar float *over* that stage, so a stroke
+      beginning under one of them was delivered to the panel instead of the board;
+    * which is why the result came out as a handful of disconnected fragments.
+
+    So the surface is found, clipped to the viewport, and then probed on a grid: a cell counts
+    only if the topmost element at that point really is the surface. What comes back is the
+    largest clear rectangle, which is where it is safe to draw.
+    """
 
     async def do(session: _Session):
         return await session.js(r"""
         (() => {
           let best = null;
-          for (const el of document.querySelectorAll('canvas, svg, [role="img"][contenteditable]')) {
+          for (const el of document.querySelectorAll('canvas, svg, [data-drawing-surface]')) {
             const r = el.getBoundingClientRect();
-            if (r.width < 80 || r.height < 80) continue;
-            if (!best || r.width * r.height > best.w * best.h) {
-              best = {x: Math.round(r.left), y: Math.round(r.top),
-                      w: Math.round(r.width), h: Math.round(r.height),
-                      tag: el.tagName.toLowerCase()};
+            if (r.width < 200 || r.height < 150) continue;
+            if (!best || r.width * r.height > best.area) {
+              best = {el, area: r.width * r.height, r};
             }
           }
-          return best;
+          if (!best) return null;
+
+          // Clip to what is on screen: a point outside the viewport cannot be hit at all.
+          const r = best.r;
+          const left = Math.max(0, r.left), top = Math.max(0, r.top);
+          const right = Math.min(innerWidth, r.right), bottom = Math.min(innerHeight, r.bottom);
+          if (right - left < 200 || bottom - top < 150) return null;
+
+          // Probe a grid; a cell is usable only if the surface is what a click would reach.
+          const COLS = 24, ROWS = 18;
+          const cw = (right - left) / COLS, ch = (bottom - top) / ROWS;
+          const free = [];
+          for (let j = 0; j < ROWS; j++) {
+            for (let i = 0; i < COLS; i++) {
+              const x = left + (i + 0.5) * cw, y = top + (j + 0.5) * ch;
+              const hit = document.elementFromPoint(x, y);
+              if (hit && (hit === best.el || best.el.contains(hit) || hit.contains(best.el))) {
+                free.push([i, j]);
+              }
+            }
+          }
+          if (free.length < 12) return null;
+
+          // Largest all-clear rectangle, found by growing from each clear cell. The grid is
+          // small enough that being thorough about it costs nothing.
+          const clear = new Set(free.map(([i, j]) => j * COLS + i));
+          const ok = (i, j) => clear.has(j * COLS + i);
+          let win = null;
+          for (const [i0, j0] of free) {
+            let maxI = COLS - 1;
+            for (let j = j0; j < ROWS; j++) {
+              let i = i0;
+              while (i <= maxI && ok(i, j)) i++;
+              maxI = i - 1;
+              if (maxI < i0) break;
+              const area = (maxI - i0 + 1) * (j - j0 + 1);
+              if (!win || area > win.area) win = {i0, j0, i1: maxI, j1: j, area};
+            }
+          }
+          if (!win) return null;
+          return {
+            x: Math.round(left + win.i0 * cw),
+            y: Math.round(top + win.j0 * ch),
+            w: Math.round((win.i1 - win.i0 + 1) * cw),
+            h: Math.round((win.j1 - win.j0 + 1) * ch),
+            tag: best.el.tagName.toLowerCase(),
+            covered: Math.round(100 * (1 - free.length / (COLS * ROWS))),
+          };
         })()""")
 
     got = await _with_page(do)
