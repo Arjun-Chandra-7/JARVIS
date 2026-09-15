@@ -22,16 +22,31 @@ _CLAIM = re.compile(
     r"""(?ix)
     (?:^|[.!?]\s+|\band\s+|,\s*)          # start of a clause
     (?:
-        (?:i\s*(?:'ve|\s+have|\s+am|'m)\s+)?   # optional "I've" / "I am"
+        (?:i\s*(?:'ve|\s+have|\s+am|'m)?\s+)?  # "I", "I've", "I have", "I'm" — all optional
         (?:now\s+)?
         (?P<verb>
             open(?:ing|ed)? | launch(?:ing|ed)? | start(?:ing|ed)? |
             play(?:ing|ed)? | sent | sending | set(?:ting)? |
             click(?:ing|ed)? | search(?:ing|ed)? | turn(?:ing|ed)\s+(?:on|off) |
-            mut(?:ing|ed) | paus(?:ing|ed) | creat(?:ing|ed)
+            mut(?:ing|ed) | paus(?:ing|ed) | creat(?:ing|ed) |
+            chang(?:ing|ed) | adjust(?:ing|ed) | lower(?:ing|ed) | rais(?:ing|ed) |
+            turn(?:ing|ed)(?:\s+\w+){0,3}\s+(?:up|down)
         )
         \b
     )
+    """,
+)
+
+# The same assertion with the setting as the subject: "Brightness set to 30%", "Volume is now 40%".
+# These carry no "I", so the clause-start pattern above never saw them, and a refused brightness
+# change was delivered as "Brightness set to 30%." while the backlight stayed where it was.
+_CLAIM_ABOUT_A_SETTING = re.compile(
+    r"""(?ix)
+    \b(?P<what> brightness | volume | sound | screen | display | backlight | keyboard )\b
+    \s+
+    (?: is | has\s+been | was | now )? \s*
+    (?: set | turned | changed | adjusted | lowered | raised | at | now )
+    \b
     """,
 )
 
@@ -55,7 +70,7 @@ def claims_an_action(reply: str) -> bool:
         return False
     if _NOT_A_CLAIM.search(text):
         return False
-    return bool(_CLAIM.search(text))
+    return bool(_CLAIM.search(text) or _CLAIM_ABOUT_A_SETTING.search(text))
 
 
 # Vague technical excuses a model reaches for when a tool failed with a perfectly specific
@@ -95,6 +110,17 @@ def correction_for(reply: str) -> str:
     )
 
 
-def honest_fallback() -> str:
-    """Used when the model still will not act: better to admit it than to claim success."""
-    return "I didn't actually manage to do that, sir — nothing was carried out."
+def honest_fallback(reason: str = "") -> str:
+    """Used when the model still will not act: better to admit it than to claim success.
+
+    When a tool said exactly why it could not work, that reason is worth far more than the
+    admission — "nothing was carried out" leaves the user with nothing to do about it, while the
+    brightness blocker names the group to join and the command that joins it.
+    """
+    admission = "I didn't actually manage to do that, sir"
+    reason = re.sub(r"^\[FAILURE\]\s*", "", (reason or "").strip())
+    if reason:
+        # Left as written: lower-casing the first letter turned "I can read the brightness" into
+        # "i can read the brightness".
+        return f"{admission} — {reason}"
+    return f"{admission} — nothing was carried out."

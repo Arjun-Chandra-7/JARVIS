@@ -92,6 +92,14 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
                     r"|bluetooth(?: devices?| scan)|what(?:'?s| is) (?:on |around )?bluetooth", command):
         from .presence import bluetooth
         return await asyncio.to_thread(bluetooth.report, config)
+    # Volume, brightness and mute: one meaning, one number, no ambiguity. Offered the registered
+    # set_brightness tool at the top of its shortlist, the local 3B brain answered "I don't have a
+    # tool for that" and then claimed the brightness had been set.
+    from .system_command import handle as system_something
+    adjusted = await system_something(raw, config)
+    if adjusted is not None:
+        return adjusted
+
     # Last, so the specific handlers above keep priority: "open phone" and "open meet" are theirs.
     # Everything else shaped like "open X" has one meaning, and measured, routing it through the
     # local 3B model called no tool at all on three of five attempts at "open friends".

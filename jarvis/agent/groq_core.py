@@ -494,7 +494,9 @@ class GroqAgent:
                 if (nothing_worked
                         and action_claims_checked
                         and action_claims.claims_an_action(reply)):
-                    reply = action_claims.honest_fallback()
+                    stated = (list(self._failed_calls_advice.values())[-1]
+                              if self._failed_calls_advice else "")
+                    reply = action_claims.honest_fallback(stated)
 
                 # A tool failed for a specific, stated reason; do not relay it as a vague fault.
                 # "No installed app matches Networks" was reported as "there's a temporary
@@ -602,13 +604,16 @@ class GroqAgent:
                 outcome = tool_contract.Outcome.FAILURE
             self._last_outcome = outcome
             self._tools_ran_this_turn = True
-            if outcome is tool_contract.Outcome.SUCCESS:
-                self._any_tool_succeeded = True
             body = str(result)[:6000]
             # A tool that reports its own failure in the text (a redirect, "not found", a refusal)
             # counts as failed even though dispatch returned normally — otherwise the repeat-guard
             # never sees it.
             said_no = body.lstrip().upper().startswith(("WRONG TOOL", "[FAILURE]", "NO INSTALLED"))
+            # Judged after said_no, not before: set_brightness returning "I can read the brightness
+            # but not change it" used to mark the turn a success, which let the reply claim the
+            # brightness had been set while the backlight never moved.
+            if outcome is tool_contract.Outcome.SUCCESS and not said_no:
+                self._any_tool_succeeded = True
             if outcome is not tool_contract.Outcome.SUCCESS or said_no:
                 self._failed_calls[signature] = self._failed_calls.get(signature, 0) + 1
                 self._failed_calls_advice[signature] = body[:300]

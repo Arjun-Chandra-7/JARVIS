@@ -174,3 +174,54 @@ def test_uncertain_is_distinct_from_failure():
 @pytest.mark.parametrize("outcome", list(Outcome))
 def test_every_outcome_renders(outcome):
     assert ToolResult(outcome, "x").for_model()
+
+
+# --------------------------------------- a tool that reports its own failure is not a success
+def test_a_self_reported_failure_does_not_count_as_a_success():
+    """set_brightness returned an explanation of why it could not work; the turn was then free to
+    claim the brightness had been set while the backlight never moved."""
+    marker = "[FAILURE] I can read the brightness but not change it: nvidia_0 is owned by 'video'."
+    assert marker.lstrip().upper().startswith(("WRONG TOOL", "[FAILURE]", "NO INSTALLED"))
+
+
+def test_the_brightness_tool_marks_its_refusal(monkeypatch):
+    """On a machine where the backlight is not writable, the tool must mark the refusal."""
+    import asyncio
+
+    from jarvis.agent import groq_tools
+    from jarvis.integrations import system_control as sc
+
+    monkeypatch.setattr(sc, "set_brightness", lambda pct: False)
+    monkeypatch.setattr(sc, "brightness_blocker",
+                        lambda: "nvidia_0 is owned by the 'video' group.")
+
+    fn = _find_tool(groq_tools, "set_brightness")
+    out = asyncio.run(fn({"percent": "30"}))
+    assert out.startswith("[FAILURE]")
+    assert "video" in out              # and it still explains how to fix it
+
+
+def test_the_brightness_tool_reports_a_real_change_plainly(monkeypatch):
+    import asyncio
+
+    from jarvis.agent import groq_tools
+    from jarvis.integrations import system_control as sc
+
+    monkeypatch.setattr(sc, "set_brightness", lambda pct: True)
+    monkeypatch.setattr(sc, "get_brightness", lambda: 30)
+
+    out = asyncio.run(_find_tool(groq_tools, "set_brightness")({"percent": "30"}))
+    assert "[FAILURE]" not in out and "30" in out
+
+
+def _find_tool(_module, name):
+    """The coroutine the registry dispatches for `name`."""
+    from jarvis.agent.groq_tools import build_registry
+    from jarvis.config import Config
+
+    _schemas, dispatch = build_registry(Config(), None, None)
+
+    async def call(args):
+        return await dispatch(name, args)
+
+    return call

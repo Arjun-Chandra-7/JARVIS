@@ -570,24 +570,28 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         if sc.set_brightness(want):
             now = sc.get_brightness()
             return f"Brightness set to {now if now is not None else want} percent."
-        blocker = sc.brightness_blocker()
-        return blocker or "I could not change the brightness."
+        # The [FAILURE] marker is what stops the turn being counted as a success. Without it the
+        # model was handed "I can read the brightness but not change it..." as a successful tool
+        # result and answered "I set the brightness to 30%" while the backlight stayed at 100.
+        blocker = sc.brightness_blocker() or "I could not change the brightness."
+        return f"[FAILURE] {blocker}"
 
     @tool("get_brightness", "Read the current screen brightness percent.", {})
     async def get_brightness(a):
         from ..integrations import system_control as sc
         now = sc.get_brightness()
-        return f"Brightness is at {now} percent." if now is not None else \
-            (sc.brightness_blocker() or "No backlight on this machine.")
+        if now is not None:
+            return f"Brightness is at {now} percent."
+        return f"[FAILURE] {sc.brightness_blocker() or 'No backlight on this machine.'}"
 
     @tool("set_keyboard_brightness", "Set the keyboard backlight percent (0-100).",
           {"percent": {"type": "string"}}, ["percent"])
     async def set_keyboard_brightness(a):
         from ..integrations import system_control as sc
         want = _i(a.get("percent"), 50)
-        return (f"Keyboard backlight set to {want} percent."
-                if sc.set_keyboard_brightness(want)
-                else "This keyboard has no controllable backlight.")
+        if sc.set_keyboard_brightness(want):
+            return f"Keyboard backlight set to {want} percent."
+        return "[FAILURE] This keyboard has no controllable backlight."
 
     @tool("lock_screen", "Lock the screen.", {})
     async def lock_screen(a):

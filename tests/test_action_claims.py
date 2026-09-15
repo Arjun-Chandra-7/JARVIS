@@ -105,3 +105,53 @@ def test_real_reason_strips_the_model_only_prefix():
 
 def test_real_reason_keeps_the_reply_when_there_is_nothing_better():
     assert ac.real_reason("It seems there's a glitch.", "") == "It seems there's a glitch."
+
+
+# ------------------------------------------------- claims about settings, not just launches
+@pytest.mark.parametrize("reply", [
+    "Brightness set to 30%.",            # no "I" at all, so the clause pattern never saw it
+    "I set the brightness to 30%.",      # plain "I", which the pattern required to be "I've"
+    "I turned the brightness down.",     # words between the verb and its particle
+    "Volume is now 40%.",
+])
+def test_a_settings_change_is_a_claim(reply):
+    assert ac.claims_an_action(reply)
+
+
+@pytest.mark.parametrize("reply", [
+    "I can set the brightness if you like.",
+    "I couldn't change the brightness.",
+    "Your battery is at 100%.",
+    "Your next meeting is at 3pm.",
+])
+def test_offers_and_refusals_and_readings_are_not_claims(reply):
+    assert not ac.claims_an_action(reply)
+
+
+def test_no_stray_control_characters_in_the_patterns():
+    """A \\b written through a non-raw string becomes a backspace byte and silently stops
+    matching — the pattern still compiles, so nothing complains."""
+    import re as _re
+
+    for name in dir(ac):
+        obj = getattr(ac, name)
+        if isinstance(obj, _re.Pattern):
+            assert not set(obj.pattern) & set("\x07\x08\x0b\x0c"), name
+
+
+# --------------------------------------------- the admission should carry the reason with it
+def test_the_stated_reason_is_kept():
+    """"Nothing was carried out" leaves the user with nothing to act on; the blocker names the
+    group to join and the command that joins it."""
+    out = ac.honest_fallback(
+        "[FAILURE] I can read the brightness but not change it: nvidia_0 is owned by the "
+        "'video' group. Run sudo usermod -aG video $USER.")
+    assert "[FAILURE]" not in out
+    assert "usermod -aG video" in out
+    assert out.startswith("I didn't actually manage")
+    assert "I can read" in out          # the reason keeps its own capitalisation
+
+
+def test_without_a_reason_it_still_admits_plainly():
+    assert ac.honest_fallback() == \
+        "I didn't actually manage to do that, sir — nothing was carried out."
