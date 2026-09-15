@@ -53,6 +53,11 @@ ALIASES: dict[str, str] = {
 
 _STRIP = re.compile(r"\b(app|application|program|the|please|now|up)\b")
 
+# "F.R.I.E.N.D.S" is a spoken title, not a program. Left alone it normalises to the single letters
+# "f r i e n d s", and the all-words rule below then matched almost anything — "open f.r.i.e.n.d.s"
+# launched Easy Effects.
+_DOTTED_ACRONYM = re.compile(r"^(?:[a-z]\.){2,}[a-z]?\.?$", re.IGNORECASE)
+
 
 @dataclass
 class App:
@@ -157,8 +162,10 @@ def _score(app: App, query: str) -> int:
         return 60 - min(20, len(name) - len(query))
     if any(query in k for k in keywords) or (generic and query in generic):
         return 45
-    # Every word of the query appears somewhere in the name.
-    words = query.split()
+    # Every meaningful word of the query appears somewhere in the name. Fragments shorter than
+    # three characters are excluded: single letters match nearly every app name, which is how
+    # "f r i e n d s" scored against "Easy Effects".
+    words = [w for w in query.split() if len(w) >= 3]
     if words and all(w in f"{name} {entry} {generic}" for w in words):
         return 40
     return 0
@@ -166,6 +173,8 @@ def _score(app: App, query: str) -> int:
 
 def resolve(spoken: str) -> Optional[App]:
     """Best installed app for what the user said, or None."""
+    if _DOTTED_ACRONYM.match((spoken or "").strip()):
+        return None                      # a spelled-out title, not a program
     query = _normalise(spoken)
     if not query:
         return None
@@ -252,11 +261,14 @@ def launch(app: App) -> bool:
 
 
 def looks_like_a_website(spoken: str) -> bool:
-    """True when the name is a site rather than an installed program.
+    """True when this belongs to the browser rather than the app launcher.
 
     "open netflix" routes here about as often as it routes to the browser, and the two tools
     should cooperate rather than compete: this one knows it cannot help and says which tool can.
+    A spelled-out title ("F.R.I.E.N.D.S") is included — it is something to find on a site.
     """
+    if _DOTTED_ACRONYM.match((spoken or "").strip()):
+        return True
     query = _normalise(spoken)
     if not query:
         return False

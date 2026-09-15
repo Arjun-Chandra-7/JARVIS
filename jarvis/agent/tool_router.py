@@ -93,6 +93,10 @@ ALIASES: dict[str, str] = {
                       "click something in vs code or a settings window by looking at the screen",
     "read_clipboard": "clipboard, what did i copy, copied text",
     "whatsapp_send": "message someone on whatsapp, text them, send a whatsapp",
+    # Pinned to messaging. "select the profile of Arjun" (a Netflix profile) landed here because
+    # Arjun is also a contact name and this was the only offered tool that looks a person up.
+    "find_contact": "look up someone's phone number before messaging them, whatsapp contact "
+                    "details, which number do I have for this person",
     "message_person": "tell someone, message them about, let them know",
     "web_search": "search the web, look up, find online, what is",
     "deep_research": "research thoroughly, deep dive, detailed report on",

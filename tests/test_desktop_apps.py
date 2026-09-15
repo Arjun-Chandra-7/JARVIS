@@ -142,3 +142,23 @@ def test_non_application_entries_are_skipped(tmp_path):
     entry.write_text("[Desktop Entry]\nType=Link\nName=A Link\nURL=https://x.com\n",
                      encoding="utf-8")
     assert da._parse(entry) is None
+
+
+# ----------------------------------------------------------------- spoken titles
+@pytest.mark.parametrize("spoken", ["f.r.i.e.n.d.s", "F.R.I.E.N.D.S", "w.a.n.d.a.v.i.s.i.o.n"])
+def test_spelled_out_title_is_never_an_app(catalogue, spoken):
+    """It normalises to single letters, which matched almost any name — "open f.r.i.e.n.d.s"
+    launched Easy Effects."""
+    assert da.resolve(spoken) is None
+    assert da.looks_like_a_website(spoken)
+
+
+def test_spelled_out_title_is_sent_to_the_browser(catalogue):
+    res = da.open_app("f.r.i.e.n.d.s")
+    assert not res["ok"] and res.get("website")
+    assert "browser_open" in res["message"]
+
+
+def test_single_letters_do_not_match_an_app_name(catalogue):
+    """The all-words rule ignores fragments shorter than three characters."""
+    assert da._score(catalogue[0], "f r i e n d s") == 0
