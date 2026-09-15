@@ -524,9 +524,59 @@ _SEARCH_FIELD_JS = """
 """
 
 
+# Sites whose search is a stable URL. Driving the search box through the DOM is the general
+# fallback, but it is fragile on exactly the sites that matter most: Netflix's /browse page has no
+# search element at all until one is summoned, and its results page renders a different one. A
+# documented URL is faster and cannot be broken by a redesign.
+SEARCH_URLS: dict[str, str] = {
+    "netflix.com": "https://www.netflix.com/search?q={q}",
+    "youtube.com": "https://www.youtube.com/results?search_query={q}",
+    "primevideo.com": "https://www.primevideo.com/search?phrase={q}",
+    "hotstar.com": "https://www.hotstar.com/in/explore?search_query={q}",
+    "open.spotify.com": "https://open.spotify.com/search/{q}",
+    "github.com": "https://github.com/search?q={q}",
+    "wikipedia.org": "https://en.wikipedia.org/w/index.php?search={q}",
+    "reddit.com": "https://www.reddit.com/search/?q={q}",
+    "amazon.in": "https://www.amazon.in/s?k={q}",
+}
+
+
+def search_url_for(current_url: str, query: str) -> Optional[str]:
+    """A direct search URL for the site we are on, or None to fall back to its search box."""
+    from urllib.parse import quote_plus, urlparse
+
+    host = (urlparse(current_url or "").hostname or "").lower()
+    if not host:
+        return None
+    for domain, template in SEARCH_URLS.items():
+        if host == domain or host.endswith("." + domain):
+            return template.format(q=quote_plus(query))
+    return None
+
+
 async def search_here(query: str) -> dict:
-    """Use the current site's own search box. {ok: False} when the page has none."""
+    """Search the site we are on: by its documented search URL, else through its search box."""
     query = spoken_title(query)
+
+    here = await current_page()
+    direct = search_url_for(here.get("url", ""), query)
+    if direct:
+
+        async def go(session: _Session):
+            await session.call("Page.enable")
+            await session.call("Page.navigate", {"url": direct})
+            for _ in range(24):
+                await asyncio.sleep(0.25)
+                if await session.js("document.readyState") in ("interactive", "complete"):
+                    break
+            await asyncio.sleep(1.0)      # results are rendered after load on these sites
+            return True
+
+        await _with_page(go)
+        page = await read_page()
+        items = [i for i in (page.get("items") or []) if i][:8]
+        return {"ok": True,
+                "found": f"Results include: {', '.join(items)}." if items else ""}
 
     async def do(session: _Session):
         found = await session.js(_SEARCH_FIELD_JS) or {}
