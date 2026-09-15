@@ -1353,3 +1353,55 @@ async def thin_pen() -> dict:
 
     got = await _with_page(do)
     return got if isinstance(got, dict) else {"ok": False}
+
+
+# Clearing the board before drawing on it. Boards persist: reloading onlinewhiteboard.org brought
+# back 1,609 paths from previous sessions, so every screenshot taken while testing was showing
+# several drawings stacked on top of each other — which is most of what looked like speckle.
+_CLEAR_JS = r"""
+(() => {
+  const wanted = /^(clear|clear all|clear board|erase all|reset|new board)$/i;
+  const looksRight = el => {
+    const label = `${el.id || ""} ${el.getAttribute("title") || ""} ${el.getAttribute("aria-label") || ""}`;
+    return /(^|[-_\s])(clear|erase-all|reset)([-_\s]|$)/i.test(label)
+        || wanted.test((el.innerText || "").trim());
+  };
+  for (const el of document.querySelectorAll('button,[role="button"]')) {
+    const r = el.getBoundingClientRect();
+    if (r.width < 8 || r.height < 8) continue;          // not on screen, not a way in
+    if (/eraser|delete.selection|del.row|del.col/i.test(el.id || "")) continue;
+    if (!looksRight(el)) continue;
+    el.click();
+    return {ok: true, via: el.id || (el.innerText || "").trim()};
+  }
+  return {ok: false};
+})()
+"""
+
+
+async def clear_board() -> dict:
+    """Empty the drawing surface, so what is drawn next is all that is on it."""
+
+    async def do(session: _Session):
+        got = await session.js(_CLEAR_JS) or {"ok": False}
+        if got.get("ok"):
+            await asyncio.sleep(0.6)
+            # Some boards ask before throwing work away.
+            await session.js(r"""
+            (() => {
+              for (const el of document.querySelectorAll(
+                   'button,[role="button"],.swal2-confirm,.confirm')) {
+                const r = el.getBoundingClientRect();
+                if (r.width < 8) continue;
+                if (/^(yes|ok|clear|confirm|delete)$/i.test((el.innerText || "").trim())) {
+                  el.click();
+                  return 1;
+                }
+              }
+              return 0;
+            })()""")
+            await asyncio.sleep(0.4)
+        return got
+
+    got = await _with_page(do, surface=True)
+    return got if isinstance(got, dict) else {"ok": False}

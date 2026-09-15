@@ -56,6 +56,9 @@ async def run(subject: str, config=None) -> str:
     # default width a detailed drawing fills its dark areas into a solid blob, because
     # neighbouring contours end up closer together than the line is wide.
     await browser.thin_pen()
+    # And start from an empty board: these persist, so a second drawing lands on top of the first
+    # and the pair of them reads as noise.
+    await browser.clear_board()
 
     picture = await asyncio.to_thread(reference.find, subject)
     if picture is None:

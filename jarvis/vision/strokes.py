@@ -31,7 +31,13 @@ from typing import Optional
 # comes out as hair, shaded features and individual fingers. At the default four-pixel width the
 # same drawing is a blob, which is why thinning is not optional.
 DEFAULT_BUDGET = 40000
-DEFAULT_DETAIL = 0.9
+DEFAULT_DETAIL = 0.8
+
+# The size the picture is worked at, measured by its shorter side. This is a quality setting, not
+# a performance one, and both directions are worse: at 1000 the lines are clean and confident but
+# the drawing is bare, and at 1800 the extra detail arrives as noise that reads as speckle. 1400
+# is where the face keeps its features without the shading breaking up.
+WORKING_SIZE = 1400
 MIN_STROKE_POINTS = 4
 
 
@@ -86,8 +92,77 @@ def _edges(gray, detail: float):
     return cv2.Canny(blurred, low, max(low + 1, high))
 
 
+_NEIGHBOURS = ((-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1))
+
+
+def _trace(edges) -> list:
+    """Every line in the edge map, followed end to end, the way a pen would.
+
+    findContours traces *around* a line and back, so a one-pixel stroke comes out as a
+    there-and-back loop of twice the length, which simplification then turns into a zigzag. That
+    is where the speckle came from: not from the edges, which were already a clean drawing, but
+    from outlining them instead of following them.
+
+    Walking the ink gives each line once, in the order a hand would draw it. Lines are started at
+    their ends where they have any, so a stroke runs tip to tip rather than out from its middle.
+    """
+    import numpy as np
+
+    todo = {(int(y), int(x)) for y, x in zip(*np.nonzero(edges > 0))}
+
+    def around(point):
+        y, x = point
+        for dy, dx in _NEIGHBOURS:
+            neighbour = (y + dy, x + dx)
+            if neighbour in todo:
+                yield neighbour
+
+    ends = [p for p in todo if sum(1 for _ in around(p)) == 1]
+    paths = []
+    while ends or todo:
+        if ends:
+            start = ends.pop()
+            if start not in todo:
+                continue
+        else:
+            start = next(iter(todo))          # a closed loop has no ends to start from
+        path = [start]
+        todo.discard(start)
+        while True:
+            nxt = next(around(path[-1]), None)
+            if nxt is None:
+                break
+            todo.discard(nxt)
+            path.append(nxt)
+        if len(path) >= MIN_STROKE_POINTS:
+            paths.append([(x, y) for y, x in path])
+    return paths
+
+
+def _smooth(points, passes: int = 2):
+    """Round a pixel-stepped path into something a hand could have drawn.
+
+    Contour points step between neighbouring pixels, so every line arrives as a staircase. Two
+    passes of Chaikin's corner cutting turn that into a curve without moving it anywhere it was
+    not already.
+    """
+    import numpy as np
+
+    path = np.asarray(points, dtype=float)
+    for _ in range(passes):
+        if len(path) < 3:
+            break
+        a, b = path[:-1], path[1:]
+        cut = np.empty((2 * len(a), 2))
+        cut[0::2] = 0.75 * a + 0.25 * b
+        cut[1::2] = 0.25 * a + 0.75 * b
+        path = np.vstack([path[0], cut, path[-1]])
+    return path
+
+
 def from_image(path: str | Path, budget: int = DEFAULT_BUDGET,
-               detail: float = DEFAULT_DETAIL, short_side: int = 1800) -> Optional[Plan]:
+               detail: float = DEFAULT_DETAIL,
+               short_side: int = WORKING_SIZE) -> Optional[Plan]:
     """A drawable plan for the picture at `path`, or None when it yields nothing worth drawing."""
     import cv2
     import numpy as np
@@ -108,7 +183,7 @@ def from_image(path: str | Path, budget: int = DEFAULT_BUDGET,
                            interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC)
         h, w = image.shape[:2]
 
-    found, _ = cv2.findContours(_edges(image, detail), cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+    found = _trace(_edges(image, detail))
     if not found:
         return None
 
@@ -117,27 +192,30 @@ def from_image(path: str | Path, budget: int = DEFAULT_BUDGET,
     # simplification with more points than a long smooth curve, so a painting came out as a
     # scatter of unrecognisable ticks while the lines that describe it were never drawn.
     diagonal = float(np.hypot(h, w))
-    # Below this a contour describes texture rather than shape. How short is "too short" is the
-    # other half of the detail dial: at 0.5 it is a twentieth of the picture, at 1.0 a two
-    # hundredth, which is the difference between an outline and a drawing with a face in it.
-    min_length = diagonal * (0.055 - 0.0567 * detail)
-    measured = [(cv2.arcLength(c, False), c) for c in found]
-    measured = [(length, c) for length, c in measured if length >= min_length]
+    # Low on purpose. A tight filter here threw away about eighty-five per cent of the traced
+    # lines and left a picture that was mostly empty: the edge map's quality comes from all the
+    # medium-length strokes — an eyelid, a knuckle, a fold — not from a handful of long ones.
+    # What looked like speckle in earlier attempts turned out to be several drawings stacked on
+    # a board that had never been cleared, not short strokes.
+    min_points = max(MIN_STROKE_POINTS, int(14 - 8 * detail))
+
+    measured = [(len(path), path) for path in found]
+    measured = [(n, path) for n, path in measured if n >= min_points]
     if not measured:
         return None
     measured.sort(key=lambda pair: pair[0], reverse=True)
 
     simplified = []
-    for length, contour in measured:
-        # Simplify in proportion to the contour's own size: the same absolute tolerance either
-        # destroys a small shape or leaves a large one needlessly dense.
-        # How faithfully each contour is followed. Straightening a curve is what made the first
-        # attempts look like a rubbing rather than a drawing.
-        # Near-zero at full detail: following the contour as it is, rather than straightening it.
-        epsilon = max(0.5, (0.004 - 0.0039 * detail) * length)
-        points = cv2.approxPolyDP(contour, epsilon, False).reshape(-1, 2)
-        if len(points) >= MIN_STROKE_POINTS:
-            simplified.append(points)
+    for _n, path in measured:
+        # Simplify lightly, then round the corners. A traced path steps between neighbouring
+        # pixels, so it arrives as a staircase; simplifying alone leaves a polygon, and Chaikin
+        # turns that into a curve without moving it off the line it came from.
+        points = cv2.approxPolyDP(
+            np.asarray(path, dtype=np.float32).reshape(-1, 1, 2),
+            max(0.7, 1.6 - detail), False).reshape(-1, 2)
+        if len(points) < MIN_STROKE_POINTS:
+            continue
+        simplified.append(_smooth(points))
     if not simplified:
         return None
 
