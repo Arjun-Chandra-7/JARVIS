@@ -62,6 +62,7 @@ class VoiceSession:
                 self._endpointer = None
         self._speaking = threading.Event()   # True while Jarvis's own audio is playing
         self._ptt = None                     # push-to-talk watcher, started in run()
+        self._dictating = False              # while true, speech is typed rather than obeyed
         self._ptt_pressed = threading.Event()
 
     # --- stages ----------------------------------------------------------
@@ -800,6 +801,34 @@ class VoiceSession:
                 while transcript:
                     self.on_event("heard", transcript)
                     t_lower = transcript.lower().strip()
+
+                    # --- dictation: every word is typed, nothing is obeyed ---
+                    # Checked before anything else, because in dictation a sentence that looks
+                    # like a command is just a sentence someone is writing.
+                    from .. import dictation as _dict
+                    from ..commands import clean_text as _dclean
+                    _said = _dclean(transcript)
+                    if self._dictating:
+                        if _dict.wants_to_stop(_said) or _dict.wants_to_stop(transcript):
+                            self._dictating = False
+                            self.on_event("reply", "Stopped dictating, sir.")
+                            self._speak("Stopped dictating, sir.")
+                            self.on_event("sleep")
+                            break
+                        typed = _dict.type_out(transcript)
+                        self.on_event("reply" if typed else "error",
+                                      _dict.as_typed(transcript) if typed
+                                      else "I couldn't type that — nothing has focus.")
+                        # Straight back to listening: dictation is continuous, and a wake word
+                        # between every sentence would make it useless.
+                        transcript = self._record_transcript(wait_s=max(12, self.config.follow_up_s))
+                        continue
+                    if _dict.wants_to_start(_said):
+                        self._dictating = True
+                        self.on_event("reply", "Dictating — say “stop dictation” when you're done.")
+                        self._speak("Dictating, sir. Say stop dictation when you're done.")
+                        transcript = self._record_transcript(wait_s=max(12, self.config.follow_up_s))
+                        continue
 
                     # --- soft on/off: while asleep, only a wake phrase gets through ---
                     from .. import power as _power
