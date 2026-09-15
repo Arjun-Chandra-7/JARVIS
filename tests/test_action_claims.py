@@ -155,3 +155,31 @@ def test_the_stated_reason_is_kept():
 def test_without_a_reason_it_still_admits_plainly():
     assert ac.honest_fallback() == \
         "I didn't actually manage to do that, sir — nothing was carried out."
+
+
+# ---------------------------------------------------- answering about something never asked
+_CAST_ABOUT = "I cannot set brightness directly. Please use `open_app` for web browsers."
+
+
+@pytest.mark.parametrize("request_text", [
+    "Jarvis opened the first result then",      # all three verbatim from one session's log
+    "Hey, John, this is Open Wikipedia",
+    "He always set my volume to 70%",
+])
+def test_an_answer_about_brightness_nobody_asked_for_is_caught(request_text):
+    assert ac.is_a_non_sequitur(request_text, _CAST_ABOUT)
+
+
+@pytest.mark.parametrize("request_text,reply", [
+    ("set brightness to 30", "I cannot set brightness directly."),   # asked about, so allowed
+    ("what is the volume", "Volume is at 35%."),
+    ("turn up the brightness", "Brightness is at 60%."),
+    ("open netflix", "Opened Netflix."),
+    ("whats the weather", "It is sunny and 24 degrees."),
+])
+def test_a_relevant_answer_is_left_alone(request_text, reply):
+    assert not ac.is_a_non_sequitur(request_text, reply)
+
+
+def test_an_internal_tool_name_is_never_read_out():
+    assert ac.is_a_non_sequitur("anything at all", "Please use `browser_type` instead.")

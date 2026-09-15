@@ -124,3 +124,42 @@ def honest_fallback(reason: str = "") -> str:
         # "i can read the brightness".
         return f"{admission} — {reason}"
     return f"{admission} — nothing was carried out."
+
+
+# --------------------------------------------------------------- replies about something else
+# Garbled speech that parses as no command at all leaves the small model casting about, and it
+# reaches for whatever tool happens to be at the top of its shortlist. Observed verbatim, three
+# times in one session, for three unrelated utterances:
+#
+#     you (voice)> Jarvis opened the first result then.
+#     you (voice)> Hey, John, this is Open Wikipedia.
+#     you (voice)> He always set my volume to 70%.
+#     jarvis>      I cannot set brightness directly. Please use `open_app` for web browsers.
+#
+# Nobody mentioned brightness. Answering a question the user did not ask — in the vocabulary of
+# the tool registry — is worse than admitting the words did not come through.
+_SUBJECTS = ("brightness", "volume", "backlight", "keyboard")
+
+# `open_app`, `browser_type`: an internal tool name has no meaning to the person listening.
+_LEAKS_A_TOOL_NAME = re.compile(r"`[a-z][a-z0-9]*_[a-z0-9_]+`|\b(?:open_app|browser_\w+|web_search)\b")
+
+
+def is_a_non_sequitur(request: str, reply: str) -> bool:
+    """True when the reply answers about something the request never raised."""
+    said, asked = (reply or "").lower(), (request or "").lower()
+    if not said.strip():
+        return False
+    if _LEAKS_A_TOOL_NAME.search(said):
+        return True
+    for subject in _SUBJECTS:
+        if subject in said and subject not in asked:
+            # Only when the reply is *about* that subject, not merely mentioning it in passing.
+            if re.search(rf"(?:can(?:not|'t)|unable to|don'?t)\s+\w*\s*{subject}", said) \
+                    or re.search(rf"{subject}\s+(?:directly|is not|cannot)", said):
+                return True
+    return False
+
+
+def misheard_fallback() -> str:
+    """What to say when the words plainly did not come through."""
+    return "Sorry sir, I didn't catch that — say it again?"

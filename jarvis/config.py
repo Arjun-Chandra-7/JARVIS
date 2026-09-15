@@ -196,7 +196,7 @@ class Config:
     # modifier cannot be a desktop shortcut and Wayland hides other windows' keys, so this is read
     # from the kernel input device — see jarvis/audio/hotkey.py for exactly what it looks at.
     # "none" disables it; any name in hotkey.KEY_CODES or a raw evdev code works.
-    ptt_key: str = field(default_factory=lambda: os.environ.get("JARVIS_PTT_KEY", "rightalt"))
+    ptt_key: str = field(default_factory=lambda: os.environ.get("JARVIS_PTT_KEY", "rightctrl"))
 
     # --- proactive routines (Phase 4) ---
     enable_brief: bool = field(default_factory=lambda: _bool("JARVIS_ENABLE_BRIEF", True))

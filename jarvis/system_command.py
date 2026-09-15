@@ -76,6 +76,29 @@ _ASK_ADJ_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+# Speech puts things in front of the command — a mis-heard wake word most often. "Hey Jarvis, set
+# my volume to 70" came back as "He always set my volume to 70%", matched nothing, and the model
+# answered "I cannot set brightness directly. Please use `open_app` for web browsers."
+#
+# An explicit verb is required here, so a passing mention ("the volume of a sphere", "turn down
+# that offer") cannot move anything.
+_LOOSE_SET_RE = re.compile(
+    rf"""\b(?:set|put|change|make|turn)\s+
+        (?:the\s+|my\s+)?
+        {_WHAT}
+        \s*(?:to|at|=)\s*
+        (?P<value>\d{{1,3}}|[a-z]+)
+        \s*(?:%|percent|per\s*cent)?
+        \s*$""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_LOOSE_STEP_RE = re.compile(
+    rf"""\bturn\s+(?:the\s+|my\s+)?{_WHAT}\s+(?P<dir>up|down)
+        (?:\s+a\s+(?:bit|little|lot))?\s*$""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
 _STEP = 10
 
 
@@ -131,6 +154,19 @@ def parse(text: str) -> Optional[dict]:
         if pct is None:
             return None
         return {"action": "set", "kind": _kind(m.group("what")), "value": pct}
+
+    # Nothing matched from the start of the line; allow a run-up for garbled speech.
+    m = _LOOSE_SET_RE.search(cleaned)
+    if m:
+        pct = _to_percent(m.group("value"))
+        if pct is not None:
+            return {"action": "set", "kind": _kind(m.group("what")), "value": pct}
+
+    m = _LOOSE_STEP_RE.search(cleaned)
+    if m:
+        up = m.group("dir").lower() == "up"
+        return {"action": "step", "kind": _kind(m.group("what")),
+                "value": _STEP if up else -_STEP}
     return None
 
 

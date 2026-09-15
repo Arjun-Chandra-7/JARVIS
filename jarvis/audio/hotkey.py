@@ -174,7 +174,7 @@ def start(key: str, on_press: Callable[[], None]) -> Optional[PushToTalk]:
 
 def diagnose(key: str = "") -> str:
     """Human-readable reason push-to-talk is or is not available."""
-    code = resolve_key(key or os.environ.get("JARVIS_PTT_KEY", "rightalt"))
+    code = resolve_key(key or os.environ.get("JARVIS_PTT_KEY", "rightctrl"))
     if code is None:
         return "Push-to-talk is disabled (JARVIS_PTT_KEY=none)."
     devices = keyboard_devices()

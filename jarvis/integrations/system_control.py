@@ -110,6 +110,48 @@ def get_brightness() -> Optional[int]:
     return None
 
 
+def _graphical_session() -> Optional[str]:
+    """The logind session that owns a seat — the one allowed to change the backlight.
+
+    There are usually two: the systemd --user manager session, which has no seat and is refused,
+    and the real graphical session on seat0.
+    """
+    r = _run(["loginctl", "list-sessions", "--no-legend"])
+    if not r or r.returncode != 0:
+        return None
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        sid = parts[0]
+        got = _run(["loginctl", "show-session", sid, "-p", "Seat", "--value"])
+        if got and got.returncode == 0 and got.stdout.strip():
+            return sid
+    return None
+
+
+def _logind_set_brightness(pct: int) -> bool:
+    """Ask logind to set the backlight.
+
+    This is the path that works without the user being in the `video` group and, crucially,
+    without logging out after being added to it: group membership is fixed when a process starts,
+    so `usermod -aG video` changes nothing for an already-running session, while logind will do it
+    on behalf of whoever owns the seat right now.
+    """
+    sid = _graphical_session()
+    if not sid:
+        return False
+    for path in sorted(glob.glob("/sys/class/backlight/*")):
+        device = os.path.basename(path)
+        r = _run(["busctl", "call", "org.freedesktop.login1",
+                  f"/org/freedesktop/login1/session/_3{sid}",
+                  "org.freedesktop.login1.Session", "SetBrightness",
+                  "ssu", "backlight", device, str(max(0, min(100, int(pct))))])
+        if r and r.returncode == 0:
+            return True
+    return False
+
+
 def set_brightness(percent: int) -> bool:
     """Set screen brightness.
 
@@ -120,6 +162,10 @@ def set_brightness(percent: int) -> bool:
     fallback for systems where that group membership does exist.
     """
     pct = max(1, min(100, int(percent)))
+
+    # logind first: it needs no group membership and no re-login.
+    if _logind_set_brightness(pct):
+        return True
 
     if shutil.which("brightnessctl"):
         r = _run(["brightnessctl", "-m", "set", f"{pct}%"])
@@ -158,6 +204,8 @@ def brightness_blocker() -> Optional[str]:
         if os.access(os.path.join(path, "brightness"), os.W_OK):
             return None
 
+    if _graphical_session():
+        return None          # logind can do it; there is no blocker to report
     if shutil.which("brightnessctl"):
         r = _run(["brightnessctl", "-m", "get"])
         if r and r.returncode == 0:

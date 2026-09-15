@@ -501,6 +501,15 @@ class GroqAgent:
                 # A tool failed for a specific, stated reason; do not relay it as a vague fault.
                 # "No installed app matches Networks" was reported as "there's a temporary
                 # glitch", which hides the cause and invites the user to keep retrying.
+                # A reply about brightness when nobody mentioned brightness, or one that names an
+                # internal tool, is the small model casting about after garbled speech. Saying the
+                # words did not come through is more use than answering a question never asked.
+                if action_claims.is_a_non_sequitur(self._route_query, reply):
+                    self.on_tool("brain", "answered about something that was never asked")
+                    reply = action_claims.misheard_fallback()
+                    self.messages.append({"role": "assistant", "content": reply})
+                    break
+
                 if self._failed_calls_advice and action_claims.invents_an_excuse(reply):
                     last = list(self._failed_calls_advice.values())[-1]
                     grounded = action_claims.real_reason(reply, last)
