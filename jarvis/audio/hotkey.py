@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 import struct
 import threading
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -99,12 +100,30 @@ def keyboard_devices() -> list[Path]:
 class PushToTalk:
     """Calls `on_press` whenever the watched key goes down. Silent no-op if it cannot read."""
 
-    def __init__(self, key_code: int, on_press: Callable[[], None]) -> None:
+    def __init__(self, key_code: int, on_press: Callable[[], None],
+                 debounce_s: float = 0.4) -> None:
         self.key_code = key_code
         self._on_press = on_press
+        # One physical press is visible on more than one event device (the keyboard itself and a
+        # consolidated one), so every watcher fires and a single press started two turns. Collapse
+        # presses that arrive together; this also absorbs key auto-repeat.
+        self._debounce_s = debounce_s
+        self._last_fire = 0.0
+        self._fire_lock = threading.Lock()
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
         self.watching: list[str] = []
+
+    def _fire(self) -> None:
+        now = time.monotonic()
+        with self._fire_lock:
+            if now - self._last_fire < self._debounce_s:
+                return
+            self._last_fire = now
+        try:
+            self._on_press()
+        except Exception:  # noqa: BLE001 - a bad callback must not kill the watcher
+            pass
 
     def start(self) -> bool:
         """Begin watching. False when no keyboard could be opened (missing `input` group)."""
@@ -132,10 +151,7 @@ class PushToTalk:
                 # The only thing this process ever learns about your typing.
                 if etype != EV_KEY or code != self.key_code or value != VALUE_PRESS:
                     continue
-                try:
-                    self._on_press()
-                except Exception:  # noqa: BLE001 - a bad callback must not kill the watcher
-                    pass
+                self._fire()
         except OSError:
             return
         finally:

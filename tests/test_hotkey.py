@@ -35,9 +35,9 @@ class FakeDevice:
         self.closed = True
 
 
-def run_with(events: bytes, key_code: int = RIGHT_ALT) -> int:
+def run_with(events: bytes, key_code: int = RIGHT_ALT, debounce_s: float = 0.0) -> int:
     fired = []
-    ptt = hotkey.PushToTalk(key_code, lambda: fired.append(1))
+    ptt = hotkey.PushToTalk(key_code, lambda: fired.append(1), debounce_s=debounce_s)
     device = FakeDevice(events)
     thread = threading.Thread(target=ptt._watch, args=(device,), daemon=True)
     thread.start()
@@ -85,8 +85,24 @@ def test_non_key_events_are_ignored():
     assert run_with(event(0x02, RIGHT_ALT, 1) * 3) == 0
 
 
-def test_repeated_presses_each_fire():
-    assert run_with(event(EV_KEY, RIGHT_ALT, 1) * 3) == 3
+def test_separate_presses_each_fire():
+    """With no debounce window, every press is its own turn."""
+    assert run_with(event(EV_KEY, RIGHT_ALT, 1) * 3, debounce_s=0.0) == 3
+
+
+def test_one_physical_press_seen_twice_only_fires_once():
+    """The same key event arrives on more than one input device, so each watcher sees it. Without
+    a debounce a single press started two listening turns — measured on the live service."""
+    assert run_with(event(EV_KEY, RIGHT_ALT, 1) * 2, debounce_s=0.4) == 1
+
+
+def test_debounce_releases_after_its_window():
+    ptt = hotkey.PushToTalk(RIGHT_ALT, lambda: fired.append(1), debounce_s=0.05)
+    fired = []
+    ptt._fire()
+    time.sleep(0.08)
+    ptt._fire()
+    assert len(fired) == 2
 
 
 def test_a_different_configured_key_is_honoured():
@@ -108,7 +124,7 @@ def test_a_failing_callback_does_not_stop_the_watcher():
         calls.append(1)
         raise RuntimeError("callback exploded")
 
-    ptt = hotkey.PushToTalk(RIGHT_ALT, boom)
+    ptt = hotkey.PushToTalk(RIGHT_ALT, boom, debounce_s=0.0)
     ptt._watch(FakeDevice(event(EV_KEY, RIGHT_ALT, 1) * 3))
     assert len(calls) == 3, "one bad callback stopped push-to-talk entirely"
 
