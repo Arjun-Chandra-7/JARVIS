@@ -233,8 +233,31 @@ def _clean_env() -> dict:
     return {k: v for k, v in os.environ.items() if k not in drop}
 
 
+def is_the_browser(app: App) -> bool:
+    """True when this app is the browser precision control drives."""
+    try:
+        from .browser import BROWSER_EXE
+    except Exception:  # noqa: BLE001
+        return False
+    wanted = Path(BROWSER_EXE).name.lower()
+    return bool(wanted) and wanted in (app.entry_id.lower(), app.binary.lower())
+
+
 def launch(app: App) -> bool:
     """Start an app the way the desktop would, so it gets its own session and icon."""
+    # The browser is the exception: started the way the desktop starts it, it comes up without the
+    # DevTools port, and the only way back to control is a restart that closes whatever tabs are
+    # open by then. Jarvis was creating that situation itself — "open Opera GX" followed by "play
+    # the latest X video on YouTube" ended in "say 'restart Opera with control'" — so when Jarvis
+    # is the one starting the browser it starts it controllable, as docs/PRECISION.md promises.
+    # A browser already running is left alone; restarting it is the user's decision.
+    if is_the_browser(app):
+        from ..config import CONFIG
+        from . import browser
+
+        if CONFIG.browser_control and not browser.is_running() and browser.launch():
+            return True
+
     env = _clean_env()
     if app.path is not None:
         for argv in (
