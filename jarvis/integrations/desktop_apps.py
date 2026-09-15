@@ -220,7 +220,9 @@ def candidates(spoken: str, limit: int = 5) -> list[str]:
             SequenceMatcher(None, query, _normalise(app.name)).ratio(),
             SequenceMatcher(None, query, _normalise(app.entry_id)).ratio(),
         )
-        if best >= 0.6:
+        # 0.6 offered "Files" for "friends" (0.67), and the model then acted on the
+        # suggestion. Only near-identical spellings are worth proposing.
+        if best >= 0.78:
             scored.append((best, app.name))
     scored.sort(reverse=True)
     return [name for _s, name in scored[:limit]]

@@ -207,6 +207,7 @@ class GroqAgent:
 
         self._route_query = ""          # the utterance the tool shortlist is chosen for
         self._tools_ran_this_turn = False          # did any tool actually run this turn?
+        self._any_tool_succeeded = False           # ...and did any of them actually work?
         self._failed_calls: dict[str, int] = {}     # calls that already failed this turn
         self._failed_calls_advice: dict[str, str] = {}
         self._last_outcome = None       # outcome of the most recent tool call
@@ -387,6 +388,7 @@ class GroqAgent:
         self._failed_calls.clear()
         self._failed_calls_advice.clear()
         self._tools_ran_this_turn = False
+        self._any_tool_succeeded = False
         action_claims_checked = False
         # episodic journal
         clean = " ".join(l for l in user_text.splitlines() if not l.strip().startswith("["))[:140].strip()
@@ -472,7 +474,11 @@ class GroqAgent:
                 # A reply that says it opened, launched or played something, when no tool ran this
                 # turn, is not true. Push back once and make it actually act; if it still will
                 # not, say plainly that nothing happened rather than delivering the claim.
-                if (not self._tools_ran_this_turn
+                # Nothing worked this turn if no tool ran, or every tool that ran failed.
+                # "click on friends" failed and was still reported as "you've clicked on
+                # 'friends', which navigated to the Netflix profile".
+                nothing_worked = not self._any_tool_succeeded
+                if (nothing_worked
                         and not action_claims_checked
                         and action_claims.claims_an_action(reply)):
                     action_claims_checked = True
@@ -482,7 +488,7 @@ class GroqAgent:
                         "role": "user", "content": action_claims.correction_for(reply),
                     })
                     continue
-                if (not self._tools_ran_this_turn
+                if (nothing_worked
                         and action_claims_checked
                         and action_claims.claims_an_action(reply)):
                     reply = action_claims.honest_fallback()
@@ -593,6 +599,8 @@ class GroqAgent:
                 outcome = tool_contract.Outcome.FAILURE
             self._last_outcome = outcome
             self._tools_ran_this_turn = True
+            if outcome is tool_contract.Outcome.SUCCESS:
+                self._any_tool_succeeded = True
             body = str(result)[:6000]
             # A tool that reports its own failure in the text (a redirect, "not found", a refusal)
             # counts as failed even though dispatch returned normally — otherwise the repeat-guard

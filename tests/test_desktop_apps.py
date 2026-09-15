@@ -162,3 +162,12 @@ def test_spelled_out_title_is_sent_to_the_browser(catalogue):
 def test_single_letters_do_not_match_an_app_name(catalogue):
     """The all-words rule ignores fragments shorter than three characters."""
     assert da._score(catalogue[0], "f r i e n d s") == 0
+
+
+def test_a_show_title_is_not_suggested_as_an_app(catalogue):
+    """0.6 similarity offered "Files" for "friends" (0.67) and the model acted on it."""
+    assert "Files" not in da.candidates("friends")
+
+
+def test_close_misspellings_are_still_suggested(catalogue):
+    assert "Spotify" in da.candidates("spotifyy")
