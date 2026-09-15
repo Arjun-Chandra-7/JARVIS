@@ -474,6 +474,18 @@ async def audio_level():
     return levels.read()
 
 
+# Set when the process is asked to stop. The event stream below never ends on its own, and
+# uvicorn's graceful shutdown waits for every in-flight request to finish, so one connected
+# overlay held the backend open until systemd gave up and killed it — ninety seconds, every
+# restart, and the service left in a failed state each time.
+_shutting_down = asyncio.Event()
+
+
+@app.on_event("shutdown")
+async def _release_streams() -> None:
+    _shutting_down.set()
+
+
 @app.get("/events")
 async def events():
     q: asyncio.Queue = asyncio.Queue()
@@ -482,9 +494,17 @@ async def events():
     async def gen():
         try:
             yield f"data: {json.dumps({'kind': 'ready', 'text': 'HUD linked'})}\n\n"
-            while True:
-                item = await q.get()
-                yield f"data: {json.dumps(item)}\n\n"
+            stopping = asyncio.ensure_future(_shutting_down.wait())
+            while not _shutting_down.is_set():
+                nxt = asyncio.ensure_future(q.get())
+                done, _ = await asyncio.wait({nxt, stopping},
+                                             return_when=asyncio.FIRST_COMPLETED)
+                if nxt in done:
+                    yield f"data: {json.dumps(nxt.result())}\n\n"
+                else:
+                    nxt.cancel()
+                    break
+            stopping.cancel()
         finally:
             _subscribers.discard(q)
 

@@ -454,7 +454,10 @@ def _run_web() -> None:
     port = int(os.environ.get("JARVIS_WEB_PORT", "8770"))
     print(BANNER, "· web HUD")
     print(f"\n  Open  http://{host}:{port}  in your browser (Chrome/Edge for voice).\n")
-    uvicorn.run("jarvis.webserver:app", host=host, port=port, log_level="warning")
+    # A backstop for anything else that will not let go: stop waiting after a few seconds rather
+    # than hanging until systemd runs out of patience and kills the process.
+    uvicorn.run("jarvis.webserver:app", host=host, port=port, log_level="warning",
+                timeout_graceful_shutdown=5)
 
 
 def _run_google_auth() -> None:
