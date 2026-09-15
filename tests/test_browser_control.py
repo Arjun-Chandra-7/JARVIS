@@ -76,7 +76,7 @@ def test_single_letter_key_is_accepted(monkeypatch):
     """Video sites use bare letters — f for fullscreen, m for mute."""
     sent = []
 
-    async def fake_with_page(fn, timeout=25.0):
+    async def fake_with_page(fn, timeout=25.0, **kw):
         class S:
             async def call(self, method, params=None, timeout=20.0):
                 sent.append(params)
@@ -143,3 +143,49 @@ def test_real_titles_are_still_searched_for():
 
     for title in ("friends", "f.r.i.e.n.d.s", "the office", "breaking bad"):
         assert not _is_known_destination(title), title
+
+
+# ------------------------------------------------- staying on one tab across a conversation
+def test_jarvis_keeps_driving_the_tab_it_chose():
+    """Re-picking "the first page CDP lists" scatters a sequence across windows."""
+    import asyncio
+
+    from jarvis.integrations import browser
+
+    targets = [{"id": "A", "type": "page", "url": "https://www.netflix.com/browse"},
+               {"id": "B", "type": "page", "url": "https://example.com"}]
+
+    async def fake_targets():
+        return targets
+
+    old, old_focus = browser._targets, browser._focus
+    try:
+        browser._targets = fake_targets
+        browser.focus_on("B")
+        assert asyncio.run(browser._active_page())["id"] == "B"
+        # Order changes underneath us; the chosen tab still wins.
+        targets.reverse()
+        assert asyncio.run(browser._active_page())["id"] == "B"
+        # When it closes, fall back rather than failing.
+        targets[:] = [t for t in targets if t["id"] != "B"]
+        assert asyncio.run(browser._active_page())["id"] == "A"
+        assert browser._focus is None
+    finally:
+        browser._targets, browser._focus = old, old_focus
+
+
+def test_a_closed_tab_does_not_strand_jarvis():
+    import asyncio
+
+    from jarvis.integrations import browser
+
+    async def none_at_all():
+        return []
+
+    old, old_focus = browser._targets, browser._focus
+    try:
+        browser._targets = none_at_all
+        browser.focus_on("gone")
+        assert asyncio.run(browser._active_page()) is None
+    finally:
+        browser._targets, browser._focus = old, old_focus

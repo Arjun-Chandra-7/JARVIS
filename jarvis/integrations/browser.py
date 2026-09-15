@@ -176,15 +176,36 @@ async def _targets() -> list[dict]:
         return r.json()
 
 
+# The one tab Jarvis is driving. Without this every call re-picks "the first page CDP happens to
+# list", so with more than one window open a sequence like "open Netflix" -> "select Arjun" ->
+# "open Friends" scatters across tabs: the navigation lands on one, the click on another, and the
+# read comes back from a third. Sticking to a tab is what makes a conversation about a page work.
+_focus: Optional[str] = None
+
+
+def _usable(t: dict) -> bool:
+    return (t.get("type") == "page"
+            and not t.get("url", "").startswith(
+                ("devtools://", "chrome-extension://", "opera://")))
+
+
+def focus_on(target_id: Optional[str]) -> None:
+    """Drive this tab from now on."""
+    global _focus
+    _focus = target_id
+
+
 async def _active_page() -> Optional[dict]:
-    """The tab to act on: the frontmost normal page, ignoring devtools and extensions."""
-    for t in await _targets():
-        if t.get("type") != "page":
-            continue
-        url = t.get("url", "")
-        if url.startswith(("devtools://", "chrome-extension://", "opera://")):
-            continue
-        return t
+    """The tab to act on: the one Jarvis is already driving, else the frontmost normal page."""
+    targets = await _targets()
+    if _focus is not None:
+        for t in targets:
+            if t.get("id") == _focus and _usable(t):
+                return t
+        focus_on(None)          # that tab is gone; fall back to picking one
+    for t in targets:
+        if _usable(t):
+            return t
     return None
 
 
@@ -378,14 +399,27 @@ def _js_string(value: str) -> str:
 
 
 # --------------------------------------------------------------------------- operations
-async def _with_page(fn, timeout: float = 25.0):
+async def _with_page(fn, timeout: float = 25.0, surface: bool = False):
+    """Run `fn` against the tab Jarvis is driving.
+
+    `surface` raises that tab's window to the front. Anything that changes the page sets it: work
+    done in a window the user cannot see is indistinguishable from nothing happening, which is
+    exactly how a working action came to be reported as "it says it's launching but does nothing".
+    Reads leave the focus alone so Jarvis never steals the screen just to look at something.
+    """
     target = await _active_page()
     if target is None:
         return {"ok": False, "error": "No open tab to act on."}
+    focus_on(target.get("id"))
     ws = await _connect(target)
     try:
         session = _Session(ws)
         await session.call("Runtime.enable")
+        if surface:
+            try:
+                await session.call("Page.bringToFront", timeout=4.0)
+            except Exception:  # noqa: BLE001 - never fail an action because focus was refused
+                pass
         return await asyncio.wait_for(fn(session), timeout=timeout)
     finally:
         await ws.close()
@@ -543,7 +577,7 @@ async def open_site(name: str) -> dict:
         title = await session.js("document.title")
         return {"ok": True, "url": url, "title": title or "", "message": f"Opened {title or url}."}
 
-    return await _with_page(go)
+    return await _with_page(go, surface=True)
 
 
 _SEARCH_FIELD_JS = """
@@ -626,7 +660,7 @@ async def search_here(query: str) -> dict:
             await asyncio.sleep(1.0)      # results are rendered after load on these sites
             return True
 
-        await _with_page(go)
+        await _with_page(go, surface=True)
         page = await read_page()
         items = [i for i in (page.get("items") or []) if i][:8]
         return {"ok": True,
@@ -680,7 +714,7 @@ async def search_here(query: str) -> dict:
         now = await session.js("({title: document.title, url: location.href})")
         return {"ok": True, "now": now}
 
-    got = await _with_page(do)
+    got = await _with_page(do, surface=True)
     if not got.get("ok"):
         return {"ok": False}
     page = await read_page()
@@ -724,6 +758,17 @@ async def click_text(phrase: str, nth: int = 1) -> dict:
         spot = (again.get("matches") or [best])[min(index, len(again.get("matches") or [1]) - 1)]
 
         x, y = spot["x"], spot["y"]
+        # What the page looked like before, so we can tell whether the click did anything at all.
+        before = await session.js(
+            "({url: location.href, title: document.title,"
+            " len: (document.body.innerText || '').length})") or {}
+        # Whatever is actually at that point is what receives the click — an overlay, a cookie
+        # banner or a modal will swallow it while the match still looks perfect.
+        hit = await session.js(
+            f"(() => {{const e=document.elementFromPoint({x},{y});"
+            "if(!e) return null;"
+            "const a=e.closest('a,button,[role=\"button\"],[role=\"link\"]');"
+            "return {tag:e.tagName, href:(a&&a.getAttribute('href'))||''};})()")
         # A real input event, not element.click(): sites that check event.isTrusted still respond.
         for kind in ("mouseMoved", "mousePressed", "mouseReleased"):
             params = {"type": kind, "x": x, "y": y, "button": "left",
@@ -731,18 +776,37 @@ async def click_text(phrase: str, nth: int = 1) -> dict:
             await session.call("Input.dispatchMouseEvent", params)
             await asyncio.sleep(0.04)
 
-        await asyncio.sleep(0.6)
-        now = await session.js("({title: document.title, url: location.href})")
-        return {
+        # Give the page a moment to react; a navigation or a re-render takes longer than the click.
+        changed, now = False, {}
+        for _ in range(8):
+            await asyncio.sleep(0.25)
+            now = await session.js(
+                "({url: location.href, title: document.title,"
+                " len: (document.body.innerText || '').length})") or {}
+            if (now.get("url") != before.get("url")
+                    or now.get("title") != before.get("title")
+                    or abs((now.get("len") or 0) - (before.get("len") or 0)) > 20):
+                changed = True
+                break
+
+        result = {
             "ok": True,
             "clicked": spot["label"],
             "match": spot["why"],
             "alternatives": [m["label"] for m in matches[:4] if m is not best],
             "now": now,
+            "changed": changed,
             "message": f"Clicked “{spot['label']}”.",
         }
+        if not changed:
+            # Saying "I clicked it" when the page never moved is the single most misleading thing
+            # Jarvis can do — the user looks at an unchanged screen and concludes nothing works.
+            result["message"] = (f"I clicked “{spot['label']}” but the page did not change. "
+                                 f"Something may be covering it.")
+            result["hit"] = hit
+        return result
 
-    return await _with_page(do)
+    return await _with_page(do, surface=True)
 
 
 async def type_into(field: str, text: str, submit: bool = True) -> dict:
@@ -809,7 +873,7 @@ async def type_into(field: str, text: str, submit: bool = True) -> dict:
                 "message": f"Typed “{text}” into {clicked.get('clicked')}"
                            + (" and searched." if submit else ".")}
 
-    return await _with_page(do)
+    return await _with_page(do, surface=True)
 
 
 async def type_text(text: str, submit: bool = False) -> dict:
@@ -825,7 +889,7 @@ async def type_text(text: str, submit: bool = False) -> dict:
         await asyncio.sleep(0.4)
         return {"ok": True, "message": f"Typed {len(text)} characters" + (" and pressed Enter." if submit else ".")}
 
-    return await _with_page(do)
+    return await _with_page(do, surface=True)
 
 
 _KEYS = {
@@ -856,7 +920,7 @@ async def press_key(key: str) -> dict:
             await asyncio.sleep(0.05)
         return {"ok": True, "message": f"Pressed {label}."}
 
-    return await _with_page(do)
+    return await _with_page(do, surface=True)
 
 
 async def read_page() -> dict:
@@ -879,7 +943,7 @@ async def scroll(direction: str = "down", amount: int = 600) -> dict:
         await asyncio.sleep(0.3)
         return {"ok": True, "message": f"Scrolled {direction}."}
 
-    return await _with_page(do)
+    return await _with_page(do, surface=True)
 
 
 async def go_back() -> dict:
@@ -889,4 +953,4 @@ async def go_back() -> dict:
         now = await session.js("({title: document.title, url: location.href})")
         return {"ok": True, "now": now, "message": "Went back."}
 
-    return await _with_page(do)
+    return await _with_page(do, surface=True)
