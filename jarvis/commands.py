@@ -35,6 +35,13 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
     if asleep():
         return "I'm asleep, sir. Say “Jarvis, wake up” to bring me back."
 
+    # "open X" has exactly one meaning, so resolve it here rather than asking the model — which,
+    # measured, called no tool at all on three of five attempts at "open friends".
+    from .open_command import handle as _open_handle
+    opened = await _open_handle(raw, config)
+    if opened is not None:
+        return opened
+
     from .preferences import set_notifications
     if re.search(r"\bnotifications?\b", command) and re.search(
         r"\b(?:turn|switch|set|mute|unmute|disable|enable|stop|start|silence|resume|read|reading)\b", command
