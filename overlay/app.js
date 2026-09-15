@@ -118,13 +118,39 @@ function renderInline(text) {
   return escapeHtml(text).replace(/`([^`]+)`/g, "<code>$1</code>");
 }
 
+// The backend announces the same thing more than once by design: a committed transcript arrives
+// as both "transcript" and "heard", and a reply arrives as "reply" and again as "speaking" — once
+// per sentence, because speech is streamed sentence by sentence. Each of those was appending its
+// own bubble, so every exchange appeared two or three times.
+const lastSaid = { you: "", jarvis: "", at: 0 };
+
+// Asking and recording are separate: a caller that checks first and then delegates to addMessage
+// would otherwise have its own record read back as a duplicate, and the message would vanish.
+function sameAsLast(who, text) {
+  return lastSaid[who] === text && Date.now() - lastSaid.at < 30000;
+}
+
+function remember(who, text) {
+  lastSaid[who] = text;
+  lastSaid.at = Date.now();
+}
+
 function addMessage(who, text, { kind = "", animate = true } = {}) {
+  if (kind !== "partial") {
+    if (sameAsLast(who, text)) return null;
+    remember(who, text);
+  }
   const el = document.createElement("div");
   el.className = `msg ${who}${kind ? " " + kind : ""}`;
   if (!animate) el.style.animation = "none";
   const label = who === "you" ? "You" : who === "jarvis" ? "JARVIS" : "";
+  const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  // The side a message sits on already says who spoke, so a label on every line was repeating it.
+  // It stays in the accessibility tree, where it is the only signal there is.
+  if (label) el.setAttribute("aria-label", `${label} said`);
   el.innerHTML =
-    (label ? `<div class="msg-who">${label}</div>` : "") +
+    (label ? `<span class="msg-who">${label}</span>` +
+             `<span class="msg-time">${time}</span>` : "") +
     `<div class="msg-body">${renderInline(text)}</div>`;
   els.log.appendChild(el);
   while (els.log.children.length > 120) els.log.removeChild(els.log.firstChild);
@@ -144,13 +170,18 @@ function setPartial(text) {
 }
 
 function commitTranscript(text) {
+  if (sameAsLast("you", text)) {
+    dropPartial();
+    return;
+  }
   if (state.partialEl) {
     state.partialEl.classList.remove("partial");
     state.partialEl.querySelector(".msg-body").innerHTML = renderInline(text);
     state.partialEl = null;
+    remember("you", text);          // addMessage never ran, so record it here
     autoScroll();
   } else {
-    addMessage("you", text);
+    addMessage("you", text);        // which remembers it itself
   }
 }
 
@@ -478,12 +509,52 @@ function renderTasks(jobs) {
   els.workDot.hidden = running === 0;
   els.cancelAllBtn.hidden = running === 0;
 
-  if (!jobs.length) {
-    els.taskList.innerHTML = '<p class="empty">Nothing running.</p>';
+  // Everything that ever ran was being listed together, so the tab opened on eight identical
+  // "External claude session · cancelled" cards from days ago and read as broken. What is running
+  // now is the point of the tab; what has finished is history and belongs behind a heading.
+  const isLive = (t) => (t.status || "").match(/running|queued|pending/i);
+  const live = jobs.filter(isLive);
+  const past = jobs.filter((t) => !isLive(t)).slice(0, 5);
+
+  if (!live.length && !past.length) {
+    els.taskList.innerHTML = '<p class="empty">Nothing running, and nothing has run recently.</p>';
     return;
   }
-  els.taskList.innerHTML = jobs
-    .map((t) => {
+
+  const section = (label, items, note, render) =>
+    !items.length ? "" : `<div class="card-group">
+        <div class="group-head"><span>${label}</span>${
+          note ? `<span class="group-note">${note}</span>` : ""}</div>
+        ${items.map(render).join("")}
+      </div>`;
+
+  els.taskList.innerHTML =
+    (live.length
+      ? section("Running now", live, "", card)
+      : '<p class="empty">Nothing running right now.</p>')
+    + section("Finished recently", past,
+              past.length < jobs.length - live.length
+                ? `${jobs.length - live.length - past.length} older hidden` : "",
+              pastRow);
+
+  // Finished work is context, not the subject of the tab. A full card each turned six cancelled
+  // jobs into a full screen; one line each says the same thing and leaves room for what matters.
+  function pastRow(t) {
+    const status = (t.status || "unknown").toLowerCase();
+    const cls = status.match(/done|complete|finished/) ? "done"
+      : status.match(/fail|error/) ? "failed"
+      : status.match(/cancel/) ? "cancelled" : "";
+    const title = t.prompt || t.task || t.title || t.id || "task";
+    const when = relativeTime(t.finished_at || t.started_at || t.created_at);
+    return `<div class="past-row">
+        <span class="status-dot ${cls}"></span>
+        <span class="past-title" title="${escapeHtml(title)}">${escapeHtml(title)}</span>
+        <span class="past-meta">${escapeHtml([t.provider, when].filter(Boolean).join(" · "))}</span>
+        <span class="past-status ${cls}">${escapeHtml(status)}</span>
+      </div>`;
+  }
+
+  function card(t) {
       const status = (t.status || "unknown").toLowerCase();
       const cls = status.match(/running|queued|pending/) ? "running"
         : status.match(/done|complete|finished/) ? "done"
@@ -513,7 +584,7 @@ function renderTasks(jobs) {
                : ""}</div>`
         : "";
 
-      return `<article class="card">
+    return `<article class="card ${cls === "running" ? "is-live" : ""}">
         <div class="card-head">
           <span class="status-dot ${cls}"></span>
           <span class="card-title" title="${escapeHtml(title)}">${escapeHtml(title)}</span>
@@ -524,8 +595,7 @@ function renderTasks(jobs) {
         ${explicitSteps ? `<div class="steps">${explicitSteps}</div>` : fileSteps}
         ${t.error ? `<div class="card-body" style="color:var(--error)">${escapeHtml(String(t.error).slice(0, 300))}</div>` : ""}
       </article>`;
-    })
-    .join("");
+  }
 }
 
 // ---------------------------------------------------------------- memory
@@ -629,13 +699,46 @@ async function refreshHealth() {
   }
   try {
     const s = await (await fetch(`${API}/stats`)).json();
-    const bits = [`<b>CPU</b> ${Math.round(s.cpu_percent)}%`];
-    if (s.mem) bits.push(`<b>MEM</b> ${Math.round(s.mem.percent)}%`);
-    if (s.gpu) bits.push(`<b>GPU</b> ${s.gpu.util}%`);
-    if (s.battery) bits.push(`<b>BAT</b> ${s.battery.percent}%${s.battery.plugged ? " ⚡" : ""}`);
-    els.telemetry.innerHTML = bits.join("");
+    // The backend already reports temperatures, totals and GPU memory; a single line of
+    // "CPU 20% MEM 32%" threw nearly all of it away and left the tab three-quarters empty.
+    const gauges = [];
+    const push = (label, pct, detail, invert = false) => {
+      if (pct === undefined || pct === null || Number.isNaN(pct)) return;
+      const v = Math.max(0, Math.min(100, Math.round(pct)));
+      // High is bad for load, good for charge: a full battery must not be drawn as an alarm.
+      const band = invert
+        ? (v <= 10 ? "hot" : v <= 25 ? "warm" : "")
+        : (v >= 90 ? "hot" : v >= 70 ? "warm" : "");
+      gauges.push(`<div class="gauge ${band}">
+          <div class="gauge-top">
+            <span class="gauge-label">${label}</span>
+            <span class="gauge-value">${v}<span class="gauge-unit">%</span></span>
+          </div>
+          <div class="gauge-track"><div class="gauge-fill" style="width:${v}%"></div></div>
+          <div class="gauge-detail">${detail ? escapeHtml(detail) : "&nbsp;"}</div>
+        </div>`);
+    };
+
+    push("CPU", s.cpu_percent,
+         [s.cpu_temp ? `${Math.round(s.cpu_temp)}°C` : "",
+          (s.load || []).length ? `load ${s.load[0].toFixed(1)}` : ""].filter(Boolean).join(" · "));
+    if (s.mem) push("Memory", s.mem.percent, `${s.mem.used_gb} of ${s.mem.total_gb} GB`);
+    if (s.gpu) push("GPU", s.gpu.util,
+                    [`${s.gpu.mem_used} / ${s.gpu.mem_total} MB`,
+                     s.gpu.temp ? `${s.gpu.temp}°C` : ""].filter(Boolean).join(" · "));
+    if (s.disk) push("Disk", s.disk.percent, `${s.disk.used_gb} of ${s.disk.total_gb} GB`);
+    if (s.battery) push("Battery", s.battery.percent,
+                        s.battery.plugged ? "on mains" : (s.battery.mins_left
+                          ? `${Math.round(s.battery.mins_left / 60)}h left` : "on battery"),
+                        true);
+
+    const uptime = s.uptime_h ? `up ${s.uptime_h.toFixed(1)}h` : "";
+    els.telemetry.innerHTML =
+      `<div class="gauges">${gauges.join("")}</div>` +
+      (uptime ? `<div class="telemetry-foot">${uptime}${
+          s.gpu && s.gpu.name ? ` · ${escapeHtml(s.gpu.name)}` : ""}</div>` : "");
   } catch {
-    els.telemetry.textContent = "telemetry unavailable";
+    els.telemetry.innerHTML = '<p class="empty">Telemetry unavailable.</p>';
   }
 }
 
@@ -700,11 +803,12 @@ function handleEvent(kind, text) {
       setActivity("thinking");
       break;
     case "speaking":
+      // A state change only. The words arrive as "reply"; adding them here too — once per
+      // spoken sentence — is what produced the doubled and tripled replies.
       setActivity("speaking");
-      if (text) addMessage("jarvis", text);
       break;
     case "reply":
-      addMessage("jarvis", text);
+      if (text) addMessage("jarvis", text);
       break;
     case "spoken":
       if (state.activity === "speaking") setActivity("idle");

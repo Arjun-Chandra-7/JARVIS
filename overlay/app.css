@@ -305,7 +305,7 @@ body[data-form="conversation"] #tab-system { display: none; }
   overflow-x: hidden;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-2);
   padding-right: var(--space-2);
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
@@ -316,7 +316,31 @@ body[data-form="conversation"] #tab-system { display: none; }
 .log::-webkit-scrollbar { width: 8px; }
 .log::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
 
-.msg { display: grid; gap: 3px; animation: msg-in var(--dur-base) var(--ease-out); }
+/* Both speakers used to be flat text at the same indent with a tiny grey label, so a transcript
+ * read as one undifferentiated column and you had to read the label to know who said what. The
+ * side a message sits on carries that now, and the label is confirmation rather than the only
+ * signal. Lines are held to a readable measure instead of running the full width of the panel. */
+.msg {
+  display: grid;
+  gap: 0;
+  margin-top: var(--space-1);
+  max-width: min(78%, 62ch);
+  animation: msg-in var(--dur-base) var(--ease-out);
+}
+.msg { position: relative; }
+
+/* Kept for assistive technology only: sighted readers get the speaker from the side and colour,
+ * and a label on every line cost a third of the vertical space for no information. */
+.msg-who {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 @keyframes msg-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .msg { animation: none; } }
 
@@ -326,10 +350,61 @@ body[data-form="conversation"] #tab-system { display: none; }
   text-transform: uppercase;
   color: var(--text-faint);
 }
-.msg-body { line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
-.msg.you .msg-who { color: var(--accent-dim); }
-.msg.sys .msg-body { color: var(--text-muted); font-size: var(--text-sm); }
-.msg.error .msg-body { color: var(--error); }
+.msg-body {
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+}
+
+/* JARVIS speaks from the left, with the accent it uses everywhere else for its own state. */
+.msg.jarvis { margin-right: auto; }
+.msg.jarvis .msg-body {
+  border-left: 2px solid var(--accent-line);
+  border-top-left-radius: var(--radius-chip);
+}
+
+/* You speak from the right. */
+.msg.you { margin-left: auto; justify-items: end; }
+.msg.you .msg-body {
+  background: var(--surface-overlay);
+  border-top-right-radius: var(--radius-chip);
+  text-align: left;
+}
+
+/* System notes are asides, not speech: centred, quiet, no bubble. */
+.msg.sys {
+  max-width: 100%;
+  margin: 0 auto;
+  justify-items: center;
+}
+.msg.sys .msg-body {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  background: none;
+  border: none;
+  padding: 0;
+}
+.msg.error .msg-body { color: var(--error); border-color: var(--error-dim); }
+
+/* The clock matters when you are hunting for a particular moment, not while reading, so it sits
+ * outside the flow and appears on hover rather than pushing every message taller. */
+.msg-time {
+  position: absolute;
+  top: -2px;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.msg.jarvis .msg-time { left: 2px; }
+.msg.you .msg-time { right: 2px; }
+.msg:hover .msg-time { opacity: 1; }
 
 /* A partial transcript is visibly provisional: it is not what JARVIS heard yet. */
 .msg.partial .msg-body {
@@ -615,12 +690,13 @@ body[data-form="conversation"] #tab-system { display: none; }
 .system-label { color: var(--text-faint); font-size: var(--text-xs); min-width: 0;
                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: auto; }
 
-.telemetry { display: flex; gap: var(--space-4); flex-wrap: wrap; flex: 0 0 auto;
-             font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); }
-.telemetry b { color: var(--text-secondary); font-weight: 500; }
+/* Was a flex row of text. The gauges are blocks, and as flex items they collapsed into one narrow
+ * column down the left with the footer stranded beside them. */
+.telemetry { display: block; flex: 0 0 auto; }
 
 .inspector { border-top: 1px solid var(--border); padding-top: var(--space-3);
-             flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+             flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.inspector[open] { overflow: hidden; }
 .inspector summary { cursor: pointer; color: var(--text-muted); font-size: var(--text-sm); }
 .setting { margin: var(--space-3) 0; display: grid; gap: var(--space-2); }
 .setting label { font-size: var(--text-sm); color: var(--text-secondary); }
@@ -633,11 +709,17 @@ body[data-form="conversation"] #tab-system { display: none; }
   border-radius: var(--radius-card);
   font-size: var(--text-xs);
   color: var(--text-muted);
-  max-height: 180px;
+  flex: 1 1 auto;
+  min-height: 120px;
   overflow: auto;
   white-space: pre-wrap;
   user-select: text;
   cursor: auto;
+  line-height: 1.6;
+}
+.log-dump:empty::before {
+  content: "Nothing yet — events appear here as JARVIS works.";
+  color: var(--text-faint);
 }
 
 /* --------------------------- toast --------------------------- */
@@ -671,3 +753,99 @@ body[data-form="conversation"] #tab-system { display: none; }
 @supports not (backdrop-filter: blur(2px)) {
   .shell { background: var(--surface-base); }
 }
+
+/* ------------------------- grouped cards (Tasks) -------------------------
+ * Running work and finished work were one undifferentiated list, so the tab opened on a wall of
+ * identical cancelled jobs. A heading separates the two and says how much history is not shown. */
+.card-group { display: flex; flex-direction: column; gap: var(--space-2); }
+.card-group + .card-group { margin-top: var(--space-4); }
+.group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--border);
+}
+.group-note { text-transform: none; letter-spacing: 0; color: var(--text-faint); }
+.card.is-live { border-color: var(--accent-line); background: var(--surface-overlay); }
+
+/* ------------------------- telemetry gauges (System) -------------------------
+ * The backend reports temperatures, totals and GPU memory. All of it used to be reduced to one
+ * line reading "CPU 20% MEM 32%", leaving the tab three-quarters empty. */
+.gauges {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-3);
+}
+.gauge {
+  display: grid;
+  gap: 6px;
+  padding: var(--space-3);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+.gauge-top { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
+.gauge-label {
+  font-size: var(--text-xs);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.gauge-value {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  line-height: 1;
+}
+.gauge-unit { font-size: var(--text-sm); color: var(--text-muted); margin-left: 1px; }
+.gauge-track { height: 3px; border-radius: 2px; background: var(--surface-void); overflow: hidden; }
+.gauge-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width var(--dur-base) var(--ease-out);
+}
+/* Load is read at a glance, so the bar changes hue before the number needs reading. */
+.gauge.warm .gauge-fill { background: var(--warning); }
+.gauge.hot .gauge-fill { background: var(--error); }
+.gauge-detail {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.telemetry-foot {
+  margin-top: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+}
+
+/* Finished jobs as one line each, not a card each. */
+.past-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-chip);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.past-row:nth-child(even) { background: rgba(255, 255, 255, 0.015); }
+.past-title { flex: 1 1 auto; min-width: 0; overflow: hidden;
+              text-overflow: ellipsis; white-space: nowrap; }
+.past-meta { flex: 0 0 auto; color: var(--text-faint); font-family: var(--font-mono);
+             font-size: var(--text-xs); }
+.past-status { flex: 0 0 auto; color: var(--text-faint); font-size: var(--text-xs);
+               min-width: 62px; text-align: right; }
+.past-status.done { color: var(--success); }
+.past-status.failed { color: var(--error); }
