@@ -119,6 +119,12 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
     if clicked is not None:
         return clicked
 
+    # "Draw me X" — find a reference picture, reduce it to lines, draw them on the canvas.
+    from .draw_command import handle as draw_something
+    drawn = await draw_something(raw, config)
+    if drawn is not None:
+        return drawn
+
     # "Fix yourself" — look at what has failed repeatedly and try to mend it.
     from .selfimprove.command import handle as self_improve
     mended = await self_improve(raw, config)
