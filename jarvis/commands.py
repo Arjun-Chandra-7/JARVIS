@@ -119,6 +119,13 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
     if clicked is not None:
         return clicked
 
+    # "Find a site that does X" — opened and checked, not chosen from a blurb. Before the plain
+    # draw handler, which would otherwise take the "draw…" half of a combined request.
+    from .find_site import handle as find_a_site
+    sited = await find_a_site(raw, config)
+    if sited is not None:
+        return sited
+
     # "Draw me X" — find a reference picture, reduce it to lines, draw them on the canvas.
     from .draw_command import handle as draw_something
     drawn = await draw_something(raw, config)
