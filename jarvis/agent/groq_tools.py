@@ -610,9 +610,10 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
           "Open a WEBSITE by name or URL, e.g. 'netflix', 'youtube', 'github.com'. "
           "Only for web pages — to start an installed application use open_app.",
           {"site": {"type": "string", "description": "website name or URL"}}, ["site"])
-    async def browser_open(a):
+    async def _open_website(site: str) -> str:
+        """Shared by browser_open and by open_app's redirect, so both behave identically."""
         from ..integrations import browser
-        site = a.get("site", "")
+
         state = browser.ensure(browser.resolve_site(site))
         if not state["ok"]:
             # Without control we can still open the page — just not click inside it.
@@ -624,6 +625,9 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
             return state["message"]
         res = await browser.open_site(site)
         return res.get("message") or res.get("error", "Could not open it.")
+
+    async def browser_open(a):
+        return await _open_website(a.get("site", ""))
 
     @tool("browser_click",
           "Click something in the web page that is open right now, by its visible text: a Netflix "
@@ -733,7 +737,18 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
           {"name": {"type": "string"}}, ["name"])
     async def open_app(a):
         from ..integrations import desktop_apps
-        return desktop_apps.open_app(a.get("name", ""))["message"]
+        name = a.get("name", "")
+        res = desktop_apps.open_app(name)
+        if res.get("ok"):
+            return res["message"]
+
+        # A website reached the app launcher. Telling the model to call browser_open instead only
+        # works when it listens, and often it relayed the instruction to the user and stopped
+        # ("f.r.i.e.n.d.s is not available directly on Netflix") while nothing happened. Do it
+        # here: the redirect is unambiguous, so it should not depend on the model retrying.
+        if res.get("website"):
+            return await _open_website(name)
+        return res["message"]
 
     @tool("list_apps", "List installed applications whose name matches a word.",
           {"like": {"type": "string"}})
