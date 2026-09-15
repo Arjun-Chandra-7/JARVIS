@@ -53,9 +53,20 @@ _NOT_A_LAUNCH = re.compile(
 )
 
 
+# Whisper runs the verb into the next word when they are spoken quickly: "open Netflix" came back
+# as "OpenNet Flix". Splitting a glued verb costs nothing and recovers the command.
+# The verb may be capitalised or not, but the word stuck to it must genuinely start with a capital
+# — otherwise "OpenAI" and "openbox" get taken apart too.
+_GLUED_VERB = re.compile(r"\b(?i:open|play|watch|start|launch)(?=[A-Z][a-z])")
+
+
+def unglue(text: str) -> str:
+    return _GLUED_VERB.sub(lambda m: m.group(0) + " ", text or "")
+
+
 def parse(text: str) -> Optional[str]:
     """The thing to open, or None when this is not an open request."""
-    cleaned = (text or "").strip().rstrip(".!?")
+    cleaned = unglue((text or "").strip()).strip().rstrip(".!?")
     if not cleaned:
         return None
     match = _OPEN_RE.match(cleaned)
@@ -135,7 +146,7 @@ _LOOSE_OPEN_RE = re.compile(
 
 def parse_loose(text: str) -> Optional[str]:
     """A last-resort target from an imperfect transcription, or None."""
-    cleaned = (text or "").strip().rstrip(".!?")
+    cleaned = unglue((text or "").strip()).strip().rstrip(".!?")
     match = _LOOSE_OPEN_RE.search(cleaned)
     if not match:
         return None

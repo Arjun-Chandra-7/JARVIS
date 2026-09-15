@@ -427,6 +427,7 @@ MISHEARD: dict[str, str] = {
     "networks": "netflix",
     "network": "netflix",
     "net flicks": "netflix",
+    "net flix": "netflix",
     "netflicks": "netflix",
     "nextflix": "netflix",
     "utube": "youtube",

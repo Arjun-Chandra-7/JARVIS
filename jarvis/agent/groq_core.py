@@ -195,7 +195,10 @@ class GroqAgent:
         self.fallback_model = os.environ.get("JARVIS_GROQ_FALLBACK", "openai/gpt-oss-20b")
         self._on_fallback = False
         self._on_local = False  # switched to local Ollama after a cloud rate-limit
-        self.client = OpenAI(base_url=base_url, api_key=api_key, max_retries=0, timeout=45)
+        # A local Ollama endpoint needs no key, and the SDK refuses to build a client with an empty
+        # one — so give it a placeholder rather than crashing before Jarvis can fall back to local.
+        self.client = OpenAI(base_url=base_url, api_key=api_key or "none",
+                             max_retries=0, timeout=45)
         self.schemas, self.dispatch = build_registry(config, self.job_runner, confirm_fn)
         if not config.tool_routing:
             # Without routing every schema is sent on every request, so descriptions are clipped
