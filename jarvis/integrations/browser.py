@@ -642,6 +642,14 @@ async def click_text(phrase: str, nth: int = 1) -> dict:
         if not found or found.get("error"):
             return {"ok": False, "error": "Could not search the page."}
         matches = found.get("matches") or []
+
+        # A spelled-out title reaches here as it was spoken. The page says "Friends", so looking
+        # for "f.r.i.e.n.d.s" finds nothing even though the show is right there on screen.
+        if not matches:
+            plain = spoken_title(phrase)
+            if plain and plain.lower() != phrase.strip().lower():
+                found = await session.js(_FIND_JS % _js_string(plain))
+                matches = (found or {}).get("matches") or []
         if not matches:
             return {"ok": False, "error": f"Nothing on this page matches “{phrase}”.",
                     "page": found.get("title", "")}
