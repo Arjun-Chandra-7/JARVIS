@@ -59,3 +59,58 @@ def test_commands_layer_uses_screen_click_before_open_parser(monkeypatch):
     monkeypatch.setattr(screen_command, "handle", lambda *a: asyncio.sleep(0, result="Clicked Hustle."))
     monkeypatch.setattr(open_command, "handle", lambda *a: pytest.fail("open parser ran"))
     assert asyncio.run(commands.handle("Open the Hustle playlist on my screen", object())) == "Clicked Hustle."
+
+
+# --------------------------------------------- choosing a control when Wayland hides positions
+from jarvis.integrations import accessibility  # noqa: E402
+
+
+def _node(name, role="button", path=(0,), actions=("click",), rect=(0, 0, 64, 44)):
+    return {"name": name, "role": role, "path": list(path),
+            "actions": list(actions), "rect": list(rect)}
+
+
+def test_a_control_is_found_although_every_position_is_zero():
+    """Wayland never tells a client where its window is, so AT-SPI reports (0, 0) for everything.
+    Verified on this machine: all sixty-two gnome-calculator controls came back [0, 0, w, h]."""
+    node, why = accessibility.choose([_node("7", path=(0, 1)), _node("8", path=(0, 2))], "8")
+    assert node is not None and node["name"] == "8", why
+
+
+def test_symbol_controls_are_reachable():
+    """Names were tokenised with [\\w']+, which finds nothing in these, so every symbol control
+    on screen was invisible to the matcher and fell through to vision."""
+    nodes = [_node(s, path=(0, i)) for i, s in enumerate(["×", "=", "−", "→", "✓"])]
+    for symbol in ("×", "=", "−", "→", "✓"):
+        node, why = accessibility.choose(nodes, symbol)
+        assert node is not None and node["name"] == symbol, why
+
+
+def test_the_button_wins_over_a_label_saying_the_same_thing():
+    """GTK exposes both; only one of them is the thing to press."""
+    label = _node("7", role="label", path=(0, 1, 0),
+                  actions=("clipboard.copy", "menu.popup"))
+    button = _node("7", role="button", path=(0, 1), actions=("click",))
+    node, _ = accessibility.choose([label, button], "7")
+    assert node is button
+
+
+def test_two_different_controls_with_one_name_are_refused():
+    """The old guard compared screen centres. With every centre at (0, 0) two different buttons
+    of the same size looked like one place, and it would quietly press one of them."""
+    a = _node("Allow", path=(0, 3))
+    b = _node("Allow", path=(0, 9))
+    node, why = accessibility.choose([a, b], "Allow")
+    assert node is None
+    assert "won't guess" in why
+
+
+def test_the_same_control_seen_twice_is_not_an_ambiguity():
+    same = _node("Allow", path=(0, 3))
+    node, _ = accessibility.choose([same, dict(same)], "Allow")
+    assert node is not None
+
+
+def test_an_unknown_name_is_left_for_vision():
+    node, why = accessibility.choose([_node("Cancel")], "Allow")
+    assert node is None and "isn't in the active app" in why

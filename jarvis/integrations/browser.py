@@ -114,6 +114,11 @@ def launch(url: str = "", wait_s: float = 12.0) -> bool:
         "--remote-allow-origins=*",
         f"--user-data-dir={_profile_dir()}",
         "--no-default-browser-check",
+        # Chromium publishes its accessibility tree only when asked. Without this it offers four
+        # nodes for five windows — the frames and nothing else — so the browser's own chrome (the
+        # permission prompts, the download bar, the profile menu) is unreachable by name. CDP
+        # reaches inside the page; this reaches the browser around it.
+        "--force-renderer-accessibility",
     ]
     if url:
         argv.append(url)

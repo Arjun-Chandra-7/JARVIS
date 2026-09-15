@@ -40,6 +40,36 @@ def activate(node: dict, app_hint: str = "") -> dict:
         return {"ok": False, "reason": f"Accessibility action failed ({type(exc).__name__})."}
 
 
+_GSETTING = ("org.gnome.desktop.interface", "toolkit-accessibility")
+
+
+def enabled() -> bool:
+    """Whether toolkits are publishing their control trees at all."""
+    try:
+        out = subprocess.run(["gsettings", "get", *_GSETTING],
+                             capture_output=True, text=True, timeout=5)
+        return out.stdout.strip() == "true"
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def ensure_enabled() -> bool:
+    """Turn the accessibility bus on if it is off.
+
+    With this false — the default on this machine — every application publishes its window frame
+    and not one control inside it, so there is nothing to click by name. It is the single switch
+    that decides whether the desktop is addressable. Applications already running keep their old
+    behaviour until restarted, which is why this is worth doing early rather than on demand.
+    """
+    if enabled():
+        return True
+    try:
+        subprocess.run(["gsettings", "set", *_GSETTING, "true"], timeout=5, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return enabled()
+
+
 def snapshot(app_hint: str = "") -> dict:
     """Return {ok, app, window, nodes}; fail softly when accessibility is unavailable."""
     try:
@@ -52,6 +82,13 @@ def snapshot(app_hint: str = "") -> dict:
         if isinstance(data, dict) and data.get("app") == "mutter-x11-frames":
             return {"ok": False, "reason": "Only the window frame is accessible; use screen vision",
                     "nodes": [], "window": data.get("window", "")}
+        # One node, and it is the window itself: the toolkit is not publishing its controls.
+        nodes = data.get("nodes") if isinstance(data, dict) else None
+        if nodes is not None and len(nodes) <= 1 and not enabled():
+            ensure_enabled()
+            return {"ok": False, "nodes": [],
+                    "reason": ("The desktop was not publishing its controls. I have turned "
+                               "accessibility on — reopen that window and try again.")}
         return data if isinstance(data, dict) else {"ok": False, "nodes": []}
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return {"ok": False, "reason": "Accessibility service unavailable", "nodes": []}
