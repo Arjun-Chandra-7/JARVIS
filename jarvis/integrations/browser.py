@@ -82,10 +82,21 @@ def _exe() -> Optional[str]:
     return shutil.which(BROWSER_EXE) or shutil.which("opera-gx") or shutil.which("opera")
 
 
+def _process_pattern() -> str:
+    """How to recognise this browser's processes.
+
+    BROWSER_EXE is configurable but this was pinned to Opera, so pointing Jarvis at another
+    browser still reported Opera's state — and refused to launch because "it is already running".
+    """
+    if BROWSER_EXE in ("opera-gx", "opera"):
+        return "opera-gx-stable/opera"
+    return f"{BROWSER_EXE}.*--remote-debugging-port={DEBUG_PORT}"
+
+
 def is_running() -> bool:
     try:
         return subprocess.run(
-            ["pgrep", "-f", "opera-gx-stable/opera"], capture_output=True, timeout=3
+            ["pgrep", "-f", _process_pattern()], capture_output=True, timeout=3
         ).returncode == 0
     except Exception:  # noqa: BLE001
         return False
@@ -139,7 +150,7 @@ def launch(url: str = "", wait_s: float = 12.0) -> bool:
 
 def stop() -> None:
     try:
-        subprocess.run(["pkill", "-f", "opera-gx-stable/opera"], timeout=5)
+        subprocess.run(["pkill", "-f", _process_pattern()], timeout=5)
     except Exception:  # noqa: BLE001
         pass
 
@@ -335,7 +346,6 @@ _LIST_JS = r"""
     if (st.visibility === "hidden" || st.display === "none") continue;
     const t = norm(el.getAttribute("aria-label") || el.innerText || el.getAttribute("title"));
     if (!t || t.length > 80) continue;
-    if (/^(more to explore|top searches|explore titles)/i.test(t)) continue;
     if (seen.has(t)) continue;
     seen.add(t);
     out.push(t);
@@ -635,6 +645,25 @@ SEARCH_URLS: dict[str, str] = {
 }
 
 
+# Sorting a search by upload date, where the site supports it in the URL. "The latest X video"
+# cannot be answered by picking the first of a relevance-ranked list — the most relevant video by
+# a creator is usually their most popular, which is frequently years old.
+NEWEST_FIRST: dict[str, str] = {
+    "youtube.com": "&sp=CAI%3D",
+}
+
+
+def newest_first(url: str) -> str:
+    """The same search, ordered newest first, when the site allows it in the URL."""
+    from urllib.parse import urlparse
+
+    host = (urlparse(url).hostname or "").lower().removeprefix("www.")
+    for domain, suffix in NEWEST_FIRST.items():
+        if host == domain or host.endswith("." + domain):
+            return url if suffix in url else url + suffix
+    return url
+
+
 def search_url_for(current_url: str, query: str) -> Optional[str]:
     """A direct search URL for the site we are on, or None to fall back to its search box."""
     from urllib.parse import quote_plus, urlparse
@@ -661,22 +690,37 @@ _RESULTS_JS = r"""
   const chrome = e => e.closest(
     'nav, header, footer, [role="navigation"], [role="banner"], [role="dialog"],' +
     '[aria-modal="true"], #onetrust-consent-sdk, [id*="cookie"], [class*="consent"]');
-  const label = e => norm(e.getAttribute('aria-label')
-                          || ((e.querySelector('img') || {}).alt)
-                          || e.innerText);
-  // Sites that mark their results explicitly are believed first.
-  let nodes = [...root.querySelectorAll(
-    '[data-uia*="search"], [data-uia*="result"], [class*="result"], [class*="title-card"]')];
-  if (nodes.length < 3) nodes = [...root.querySelectorAll('[aria-label]')];
+  // title and innerText carry just the name; aria-label on a result link often carries the whole
+  // card — "TITLE by CHANNEL 1 day ago 25 minutes 123,456 views" — which then fails a length
+  // check and the result disappears. Prefer the shortest honest description.
+  const label = e => norm(e.getAttribute('title')
+                          || e.innerText
+                          || e.getAttribute('aria-label')
+                          || ((e.querySelector('img') || {}).alt));
+  // Both kinds of candidate together, judged by the filters below, rather than a cascade that
+  // stops at the first selector to match anything. On YouTube '[class*="result"]' matched four
+  // containers whose text is the entire page, the cascade stopped there, and every real result
+  // was never looked at.
+  const nodes = [...root.querySelectorAll(
+    '[data-uia*="search"], [data-uia*="result"], [class*="result"], [class*="title-card"],' +
+    'a#video-title, a[href*="/watch"], a[href*="/title/"], a[href*="/track/"],' +
+    'a[href*="/episode/"], a[href*="/album/"], h3 a, h2 a')];
+  if (nodes.length < 3) nodes.push(...root.querySelectorAll('[aria-label]'));
   const out = [], seen = new Set();
   for (const el of nodes) {
     if (chrome(el)) continue;
     // Take the innermost labelled element. A wrapper's label is every title glued together:
     // "More to explore: Breaking Bad Collection The Bad News Bears in Breaking Training".
-    if (el.querySelector('[aria-label], [data-uia*="link"]')) continue;
+    // A link is exempt: it is the thing you click, however much markup it wraps — YouTube nests
+    // a labelled <yt-formatted-string> inside every result anchor, which discarded all fifteen.
+    const isLink = el.matches('a[href], [role="link"]');
+    if (!isLink && el.querySelector('[aria-label], [data-uia*="link"], a[href]')) continue;
     const t = label(el);
-    if (!t || t.length > 80) continue;
+    if (!t || t.length > 120) continue;
     if (/^(more to explore|top searches|explore titles)/i.test(t)) continue;
+    // "25:35 Now playing", "4:12" — the duration badge sits on the same card as the title.
+    if (/^\d{1,2}:\d{2}(:\d{2})?\b/.test(t)) continue;
+    if (/^(go to channel|now playing|shorts|live|subscribe)\b/i.test(t)) continue;
     const k = t.toLowerCase();
     if (seen.has(k)) continue;
     seen.add(k);
@@ -772,12 +816,14 @@ async def _describe_page(query: str) -> str:
     return said
 
 
-async def search_here(query: str) -> dict:
+async def search_here(query: str, newest: bool = False) -> dict:
     """Search the site we are on: by its documented search URL, else through its search box."""
     query = spoken_title(query)
 
     here = await current_page()
     direct = search_url_for(here.get("url", ""), query)
+    if direct and newest:
+        direct = newest_first(direct)
     if direct:
 
         async def go(session: _Session):

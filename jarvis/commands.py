@@ -112,6 +112,15 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
     if clicked is not None:
         return clicked
 
+    # Requests that are several actions in a row — "play the latest X video on YouTube" — are
+    # planned and then executed step by step, each one checked, rather than handed to the model
+    # as one instruction it has to remember its way through. Before open_command, which would
+    # see only the first action.
+    from .task_runner import handle as run_task
+    carried_out = await run_task(raw, config)
+    if carried_out is not None:
+        return carried_out
+
     # Last, so the specific handlers above keep priority: "open phone" and "open meet" are theirs.
     # Everything else shaped like "open X" has one meaning, and measured, routing it through the
     # local 3B model called no tool at all on three of five attempts at "open friends".
