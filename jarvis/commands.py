@@ -6,7 +6,15 @@ import re
 
 
 def clean_text(text: str) -> str:
-    lines = [line for line in text.splitlines() if not line.strip().startswith(("[", "(Reply in"))]
+    """Strip the machinery around what the user actually said.
+
+    Context the front-ends attach arrives on its own line: screen descriptions and incoming
+    messages in [brackets], instructions to the model in (parentheses). Matching only the exact
+    prefix "(Reply in" meant that rewording the voice instruction leaked the whole of it into the
+    command — "open netflix" became "netflix (Spoken request. DO the action with a tool first...)"
+    and matched nothing. Any bracketed or parenthesised line is machinery, not speech.
+    """
+    lines = [line for line in text.splitlines() if not line.strip().startswith(("[", "("))]
     return re.sub(r"^(?:hey\s+)?jarvis[,.!:\s]*", "", " ".join(lines).strip(), flags=re.I).strip()
 
 

@@ -435,15 +435,20 @@ class VoiceSession:
             return True
         return False
 
-    def _flush_mic(self) -> None:
-        """Drop whatever the microphone buffered while Jarvis was talking.
+    def _flush_mic(self, frames: int = 8) -> None:
+        """Drop buffered microphone audio, and reset the endpointer's state with it.
 
-        Without this the tail of Jarvis's own speech sits in the input buffer and is read back as
-        the start of the next utterance — he transcribes himself. Resetting the VAD's LSTM state
-        matters too, or its speech probability stays high into the next turn.
+        Two callers, two reasons. After speaking: the tail of Jarvis's own voice is still in the
+        input buffer and would be read back as the start of the next utterance. After the wake
+        word: the tail of "Hey Jarvis" is still there, and the endpointer's preroll deliberately
+        keeps a moment of audio from *before* speech starts, so the wake phrase ended up inside
+        the command — "Hey Jarvis, open Netflix" transcribed as "HR was OpenNet Flix", which
+        matches nothing.
+
+        Resetting the VAD state matters too, or its speech probability stays high into the turn.
         """
         try:
-            for _ in range(8):
+            for _ in range(max(0, frames)):
                 self.mic.read()
         except Exception:  # noqa: BLE001 - a flush failure must not break the turn
             pass
@@ -780,6 +785,10 @@ class VoiceSession:
                     await self._handle_phone_event(payload, agent)
                     continue
                 self.on_event("wake")
+                # Clear the tail of the wake phrase before recording, or it lands inside the
+                # command. Three frames is ~240ms — enough for "…Jarvis", short enough that a
+                # command spoken straight afterwards is not clipped.
+                self._flush_mic(frames=3)
                 transcript = self._record_transcript(wait_s=POST_WAKE_WAIT_S)
                 if not transcript:
                     # Woke but captured nothing intelligible → say so instead of going silent, so it

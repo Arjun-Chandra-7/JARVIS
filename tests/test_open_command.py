@@ -111,3 +111,29 @@ def test_handle_returns_none_for_unrelated_text():
     import asyncio
 
     assert asyncio.run(oc.handle("what is my battery level", _config())) is None
+
+
+# ----------------------------------------------------------------- imperfect speech
+@pytest.mark.parametrize("text,target", [
+    ("HR was open Netflix", "Netflix"),      # mis-heard wake word in front of the command
+    ("uh open netflix", "netflix"),
+    ("and then open spotify", "spotify"),
+])
+def test_a_run_up_before_the_verb_is_recovered(text, target):
+    assert oc.parse_loose(text) == target
+
+
+def test_the_loose_path_only_acts_on_something_real():
+    """A garbled sentence must never launch something at random."""
+    assert not oc._resolves("door")
+    assert not oc._resolves("blahblah")
+    assert oc._resolves("netflix")
+
+
+def test_a_negated_sentence_is_not_launched():
+    import asyncio
+
+    loose = oc.parse_loose("I don't want to open the door")
+    assert loose == "door"
+    assert not oc._resolves(loose)       # so handle() declines it
+    assert asyncio.run(oc.handle("I don't want to open the door", _config())) is None

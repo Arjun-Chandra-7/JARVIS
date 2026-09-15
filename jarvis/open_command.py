@@ -124,9 +124,45 @@ async def run(target: str, config) -> str:
     return result.get("error") or f"I couldn't open {target}."
 
 
+# Speech puts things in front of the verb — a mis-heard wake word, a false start, a filler word.
+# Allowing a short run-up before "open" recovers those, but only when the thing named afterwards
+# actually resolves, so a garbled sentence can never launch something at random.
+_LOOSE_OPEN_RE = re.compile(
+    r"\b(?:open|launch|start|play|watch|put\s+on)\s+(?P<target>[\w .+-]{2,40})$",
+    re.IGNORECASE,
+)
+
+
+def parse_loose(text: str) -> Optional[str]:
+    """A last-resort target from an imperfect transcription, or None."""
+    cleaned = (text or "").strip().rstrip(".!?")
+    match = _LOOSE_OPEN_RE.search(cleaned)
+    if not match:
+        return None
+    target = _LEADING_ARTICLE.sub("", match.group("target").strip()).strip()
+    return target or None
+
+
+def _resolves(target: str) -> bool:
+    """True when this names something real — an installed app or a known site."""
+    try:
+        from .integrations import browser, desktop_apps
+
+        if desktop_apps.resolve(target) is not None:
+            return True
+        return (browser._is_known_destination(target)
+                or browser._closest_site(target.lower()) is not None)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 async def handle(text: str, config) -> Optional[str]:
     """Entry point for the deterministic command layer. None means 'not mine'."""
     target = parse(text)
+    if target is None:
+        loose = parse_loose(text)
+        # Only act on a loose match that names something real; otherwise let the model decide.
+        target = loose if (loose and _resolves(loose)) else None
     if target is None:
         return None
     try:
