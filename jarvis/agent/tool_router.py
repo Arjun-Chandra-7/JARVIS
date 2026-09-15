@@ -54,7 +54,8 @@ ALIASES: dict[str, str] = {
     "system_stats": "battery level, cpu usage, memory, temperature, disk space, how is the machine",
     "google_agenda": "calendar, schedule today, what's on today, next meeting, appointments",
     "catch_up": "what did i miss, summarise my messages and mail, brief me, unread",
-    "capture_screen": "look at my screen, what's on screen, screenshot, read this error",
+    "capture_screen": "look at my screen, what's on screen, screenshot, read this error, "
+                      "observe a desktop app or game before and after acting, see the basket",
     "set_timer": "timer, countdown, remind me in n minutes, alarm for n minutes",
     "set_reminder": "remind me at a time, reminder, don't let me forget, at six pm",
     "media_control": "pause music, play, next track, skip song, resume playback",
@@ -90,7 +91,16 @@ ALIASES: dict[str, str] = {
     # Scoped to native windows: inside a web page browser_click is exact, this one guesses from a
     # screenshot, and the model reached for it for page clicks when both were offered.
     "find_and_click": "click a button in a native desktop application window, not a web page, "
-                      "click something in vs code or a settings window by looking at the screen",
+                      "click the hustle playlist in spotify or click something in vs code "
+                      "or a settings window by reading the active app and screen",
+    "desktop_read": "read native app controls like a dom, what is visible in spotify, "
+                    "read the active desktop window and its clickable labels",
+    "mouse_drag": "drag the mouse, pull and release, throw or shoot a ball towards a basket, "
+                  "draw a line, move a slider in a desktop app or game",
+    "find_and_drag": "visually drag a ball towards a basket, shoot a basket in a game, "
+                     "find two targets and drag between them in a desktop app",
+    "hold_mouse": "hold mouse button, charge a shot, press and release the mouse in a game",
+    "hold_keys": "hold a keyboard key, move in a game, keep pressing space or wasd for a moment",
     "read_clipboard": "clipboard, what did i copy, copied text",
     "whatsapp_send": "message someone on whatsapp, text them, send a whatsapp",
     # Pinned to messaging. "select the profile of Arjun" (a Netflix profile) landed here because
@@ -180,7 +190,8 @@ _WRITE_PREFIXES = (
 _WRITE_NAMES = {
     "google_calendar_create", "google_email_send", "google_tasks_add", "google_tasks_complete",
     "whatsapp_send", "type_text", "press_keys", "mouse_click", "mouse_move", "scroll_page",
-    "find_and_click", "lock_screen", "do_not_disturb", "media_control", "run_bash",
+    "find_and_click", "find_and_drag", "mouse_drag", "hold_mouse", "hold_keys", "lock_screen",
+    "do_not_disturb", "media_control", "run_bash",
 }
 
 _QUESTION_START = (

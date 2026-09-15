@@ -63,7 +63,7 @@ class Config:
 
     # --- Gemini (OpenAI-compatible endpoint; generous free tier + native vision) ---
     gemini_api_key: str = field(default_factory=lambda: os.environ.get("GEMINI_API_KEY", ""))
-    gemini_model: str = field(default_factory=lambda: os.environ.get("JARVIS_GEMINI_MODEL", "gemini-2.0-flash"))
+    gemini_model: str = field(default_factory=lambda: os.environ.get("JARVIS_GEMINI_MODEL", "gemini-3.6-flash"))
 
     # --- Ollama (LOCAL, OpenAI-compatible, no rate limits) — also the auto-fallback when a
     # cloud brain is rate-limited. Needs `ollama serve` + a tool-capable model pulled. ---
@@ -75,6 +75,7 @@ class Config:
     # graceful fallback only if you happen to run it. "none" disables vision.
     vision_provider: str = field(default_factory=lambda: os.environ.get("JARVIS_VISION", "auto").lower())
     ollama_vision_model: str = field(default_factory=lambda: os.environ.get("JARVIS_VISION_MODEL", "moondream"))
+    ground_model: str = field(default_factory=lambda: os.environ.get("JARVIS_GROUND_MODEL", "qwen3.5:4b"))
 
     # --- browser ---
     # Opera GX is the browser on this machine, and the one precision control drives. `opera`

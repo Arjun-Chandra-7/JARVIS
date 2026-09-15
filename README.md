@@ -61,6 +61,22 @@ Three things it can do that are worth knowing about:
   recorded, and correct or forget it. A correction keeps the old text in the note; "forget"
   removes the line from recall but says plainly that the vault's git history still has it.
 
+## Computer control
+
+Jarvis reads browser pages through Opera GX's live DOM when browser control is enabled. For native
+apps it first reads the active window's AT-SPI accessibility tree, which exposes control labels and
+screen bounds. If an app does not expose the target, Jarvis uses a screenshot plus the configured
+vision model. It sends mouse and keyboard
+input through `ydotool` on Wayland or `xdotool` on X11. It can click visible targets, drag, and hold a
+button or key for a short interval. For a request such as "shoot towards the basket", Jarvis should
+look at the game, choose a gesture, send it, and look again before reporting whether it worked.
+
+Run `bash scripts/enable-control.sh` once if desktop input is unavailable. Screen targeting needs a
+vision model (`qwen3.5:4b` in Ollama for target boxes, with `moondream` for general descriptions, or
+a working Gemini key); it can decline a click when the target cannot be placed confidently. Games with
+rapid timing, hidden state, or unsupported controllers can still
+need game-specific controls.
+
 ## Voice tuning
 
 Defaults are set from measurements taken on this laptop (see `docs/upgrade/RESEARCH.md`);

@@ -100,6 +100,13 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
     if adjusted is not None:
         return adjusted
 
+    # An explicit visible click is a computer action, not an "open a website" request. Route it
+    # through the active native UI/screen targeter before the general open-command parser.
+    from .screen_command import handle as screen_something
+    clicked = await screen_something(raw, config)
+    if clicked is not None:
+        return clicked
+
     # Last, so the specific handlers above keep priority: "open phone" and "open meet" are theirs.
     # Everything else shaped like "open X" has one meaning, and measured, routing it through the
     # local 3B model called no tool at all on three of five attempts at "open friends".

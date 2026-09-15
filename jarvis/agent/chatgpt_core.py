@@ -62,6 +62,10 @@ ROUTING:
 - For deep/current RESEARCH or working through a project: use deep_research (it uses Perplexity).
 - For CODING tasks ("fix the code on my screen", build/refactor): use code_with_antigravity (Gemini).
 - Prefer the specific tool over run_bash (system_stats, set_volume, media_control, open_url, recall…).
+- For desktop apps and games, observe with capture_screen, perform one grounded input with
+  find_and_click, find_and_drag, mouse_drag, hold_mouse, hold_keys, or the basic mouse/key tools, then observe again.
+  A successful input call does not prove the game or app goal succeeded. Use desktop_read to read
+  named native app controls; prefer browser_read and browser_click for web pages with a live DOM.
 - Route LinkedIn requests by meaning, not exact wording: wanting to see the user's own professional
   page means linkedin_open_profile; wanting performance, publishing progress, or an overview means
   linkedin_stats; wanting the content app means linkedin_open_console. Always call the tool before

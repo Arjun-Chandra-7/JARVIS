@@ -196,7 +196,7 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         if ans is None:
             return ("Screenshot taken, but no vision model is set up. Add GEMINI_API_KEY to .env, or "
                     "install Ollama and `ollama pull moondream`.")
-        return ans
+        return f"{ans}\n{screenshot.scale_note()}".strip()
 
     @tool("analyze_image", "Describe/answer about an image file. path + optional question.",
           {"path": {"type": "string"}, "question": {"type": "string"}}, ["path"])
@@ -810,6 +810,37 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         from ..integrations import desktop_control as dc
         return "pressed." if dc.press_keys(a.get("keys", "")) else "control not ready."
 
+    @tool("hold_keys", "Hold a key or combo in the focused desktop app or game for up to 5 seconds, then release it. For movement or a charged action.",
+          {"keys": {"type": "string"}, "duration_ms": {"type": "integer"}}, ["keys"])
+    async def hold_keys(a):
+        from ..integrations import desktop_control as dc
+        keys = a.get("keys", "")
+        duration = _i(a.get("duration_ms", 500), 500)
+        return (f"Held {keys} for {max(50, min(5000, duration))} ms and released."
+                if await asyncio.to_thread(dc.hold_keys, keys, duration) else "Could not hold and release those keys.")
+
+    @tool("hold_mouse", "Hold a mouse button in the focused desktop app or game for up to 5 seconds, then release it.",
+          {"button": {"type": "string"}, "duration_ms": {"type": "integer"}})
+    async def hold_mouse(a):
+        from ..integrations import desktop_control as dc
+        button = a.get("button", "left") or "left"
+        duration = _i(a.get("duration_ms", 500), 500)
+        return (f"Held {button} mouse button for {max(50, min(5000, duration))} ms and released."
+                if await asyncio.to_thread(dc.hold_mouse, button, duration) else "Could not hold and release the mouse button.")
+
+    @tool("mouse_drag", "Drag the mouse from one real screen pixel position to another in a desktop app or game. Use capture_screen first to identify positions and image scaling.",
+          {"start_x": {"type": "integer"}, "start_y": {"type": "integer"},
+           "end_x": {"type": "integer"}, "end_y": {"type": "integer"},
+           "button": {"type": "string"}, "duration_ms": {"type": "integer"}},
+          ["start_x", "start_y", "end_x", "end_y"])
+    async def mouse_drag(a):
+        from ..integrations import desktop_control as dc
+        args = (_i(a.get("start_x")), _i(a.get("start_y")),
+                _i(a.get("end_x")), _i(a.get("end_y")),
+                a.get("button", "left") or "left", _i(a.get("duration_ms", 500), 500))
+        return ("Dragged and released the mouse button. Check the screen for the result."
+                if await asyncio.to_thread(dc.drag, *args) else "Mouse drag failed or control is not ready.")
+
     @tool("scroll_page", "Scroll screen up or down.", {"direction": {"type": "string"}, "amount": {"type": "integer"}})
     async def scroll_page(a):
         from ..integrations import desktop_control as dc
@@ -818,7 +849,27 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     @tool("find_and_click", "Click something in a NATIVE DESKTOP APPLICATION window by finding it visually. Slow and approximate — for anything inside a web page use browser_click, which is exact.", {"target": {"type": "string"}, "button": {"type": "string"}, "double": {"type": "boolean"}}, ["target"])
     async def find_and_click(a):
         from ..integrations import desktop_control as dc
-        return dc.find_and_click(a.get("target", ""), button=a.get("button", "left") or "left", double=_b(a.get("double", False)), config=config)
+        result = await asyncio.to_thread(dc.click_target, a.get("target", ""),
+                                         a.get("button", "left") or "left", _b(a.get("double", False)), config)
+        return result if result.startswith("Clicked") or " and clicked " in result else f"[failure] {result}"
+
+    @tool("desktop_read", "Read named controls and screen positions from the active native app's accessibility tree, like reading a browser DOM. If unavailable, use capture_screen for vision.", {})
+    async def desktop_read(a):
+        from ..integrations import accessibility
+        tree = await asyncio.to_thread(accessibility.snapshot)
+        result = accessibility.readable(tree)
+        return result if tree.get("ok") else f"[failure] {result} Use capture_screen instead."
+
+    @tool("find_and_drag", "Visually find two targets on the same screen and drag from the first to the second in a desktop app or game. For a ball-to-basket gesture, if that matches the game's controls. Check the screen afterwards.",
+          {"start_target": {"type": "string"}, "end_target": {"type": "string"},
+           "button": {"type": "string"}, "duration_ms": {"type": "integer"}},
+          ["start_target", "end_target"])
+    async def find_and_drag(a):
+        from ..integrations import desktop_control as dc
+        return await asyncio.to_thread(dc.find_and_drag, a.get("start_target", ""),
+                                       a.get("end_target", ""),
+                                       _i(a.get("duration_ms", 500), 500),
+                                       a.get("button", "left") or "left", config)
 
     # ---------------- Google ----------------
     @tool("google_agenda", "Upcoming calendar events for N days.", {"days": {"type": "string"}})
