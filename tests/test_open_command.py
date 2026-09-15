@@ -137,3 +137,21 @@ def test_a_negated_sentence_is_not_launched():
     assert loose == "door"
     assert not oc._resolves(loose)       # so handle() declines it
     assert asyncio.run(oc.handle("I don't want to open the door", _config())) is None
+
+
+# ----------------------------------------------------- the verb glued to the next word
+@pytest.mark.parametrize("text,target", [
+    ("HR was OpenNet Flix.", "Net Flix"),   # verbatim from a real transcript
+    ("OpenNet Flix", "Net Flix"),
+    ("OpenSpotify", "Spotify"),
+    ("PlayFriends", "Friends"),
+])
+def test_a_glued_verb_is_split(text, target):
+    assert (oc.parse_loose(text) or oc.parse(text)) == target
+
+
+def test_ungluing_leaves_ordinary_words_alone():
+    """Only a verb directly against a capitalised word is split, so nothing else moves."""
+    assert oc.unglue("open Netflix") == "open Netflix"
+    assert oc.unglue("reopen the file") == "reopen the file"
+    assert oc.unglue("OpenAI") == "OpenAI"      # not Capital+lowercase, so untouched
