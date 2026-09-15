@@ -635,11 +635,23 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         from ..integrations import browser
         if not browser.control_ready():
             return browser.ensure()["message"]
-        res = await browser.click_text(a.get("text", ""), _i(a.get("nth", 1)) or 1)
+        text = a.get("text", "")
+        res = await browser.click_text(text, _i(a.get("nth", 1)) or 1)
         if res.get("ok"):
             now = res.get("now") or {}
             extra = f" Now on: {now.get('title')}." if now.get("title") else ""
             return f"{res['message']}{extra}"
+
+        # Asked to click a title that is not on this page, the user almost always means "find it
+        # here" — and which of browser_click/browser_open the model reaches for is a coin toss.
+        # Both converge on the same behaviour so the request works either way, and the reply says
+        # plainly that a search happened rather than a click.
+        if text:
+            searched = await browser.search_here(text)
+            if searched.get("ok"):
+                return (f"“{text}” was not on the page, so I searched this site for it. "
+                        f"{searched.get('found', '')}").strip()
+
         alts = res.get("alternatives") or []
         hint = f" I can see: {', '.join(alts)}." if alts else ""
         return f"{res.get('error', 'Click failed.')}{hint}"
