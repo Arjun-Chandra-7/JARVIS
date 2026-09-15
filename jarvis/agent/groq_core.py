@@ -487,6 +487,16 @@ class GroqAgent:
                         and action_claims.claims_an_action(reply)):
                     reply = action_claims.honest_fallback()
 
+                # A tool failed for a specific, stated reason; do not relay it as a vague fault.
+                # "No installed app matches Networks" was reported as "there's a temporary
+                # glitch", which hides the cause and invites the user to keep retrying.
+                if self._failed_calls_advice and action_claims.invents_an_excuse(reply):
+                    last = list(self._failed_calls_advice.values())[-1]
+                    grounded = action_claims.real_reason(reply, last)
+                    if grounded != reply:
+                        self.on_tool("brain", "replaced a vague excuse with the real reason")
+                        reply = grounded
+
                 self.messages.append({"role": "assistant", "content": reply})
                 break
 

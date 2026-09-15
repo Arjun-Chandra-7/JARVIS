@@ -58,6 +58,33 @@ def claims_an_action(reply: str) -> bool:
     return bool(_CLAIM.search(text))
 
 
+# Vague technical excuses a model reaches for when a tool failed with a perfectly specific
+# reason. Observed: "No installed app matches Networks" was reported to the user as "It seems
+# there's a temporary glitch" — which is not true, hides the real cause, and invites them to just
+# try again forever.
+_VAGUE_EXCUSE = re.compile(
+    r"""(?ix)\b(
+        temporary\s+(?:glitch|issue|problem|error) | technical\s+(?:glitch|issue|difficult\w*) |
+        something\s+went\s+wrong | glitch | hiccup | on\s+my\s+end |
+        try\s+again\s+(?:later|in\s+a\s+moment)
+    )\b""",
+)
+
+
+def invents_an_excuse(reply: str) -> bool:
+    """True when the reply blames a vague fault instead of saying what actually happened."""
+    return bool(_VAGUE_EXCUSE.search((reply or "").strip()))
+
+
+def real_reason(reply: str, tool_message: str) -> str:
+    """Replace a vague excuse with what the tool actually reported."""
+    reason = (tool_message or "").strip()
+    if not reason:
+        return reply
+    reason = reason.replace("WRONG TOOL.", "").strip()
+    return reason[:400]
+
+
 def correction_for(reply: str) -> str:
     """What to tell the model when it claimed something it never did."""
     return (

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from ..config import Config
-from . import endpoint, levels, speech_control, stt, tts, vad
+from . import endpoint, hotkey, levels, speech_control, stt, tts, vad
 from .mic import Microphone
 from .wake import WakeWord
 
@@ -61,11 +61,20 @@ class VoiceSession:
             except endpoint.SileroUnavailable:
                 self._endpointer = None
         self._speaking = threading.Event()   # True while Jarvis's own audio is playing
+        self._ptt = None                     # push-to-talk watcher, started in run()
+        self._ptt_pressed = threading.Event()
 
     # --- stages ----------------------------------------------------------
     async def _wait_for_wake_or_event(self):
-        """Block until the wake word fires or a phone event is queued. Returns ('wake'|'event', payload)."""
+        """Block until the wake word fires, push-to-talk is pressed, or a phone event is queued.
+
+        Returns ('wake'|'event', payload).
+        """
         while True:
+            if self._ptt_pressed.is_set():
+                self._ptt_pressed.clear()
+                self.on_event("wake", "push-to-talk")
+                return ("wake", None)
             if not self._events.empty():
                 return ("event", self._events.get_nowait())
             frame = await asyncio.to_thread(self.mic.read)  # frees the loop for D-Bus signals
@@ -750,8 +759,19 @@ class VoiceSession:
                 f"endpointing: {'silero (neural)' if self._endpointer else 'energy threshold'}"
                 f" · stt: {self.config.whisper_model} beam {self.config.whisper_beam}",
             )
+            # Push-to-talk: a key press starts a turn without the wake word. Started here rather
+            # than in __init__ so a failure to read the keyboard cannot stop the session existing.
+            self._ptt = hotkey.start(self.config.ptt_key, self._ptt_pressed.set)
+            if self._ptt is not None:
+                self.on_event("loading", f"push-to-talk: {self.config.ptt_key}")
+            elif hotkey.resolve_key(self.config.ptt_key) is not None:
+                self.on_event("loading", f"push-to-talk unavailable — {hotkey.diagnose(self.config.ptt_key)}")
+
             phrase = "Hey Jarvis" if self.backend == "local" else self.config.wake_keyword
-            self.on_event("ready", f"wake word: '{phrase}'")
+            hint = f"wake word: '{phrase}'"
+            if self._ptt is not None:
+                hint += f"  ·  or press {self.config.ptt_key}"
+            self.on_event("ready", hint)
             self._speak(self._greeting())  # Jarvis speaks first
             while True:
                 kind, payload = await self._wait_for_wake_or_event()

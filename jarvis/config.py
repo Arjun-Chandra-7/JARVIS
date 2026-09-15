@@ -176,8 +176,14 @@ class Config:
     whisper_model: str = field(default_factory=lambda: os.environ.get("JARVIS_WHISPER_MODEL", "base.en"))
     whisper_beam: int = field(default_factory=lambda: _int("JARVIS_WHISPER_BEAM", 1))
     stt_language: str = field(default_factory=lambda: os.environ.get("JARVIS_STT_LANGUAGE", "en"))
+    # Whisper biases towards these words. Without "Netflix" in the list it transcribed it as
+    # "Networks" — which then failed to open anything and Jarvis reported a "temporary glitch".
+    # Anything you say often and that Whisper can plausibly mishear belongs here.
     stt_vocabulary: str = field(default_factory=lambda: os.environ.get(
-        "JARVIS_STT_VOCABULARY", "Jarvis, Arjun, WhatsApp, VS Code, Codex, Claude, Antigravity, agy, Opera GX, Google Meet"))
+        "JARVIS_STT_VOCABULARY",
+        "Jarvis, Arjun, WhatsApp, VS Code, Codex, Claude, Antigravity, agy, Opera GX, "
+        "Google Meet, Netflix, YouTube, Spotify, Hotstar, Prime Video, Instagram, LinkedIn, "
+        "GitHub, ChatGPT, Gmail, F.R.I.E.N.D.S"))
     piper_model: str = field(
         default_factory=lambda: os.environ.get(
             "JARVIS_PIPER_MODEL",
@@ -185,6 +191,12 @@ class Config:
         )
     )
     wake_threshold: float = field(default_factory=lambda: float(os.environ.get("JARVIS_WAKE_THRESHOLD", "0.7")))
+
+    # Push-to-talk: press this key to start listening without saying the wake word. A bare
+    # modifier cannot be a desktop shortcut and Wayland hides other windows' keys, so this is read
+    # from the kernel input device — see jarvis/audio/hotkey.py for exactly what it looks at.
+    # "none" disables it; any name in hotkey.KEY_CODES or a raw evdev code works.
+    ptt_key: str = field(default_factory=lambda: os.environ.get("JARVIS_PTT_KEY", "rightalt"))
 
     # --- proactive routines (Phase 4) ---
     enable_brief: bool = field(default_factory=lambda: _bool("JARVIS_ENABLE_BRIEF", True))

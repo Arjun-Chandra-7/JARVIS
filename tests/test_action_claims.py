@@ -67,3 +67,41 @@ def test_a_failure_report_is_not_a_claim():
     """The honest failure path must survive the check, or it would be rewritten as a failure."""
     assert not ac.claims_an_action(
         "I couldn't find an app called that. Did you mean Opera GX?")
+
+
+# ----------------------------------------------------------------- vague excuses
+@pytest.mark.parametrize("reply", [
+    "It seems there's a temporary glitch.",
+    "It appears there's a temporary issue opening the app.",
+    "Something went wrong on my end.",
+    "There was a technical issue — please try again later.",
+    "Sorry, a hiccup there.",
+])
+def test_vague_excuses_are_detected(reply):
+    assert ac.invents_an_excuse(reply), reply
+
+
+@pytest.mark.parametrize("reply", [
+    "No installed app matches Networks. Did you mean Opera GX?",
+    "I couldn't find that on the page.",
+    "Opera GX is running without control enabled.",
+    "Your battery is at 100 percent.",
+    "I can read the brightness but not change it.",
+])
+def test_specific_reasons_are_not_excuses(reply):
+    assert not ac.invents_an_excuse(reply), reply
+
+
+def test_real_reason_replaces_the_excuse():
+    out = ac.real_reason("It seems there's a temporary glitch.",
+                         "No installed app matches “Networks”. Did you mean: Opera GX?")
+    assert "Networks" in out and "glitch" not in out
+
+
+def test_real_reason_strips_the_model_only_prefix():
+    out = ac.real_reason("glitch", 'WRONG TOOL. “netflix” is a website, not an application.')
+    assert out.startswith("“netflix”")
+
+
+def test_real_reason_keeps_the_reply_when_there_is_nothing_better():
+    assert ac.real_reason("It seems there's a glitch.", "") == "It seems there's a glitch."

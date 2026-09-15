@@ -409,7 +409,55 @@ def resolve_site(name: str) -> str:
         return n
     if re.fullmatch(r"[\w-]+(\.[\w-]+)+(/\S*)?", n):
         return "https://" + n
+
+    # Speech gets site names slightly wrong, and a near miss should still land: transcribed
+    # "Netflix" as "Networks", which matched nothing, opened nothing, and was reported as a
+    # "temporary glitch". Only very close matches count, so an actual search is never hijacked.
+    near = _closest_site(low)
+    if near:
+        return SITES[near]
+
     return "https://www.google.com/search?q=" + re.sub(r"\s+", "+", n)
+
+
+# Specific things speech recognition turns site names into. Fuzzy matching cannot cover these —
+# "networks" scores only 0.53 against "netflix", and a threshold low enough to catch it would
+# also swallow real show titles — but the mistakes are systematic, so they can just be listed.
+MISHEARD: dict[str, str] = {
+    "networks": "netflix",
+    "network": "netflix",
+    "net flicks": "netflix",
+    "netflicks": "netflix",
+    "nextflix": "netflix",
+    "utube": "youtube",
+    "u tube": "youtube",
+    "hot star": "hotstar",
+    "jio hotstar": "hotstar",
+    "insta": "instagram",
+    "linked in": "linkedin",
+    "git hub": "github",
+    "chat gpt": "chatgpt",
+    "g mail": "gmail",
+}
+
+
+def _closest_site(spoken: str) -> Optional[str]:
+    """The site name `spoken` most likely meant, or None when nothing is close enough."""
+    from difflib import SequenceMatcher
+
+    word = (spoken or "").strip().lower()
+    if word in MISHEARD:
+        return MISHEARD[word]
+    if len(word) < 4:
+        return None
+    best, score = None, 0.0
+    for key in SITES:
+        ratio = SequenceMatcher(None, word, key).ratio()
+        if ratio > score:
+            best, score = key, ratio
+    # 0.72 accepts networks->netflix (0.75) and youtub->youtube, and rejects "the office",
+    # "friends" and other real titles, which must stay searches rather than becoming sites.
+    return best if score >= 0.72 else None
 
 
 async def current_page() -> dict:
