@@ -117,6 +117,8 @@ async def _run_step(step: Step, config) -> StepResult:
         items = [i for i in await browser.results_here(wait_s=12.0) if _is_a_title(i)]
         if not items:
             return StepResult(step, False, "the search returned nothing to open")
+        from . import context
+        context.note_results(items)     # so "play the second one" can mean something next turn
         # A page still settling can offer a stray label before the real ones; trying the next
         # candidate costs a second and turns a flaky failure into a result.
         tried = []
@@ -124,6 +126,7 @@ async def _run_step(step: Step, config) -> StepResult:
             clicked = await browser.click_text(candidate)
             if clicked.get("ok") and clicked.get("changed") is not False:
                 await asyncio.sleep(1.5)
+                context.note_opened(target=candidate)
                 return StepResult(step, True, f"opened “{candidate}”")
             tried.append(candidate)
         return StepResult(step, False, f"I could not open “{tried[0]}”")

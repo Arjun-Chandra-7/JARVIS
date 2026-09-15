@@ -30,10 +30,17 @@ _WAKE_RE = re.compile(
 async def handle(text: str, config, session_id: str = "local") -> str | None:
     from .hinglish import normalise
 
+    from . import context
+
     # Hindi and Hinglish are rewritten into English once, here, so every handler below works in
     # both without knowing it. A sentence that is already English, or Hindi this does not
     # recognise, comes back unchanged and carries on to the model as it was said.
-    raw = normalise(clean_text(text))
+    #
+    # Then the follow-up is filled in from the last turn — "play the second one" becomes "play
+    # <that title>" — so the handlers below, which keep no state of their own, still see a whole
+    # request. Both rewrites leave anything they do not recognise exactly as it was.
+    context.set_current(session_id)
+    raw = context.resolve(normalise(clean_text(text)), session_id)
     command = raw.lower().rstrip(".!?")
 
     from .power import asleep, set_asleep

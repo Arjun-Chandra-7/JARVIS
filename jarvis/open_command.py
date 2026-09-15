@@ -114,6 +114,8 @@ async def run(target: str, config) -> str:
     app = desktop_apps.resolve(target)
     if app is not None:
         if desktop_apps.launch(app):
+            from . import context
+            context.note_opened(app=app.name, target=app.name)
             return f"Opened {app.name}."
         return f"I found {app.name} but couldn't start it."
 
@@ -137,6 +139,8 @@ async def run(target: str, config) -> str:
     # open, and failing that on the web. open_site already encodes exactly this.
     result = await browser.open_site(target)
     if result.get("ok"):
+        from . import context
+        context.note_opened(site=target, target=target)
         return result.get("message") or f"Opened {target}."
     return result.get("error") or f"I couldn't open {target}."
 
