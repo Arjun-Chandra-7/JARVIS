@@ -18,6 +18,10 @@ from typing import Awaitable, Callable, Optional
 MAX_TRIED = 4
 
 
+class NoBrowserControl(RuntimeError):
+    """Raised when the candidates could not be opened, rather than tried and found wanting."""
+
+
 @dataclass
 class Found:
     url: str
@@ -66,7 +70,10 @@ async def find(purpose: str, query: Optional[str] = None,
     from .integrations import browser, websearch
 
     if not browser.control_ready():
-        return None
+        # Distinct from "nothing worked": the candidates were never opened at all. Reporting the
+        # wrong reason sends the user looking for a better whiteboard when the browser is the
+        # problem.
+        raise NoBrowserControl(browser.ensure()["message"])
 
     hits = await asyncio.to_thread(websearch.results, query or purpose, 8)
     if not hits:
@@ -153,7 +160,10 @@ async def handle(text: str, config=None) -> Optional[str]:
     if pair:
         kind, subject = pair
         from .draw_command import run as draw
-        found = await find(kind, f"free online {kind} no signup")
+        try:
+            found = await find(kind, f"free online {kind} no signup")
+        except NoBrowserControl as why:
+            return str(why)
         if not found:
             return f"I couldn't find a {kind} that actually worked, sir."
         await asyncio.sleep(2.0)
@@ -163,7 +173,10 @@ async def handle(text: str, config=None) -> Optional[str]:
     purpose = parse(text)
     if purpose is None:
         return None
-    found = await find(purpose)
+    try:
+        found = await find(purpose)
+    except NoBrowserControl as why:
+        return str(why)
     if not found:
         return f"I opened the first few results for {purpose} and none of them worked, sir."
     return f"Opened {found.host} — {found.title[:60]}. I checked it works before saying so."

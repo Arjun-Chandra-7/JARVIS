@@ -113,7 +113,7 @@ def control_ready(timeout: float = 1.5) -> bool:
         return False
 
 
-def launch(url: str = "", wait_s: float = 12.0) -> bool:
+def launch(url: str = "", wait_s: float = 12.0, restore: bool = False) -> bool:
     """Start Opera GX with control enabled. Returns True once the port answers."""
     exe = _exe()
     if not exe:
@@ -131,6 +131,11 @@ def launch(url: str = "", wait_s: float = 12.0) -> bool:
         # reaches inside the page; this reaches the browser around it.
         "--force-renderer-accessibility",
     ]
+    if restore:
+        # Regaining control costs a restart, and a restart used to cost every open tab. Chromium
+        # will bring the previous session back if asked, which turns "this closes your tabs" into
+        # a few seconds of flicker.
+        argv.append("--restore-last-session")
     if url:
         argv.append(url)
     env = {k: v for k, v in os.environ.items()
@@ -176,6 +181,9 @@ def ensure(url: str = "", allow_restart: bool = False) -> dict:
             }
         stop()
         time.sleep(1.5)
+        if launch(url, restore=True):
+            return {"ok": True, "state": "launched",
+                    "message": "Opera GX restarted with control, restoring your tabs."}
     if launch(url):
         return {"ok": True, "state": "launched", "message": "Opera GX started with control."}
     return {"ok": False, "state": "missing",

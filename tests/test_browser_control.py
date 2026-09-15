@@ -115,10 +115,18 @@ def test_ensure_restarts_when_allowed(monkeypatch):
     monkeypatch.setattr(browser, "_exe", lambda: "/usr/bin/opera-gx")
     monkeypatch.setattr(browser, "is_running", lambda: True)
     monkeypatch.setattr(browser, "stop", lambda: None)
-    monkeypatch.setattr(browser, "launch", lambda url="", wait_s=12.0: True)
+    asked = {}
+
+    def fake_launch(url="", wait_s=12.0, restore=False):
+        asked["restore"] = restore
+        return True
+
+    monkeypatch.setattr(browser, "launch", fake_launch)
     monkeypatch.setattr(browser.time, "sleep", lambda _s: None)
     state = browser.ensure(allow_restart=True)
     assert state["ok"] and state["state"] == "launched"
+    # Regaining control costs a restart; a restart should not also cost every open tab.
+    assert asked["restore"] is True
 
 
 def test_profile_is_the_users_own(monkeypatch):
