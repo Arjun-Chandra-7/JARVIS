@@ -167,6 +167,19 @@ jarvis_stop() {
 jarvis_start_services() {
     [ -x "$CTL_PY" ] || { echo "❌ No virtualenv at $CTL_PY"; return 1; }
 
+    # Anything `jarvis stop` stops, `jarvis start` must be able to bring back, or a restart
+    # quietly leaves part of Jarvis down until the next reboot. Only units the user has enabled
+    # are started, so this never resurrects something deliberately switched off.
+    local unit
+    for unit in "${JARVIS_EXTRA_UNITS[@]}"; do
+        if _unit_exists "$unit" && systemctl --user is-enabled --quiet "$unit" 2>/dev/null \
+           && ! _unit_active "$unit"; then
+            systemctl --user start "$unit" 2>/dev/null \
+                && echo "▸ ${unit%.service}: started" \
+                || echo "▸ ${unit%.service}: failed to start"
+        fi
+    done
+
     # WhatsApp bridge
     if _whatsapp_running; then
         echo "▸ WhatsApp bridge: already running"
@@ -231,12 +244,15 @@ jarvis_start_overlay() {
             echo "▸ Overlay: npm install failed"; return 1; }
     }
     # The overlay must not spawn its own backend/voice — this script owns them.
+    # `setsid --fork`, not plain `setsid`: without the fork setsid execs in place, stays a child
+    # of this shell, and `jarvis restart` then blocks forever waiting on the overlay instead of
+    # returning. Every stream is redirected too, so nothing keeps the parent's pipes open.
     ( cd "$CTL_REPO/overlay" \
       && JARVIS_OVERLAY_SPAWN=0 \
          ELECTRON_OZONE_PLATFORM_HINT=x11 \
          ELECTRON_DISABLE_SECURITY_WARNINGS=1 \
-         setsid node "$CTL_REPO/overlay/node_modules/electron/cli.js" "$CTL_REPO/overlay" \
-             --no-sandbox </dev/null >> /tmp/jarvis-overlay.log 2>&1 & )
+         setsid --fork node "$CTL_REPO/overlay/node_modules/electron/cli.js" "$CTL_REPO/overlay" \
+             --no-sandbox </dev/null >> /tmp/jarvis-overlay.log 2>&1 )
     echo "▸ Overlay: started"
 }
 
