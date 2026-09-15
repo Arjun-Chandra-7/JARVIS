@@ -37,7 +37,13 @@ DEFAULT_DETAIL = 0.8
 # a performance one, and both directions are worse: at 1000 the lines are clean and confident but
 # the drawing is bare, and at 1800 the extra detail arrives as noise that reads as speckle. 1400
 # is where the face keeps its features without the shading breaking up.
-WORKING_SIZE = 1400
+WORKING_SIZE = 1000
+
+# How the tone is laid down. More levels and tighter spacing is darker, not more detailed: the
+# first attempt used a fixed mid-grey cutoff and covered the whole canvas at every level.
+HATCH_LEVELS = 5
+HATCH_SPACING = 10
+HATCH_COVERAGE = 0.55
 MIN_STROKE_POINTS = 4
 
 
@@ -160,6 +166,52 @@ def _smooth(points, passes: int = 2):
     return path
 
 
+def _hatch(tone, levels: int, spacing: int, coverage: float, min_run: int = 6) -> list:
+    """Darkness as stroke density, the way an engraving works.
+
+    This is the part that makes a portrait a portrait. Edge detection finds boundaries — where
+    the jaw is — and has no idea that the cheek is lighter than the shadow beside it, so a
+    drawing made only of edges does not read as a face however many lines it has. An engraver
+    does the opposite: they lay down more lines where it is darker.
+
+    Each pass covers everything below a brightness threshold at its own angle, so the darkest
+    areas receive every pass and the lightest none. Thresholds come from the picture's own
+    histogram rather than the 0-255 scale: a dark painting has nearly every pixel below a fixed
+    mid-grey, and evenly spaced cutoffs cover the whole canvas at every level — the first attempt
+    came out solid black.
+    """
+    import numpy as np
+
+    angles = (20, 70, -25, 115, 45, -60)
+    h, w = tone.shape
+    strokes = []
+    cuts = [float(np.percentile(tone, q)) for q in np.linspace(coverage * 100, 4, levels)]
+    span = int(np.hypot(h, w))
+    for i, cutoff in enumerate(cuts):
+        mask = tone < cutoff
+        if not mask.any():
+            continue
+        angle = np.deg2rad(angles[i % len(angles)])
+        dx, dy = float(np.cos(angle)), float(np.sin(angle))
+        px, py = -dy, dx            # step perpendicular to lay parallel lines across the picture
+        for offset in range(-span, span, spacing):
+            x0 = w / 2 + px * offset - dx * span
+            y0 = h / 2 + py * offset - dy * span
+            run_start = None
+            for t in range(2 * span):
+                x = int(x0 + dx * t)
+                y = int(y0 + dy * t)
+                inside = 0 <= x < w and 0 <= y < h and mask[y, x]
+                if inside and run_start is None:
+                    run_start = (x, y)
+                elif not inside and run_start is not None:
+                    end = (int(x0 + dx * (t - 1)), int(y0 + dy * (t - 1)))
+                    if abs(end[0] - run_start[0]) + abs(end[1] - run_start[1]) >= min_run:
+                        strokes.append([run_start, end])
+                    run_start = None
+    return strokes
+
+
 def from_image(path: str | Path, budget: int = DEFAULT_BUDGET,
                detail: float = DEFAULT_DETAIL,
                short_side: int = WORKING_SIZE) -> Optional[Plan]:
@@ -183,8 +235,14 @@ def from_image(path: str | Path, budget: int = DEFAULT_BUDGET,
                            interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC)
         h, w = image.shape[:2]
 
+    # Tone first, features second. Hatching is what makes it recognisable; the traced edges put
+    # the eyes, mouth and fingers back on top of it.
+    tone = cv2.GaussianBlur(cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX), (0, 0), 2.0)
+    hatch_strokes = _hatch(tone, levels=HATCH_LEVELS, spacing=HATCH_SPACING,
+                           coverage=HATCH_COVERAGE)
+
     found = _trace(_edges(image, detail))
-    if not found:
+    if not found and not hatch_strokes:
         return None
 
     # Rank by how far a contour travels across the picture, not by how many points it has.
@@ -201,8 +259,6 @@ def from_image(path: str | Path, budget: int = DEFAULT_BUDGET,
 
     measured = [(len(path), path) for path in found]
     measured = [(n, path) for n, path in measured if n >= min_points]
-    if not measured:
-        return None
     measured.sort(key=lambda pair: pair[0], reverse=True)
 
     simplified = []
@@ -216,6 +272,8 @@ def from_image(path: str | Path, budget: int = DEFAULT_BUDGET,
         if len(points) < MIN_STROKE_POINTS:
             continue
         simplified.append(_smooth(points))
+    # Hatching is laid down first so the features drawn over it stay on top.
+    simplified = [np.asarray(h, dtype=float) for h in hatch_strokes] + simplified
     if not simplified:
         return None
 
@@ -226,7 +284,9 @@ def from_image(path: str | Path, budget: int = DEFAULT_BUDGET,
             break
         room = budget - spent
         take = points[:room] if len(points) > room else points
-        if len(take) < MIN_STROKE_POINTS:
+        # Two points is a valid stroke: a hatch line is straight, and requiring four discarded
+        # every one of them — which is why the tone never appeared.
+        if len(take) < 2:
             continue
         strokes.append([(int(px), int(py)) for px, py in take])
         spent += len(take)

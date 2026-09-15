@@ -81,3 +81,48 @@ def test_what_is_being_asked_for(said, subject):
 @pytest.mark.parametrize("said", ["draw it", "draw", "open netflix", "what is the volume"])
 def test_not_a_drawing_request(said):
     assert draw_command.parse(said) is None
+
+
+def test_tone_is_what_makes_it_a_picture(tmp_path):
+    """A gradient has no edges at all. Edge detection finds nothing in it; hatching renders it,
+    which is the difference between a drawing that reads as a face and one that does not."""
+    import numpy as np
+    from PIL import Image
+
+    ramp = np.tile(np.linspace(0, 255, 400, dtype=np.uint8), (300, 1))
+    path = tmp_path / "ramp.png"
+    Image.fromarray(ramp).save(path)
+
+    plan = strokes.from_image(path)
+    assert plan is not None and len(plan.strokes) > 50
+
+    # More strokes over the dark half than the light half: that is what tone means here.
+    midpoint = plan.source_size[0] / 2
+    dark = sum(1 for s in plan.strokes if s[0][0] < midpoint)
+    light = sum(1 for s in plan.strokes if s[0][0] >= midpoint)
+    assert dark > light * 2
+
+
+def test_a_hatch_line_is_two_points(tmp_path):
+    """Requiring four discarded every hatch stroke, and the tone never appeared."""
+    import numpy as np
+    from PIL import Image
+
+    # A dark disc on a light ground: real tone, so there is something to hatch.
+    field = np.full((300, 300), 230, np.uint8)
+    y, x = np.ogrid[:300, :300]
+    field[(x - 150) ** 2 + (y - 150) ** 2 < 90 ** 2] = 30
+    Image.fromarray(field).save(tmp_path / "disc.png")
+
+    plan = strokes.from_image(tmp_path / "disc.png")
+    assert plan is not None
+    assert any(len(s) == 2 for s in plan.strokes)
+
+
+def test_a_flat_field_has_nothing_to_draw(tmp_path):
+    """No edges and no tone: saying so beats inventing strokes."""
+    import numpy as np
+    from PIL import Image
+
+    Image.fromarray(np.full((300, 300), 30, np.uint8)).save(tmp_path / "flat.png")
+    assert strokes.from_image(tmp_path / "flat.png") is None
