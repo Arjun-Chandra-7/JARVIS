@@ -44,6 +44,11 @@ _DET = re.compile(r"\b(?:mera|meri|mere|ye|yeh|woh|wo|is|us|मेरा|मे�
 
 _NUM = r"(?P<value>\d{1,3})"
 
+# The question words, in both scripts. Only the Latin spellings were listed, so "आवाज़ कितनी है"
+# — the same sentence typed the way Whisper returns it when it hears Hindi — matched nothing.
+_HOWMUCH = r"(?:kitni|kitna|kya|कितनी|कितना|क्या)"
+_IS = r"(?:hai|है)"
+
 
 def _clean(text: str) -> str:
     text = _FILLER.sub(" ", text or "")
@@ -67,8 +72,8 @@ _RULES: list[tuple[re.Pattern, str]] = [
     (re.compile(rf"^{_BRIGHT}\s+{_DOWN}$", re.I), "turn the brightness down"),
 
     # "awaaz kitni hai", "brightness kya hai"
-    (re.compile(rf"^{_VOLUME}\s+(?:kitni|kitna|kya)\s*(?:hai)?\??$", re.I), "what is the volume"),
-    (re.compile(rf"^{_BRIGHT}\s+(?:kitni|kitna|kya)\s*(?:hai)?\??$", re.I), "what is the brightness"),
+    (re.compile(rf"^{_VOLUME}\s+{_HOWMUCH}\s*{_IS}?\??$", re.I), "what is the volume"),
+    (re.compile(rf"^{_BRIGHT}\s+{_HOWMUCH}\s*{_IS}?\??$", re.I), "what is the brightness"),
 
     # "awaaz band karo" is mute, not "close the volume".
     (re.compile(rf"^{_VOLUME}\s+{_CLOSE}$", re.I), "mute"),

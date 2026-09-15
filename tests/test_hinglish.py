@@ -65,3 +65,14 @@ def test_the_cheap_check_does_not_fire_on_english():
     assert not looks_hindi("open netflix and turn the volume up")
     assert looks_hindi("YouTube kholo")
     assert looks_hindi("आवाज़ बढ़ाओ")
+
+
+@pytest.mark.parametrize("said,english", [
+    ("आवाज़ कितनी है", "what is the volume"),
+    ("ब्राइटनेस कितनी है", "what is the brightness"),
+    ("awaaz kitni hai", "what is the volume"),
+])
+def test_questions_work_in_both_scripts(said, english):
+    """Only the Latin spellings of the question words were listed, so the same sentence written
+    the way Whisper returns Hindi matched nothing."""
+    assert normalise(said) == english
