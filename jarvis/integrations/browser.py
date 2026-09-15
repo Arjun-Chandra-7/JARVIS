@@ -536,6 +536,15 @@ async def search_here(query: str) -> dict:
             await asyncio.sleep(0.04)
         await asyncio.sleep(0.2)
 
+        # Clear whatever is already in the box. Netflix keeps the previous query in its search
+        # field, so typing straight in appended and produced ?q=f.r.i.e.n.d.sfriends. Select-all
+        # first; insertText then replaces the selection.
+        for kind in ("keyDown", "keyUp"):
+            await session.call("Input.dispatchKeyEvent", {
+                "type": kind, "key": "a", "code": "KeyA", "modifiers": 2,
+                "windowsVirtualKeyCode": 65, "nativeVirtualKeyCode": 65})
+        await asyncio.sleep(0.1)
+
         await session.call("Input.insertText", {"text": query})
         await asyncio.sleep(0.15)
         landed = await session.js(
@@ -642,6 +651,14 @@ async def type_into(field: str, text: str, submit: bool = True) -> dict:
             return {"ok": False,
                     "error": f"“{clicked.get('clicked')}” is not a text field, and no text field "
                              "appeared after clicking it."}
+
+        # Replace what is there rather than appending to it — a search field usually still holds
+        # the previous query.
+        for kind in ("keyDown", "keyUp"):
+            await session.call("Input.dispatchKeyEvent", {
+                "type": kind, "key": "a", "code": "KeyA", "modifiers": 2,
+                "windowsVirtualKeyCode": 65, "nativeVirtualKeyCode": 65})
+        await asyncio.sleep(0.1)
 
         await session.call("Input.insertText", {"text": text})
         # Verify the text actually landed. Without this, clicking a search *icon* and typing into
