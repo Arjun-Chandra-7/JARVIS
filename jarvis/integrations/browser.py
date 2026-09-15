@@ -642,6 +642,61 @@ def search_url_for(current_url: str, query: str) -> Optional[str]:
     return None
 
 
+# Search results, not the furniture around them. Reading the whole page's clickables gave back
+# "Netflix, Home, Shows, Movies, Games, New & Popular, My List" — the top navigation — while the
+# actual results sat in the main region a few elements away. Scoping to the main content and
+# skipping nav/header/footer gets the titles the user asked about.
+_RESULTS_JS = r"""
+(() => {
+  const norm = s => (s || "").replace(/\s+/g, " ").trim();
+  const root = document.querySelector('main, [role="main"]') || document.body;
+  const chrome = e => e.closest('nav, header, footer, [role="navigation"], [role="banner"]');
+  const label = e => norm(e.getAttribute('aria-label')
+                          || ((e.querySelector('img') || {}).alt)
+                          || e.innerText);
+  // Sites that mark their results explicitly are believed first.
+  let nodes = [...root.querySelectorAll(
+    '[data-uia*="search"], [data-uia*="result"], [class*="result"], [class*="title-card"]')];
+  if (nodes.length < 3) nodes = [...root.querySelectorAll('[aria-label]')];
+  const out = [], seen = new Set();
+  for (const el of nodes) {
+    if (chrome(el)) continue;
+    const t = label(el);
+    if (!t || t.length > 80) continue;
+    const k = t.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(t);
+    if (out.length >= 10) break;
+  }
+  return out;
+})()
+"""
+
+
+async def results_here() -> list:
+    """The titles a search turned up on the page we are on."""
+
+    async def do(session: _Session):
+        return await session.js(_RESULTS_JS) or []
+
+    got = await _with_page(do)
+    return got if isinstance(got, list) else []
+
+
+def describe_results(query: str, items: list) -> str:
+    """Say what was found, and say plainly when the thing asked for is not among it."""
+    items = [i for i in (items or []) if i][:8]
+    if not items:
+        return ""
+    want = (query or "").strip().lower()
+    for n, item in enumerate(items):
+        if item.lower() == want or want in item.lower():
+            first = " — it's the first result." if n == 0 else f" — it's result {n + 1}."
+            return f"Found {item}{first}"
+    return f"I don't see {query}. Results include: {', '.join(items[:5])}."
+
+
 async def search_here(query: str) -> dict:
     """Search the site we are on: by its documented search URL, else through its search box."""
     query = spoken_title(query)
@@ -661,10 +716,7 @@ async def search_here(query: str) -> dict:
             return True
 
         await _with_page(go, surface=True)
-        page = await read_page()
-        items = [i for i in (page.get("items") or []) if i][:8]
-        return {"ok": True,
-                "found": f"Results include: {', '.join(items)}." if items else ""}
+        return {"ok": True, "found": describe_results(query, await results_here())}
 
     async def do(session: _Session):
         found = await session.js(_SEARCH_FIELD_JS) or {}
@@ -717,9 +769,7 @@ async def search_here(query: str) -> dict:
     got = await _with_page(do, surface=True)
     if not got.get("ok"):
         return {"ok": False}
-    page = await read_page()
-    items = (page.get("items") or [])[:8]
-    return {"ok": True, "found": f"Results include: {', '.join(items)}." if items else ""}
+    return {"ok": True, "found": describe_results(query, await results_here())}
 
 
 async def click_text(phrase: str, nth: int = 1) -> dict:

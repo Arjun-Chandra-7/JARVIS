@@ -189,3 +189,31 @@ def test_a_closed_tab_does_not_strand_jarvis():
         assert asyncio.run(browser._active_page()) is None
     finally:
         browser._targets, browser._focus = old, old_focus
+
+
+# --------------------------------------------------- saying what a search actually found
+def test_the_thing_asked_for_is_named_when_it_is_there():
+    from jarvis.integrations.browser import describe_results
+
+    got = describe_results("friends", ["Friends", "Friends with Benefits", "Suits"])
+    assert "Friends" in got and "first result" in got
+
+
+def test_its_position_is_given_when_it_is_not_first():
+    from jarvis.integrations.browser import describe_results
+
+    assert "result 3" in describe_results("suits", ["Friends", "Gilmore Girls", "Suits"])
+
+
+def test_a_miss_is_reported_as_a_miss():
+    """Listing whatever happened to be on screen let a failed search read like a success."""
+    from jarvis.integrations.browser import describe_results
+
+    got = describe_results("friends", ["Home", "Shows", "Movies"])
+    assert got.startswith("I don't see friends")
+
+
+def test_nothing_found_says_nothing():
+    from jarvis.integrations.browser import describe_results
+
+    assert describe_results("friends", []) == ""
