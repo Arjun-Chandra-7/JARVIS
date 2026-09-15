@@ -13,7 +13,15 @@ from typing import Any
 
 import httpx
 
-_VOICE_SUFFIX = "\n\n(Reply in one or two short spoken sentences — plain speech, no markdown or lists.)"
+# Brevity applies to the SPOKEN REPLY, never to whether to act. Worded only as "reply in one or
+# two short sentences", a small model reads it as "just answer" and narrates the action instead of
+# performing it — observed live: "open opera gx" -> "Opening Opera GX..." with no tool call at all,
+# and once that lands in history it repeats for everything.
+_VOICE_SUFFIX = (
+    "\n\n(Spoken request. DO the action with a tool first — actually call it; saying you are "
+    "opening something is not opening it. Then reply in one or two short spoken sentences, plain "
+    "speech, no markdown or lists.)"
+)
 
 
 def web_base() -> str:

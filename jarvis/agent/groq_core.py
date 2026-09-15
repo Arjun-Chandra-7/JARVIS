@@ -18,7 +18,7 @@ from typing import Any, Awaitable, Callable, Optional
 from ..config import Config
 from ..jobs.runner import JobRunner
 from ..memory import vault as vaultmod
-from . import tool_contract, tool_router
+from . import action_claims, tool_contract, tool_router
 from .groq_tools import build_registry
 
 ToolCallback = Callable[[str, str], None]
@@ -206,6 +206,7 @@ class GroqAgent:
                     s["function"]["description"] = d[:40]
 
         self._route_query = ""          # the utterance the tool shortlist is chosen for
+        self._tools_ran_this_turn = False          # did any tool actually run this turn?
         self._failed_calls: dict[str, int] = {}     # calls that already failed this turn
         self._failed_calls_advice: dict[str, str] = {}
         self._last_outcome = None       # outcome of the most recent tool call
@@ -385,6 +386,8 @@ class GroqAgent:
         self._route_query = user_text   # pick this turn's tool shortlist from what was asked
         self._failed_calls.clear()
         self._failed_calls_advice.clear()
+        self._tools_ran_this_turn = False
+        action_claims_checked = False
         # episodic journal
         clean = " ".join(l for l in user_text.splitlines() if not l.strip().startswith("["))[:140].strip()
         if clean:
@@ -466,6 +469,24 @@ class GroqAgent:
                         await self._execute([("semantic_linkedin", intent, args)])
                         linkedin_executed = True
                         continue
+                # A reply that says it opened, launched or played something, when no tool ran this
+                # turn, is not true. Push back once and make it actually act; if it still will
+                # not, say plainly that nothing happened rather than delivering the claim.
+                if (not self._tools_ran_this_turn
+                        and not action_claims_checked
+                        and action_claims.claims_an_action(reply)):
+                    action_claims_checked = True
+                    self.on_tool("brain", "claimed an action without doing it — retrying")
+                    self.messages.append({"role": "assistant", "content": reply})
+                    self.messages.append({
+                        "role": "user", "content": action_claims.correction_for(reply),
+                    })
+                    continue
+                if (not self._tools_ran_this_turn
+                        and action_claims_checked
+                        and action_claims.claims_an_action(reply)):
+                    reply = action_claims.honest_fallback()
+
                 self.messages.append({"role": "assistant", "content": reply})
                 break
 
@@ -561,6 +582,7 @@ class GroqAgent:
                 result = f"{type(exc).__name__}: {exc}"
                 outcome = tool_contract.Outcome.FAILURE
             self._last_outcome = outcome
+            self._tools_ran_this_turn = True
             body = str(result)[:6000]
             # A tool that reports its own failure in the text (a redirect, "not found", a refusal)
             # counts as failed even though dispatch returned normally — otherwise the repeat-guard
