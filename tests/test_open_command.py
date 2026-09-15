@@ -133,9 +133,8 @@ def test_the_loose_path_only_acts_on_something_real():
 def test_a_negated_sentence_is_not_launched():
     import asyncio
 
-    loose = oc.parse_loose("I don't want to open the door")
-    assert loose == "door"
-    assert not oc._resolves(loose)       # so handle() declines it
+    # The loose path now declines "the door" itself rather than leaning on _resolves to reject it.
+    assert oc.parse_loose("I don't want to open the door") is None
     assert asyncio.run(oc.handle("I don't want to open the door", _config())) is None
 
 
@@ -155,3 +154,31 @@ def test_ungluing_leaves_ordinary_words_alone():
     assert oc.unglue("open Netflix") == "open Netflix"
     assert oc.unglue("reopen the file") == "reopen the file"
     assert oc.unglue("OpenAI") == "OpenAI"      # not Capital+lowercase, so untouched
+
+
+# ------------------------------------------- phrases that only look like a launch
+@pytest.mark.parametrize("text", [
+    "open a bank account",      # went to a web search for "bank account"
+    "open my account",
+    "play devil's advocate",
+    "start a new project",
+    "start a discussion",
+    "open the window",          # fuzzy-matched the installed app Bottles
+    "open a bottle",
+    "open the door",
+    "open a new tab",
+])
+def test_a_qualified_noun_is_still_not_a_launch(text):
+    loose = oc.parse_loose(text)
+    assert oc.parse(text) is None
+    assert loose is None or not oc._resolves(loose)
+
+
+@pytest.mark.parametrize("text", [
+    "open netflix", "open opera gx", "open f.r.i.e.n.d.s", "open spotify",
+    "play breaking bad", "open github.com", "watch stranger things",
+    "open vs code", "launch discord",
+])
+def test_the_guard_does_not_swallow_real_launches(text):
+    loose = oc.parse_loose(text)
+    assert oc.parse(text) is not None or (loose and oc._resolves(loose))

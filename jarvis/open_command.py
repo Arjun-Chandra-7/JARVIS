@@ -42,12 +42,18 @@ _ON_SITE_RE = re.compile(r"^(?P<what>.+?)\s+(?:on|in|using)\s+(?P<where>[\w .-]{
 _LEADING_ARTICLE = re.compile(r"^(?:the|my|a|an)\s+", re.IGNORECASE)
 
 # Phrases that look like "open X" but are not a launch request.
+# The noun is often qualified — "a bank account", "a new project", "the front door" — so a few
+# words are allowed in front of it. "open a bank account" was being sent to a web search.
 _NOT_A_LAUNCH = re.compile(
     r"""(?ix)^(?:
-        (?:the\s+|a\s+|my\s+)?
+        (?:the\s+|a\s+|an\s+|my\s+)?
+        (?:[\w'-]+\s+){0,2}
         (?: door | window | (?:new\s+)?tab | file | folder | eyes | mouth | conversation |
-            account | issue | ticket | pull\s+request | pr | box | curtains )
+            account | issue | ticket | pull\s+request | pr | box | curtains |
+            project | advocate | argument | case | discussion | debate | business |
+            bottle | can | jar | packet | parcel | present | gift )
         s?
+      | (?:a\s+|an\s+)?new\s+[\w'-]+          # "a new project", "new business"
       | up (?:\s+to\s+.*)?
     )$""",
 )
@@ -150,8 +156,13 @@ def parse_loose(text: str) -> Optional[str]:
     match = _LOOSE_OPEN_RE.search(cleaned)
     if not match:
         return None
-    target = _LEADING_ARTICLE.sub("", match.group("target").strip()).strip()
-    return target or None
+    raw = match.group("target").strip()
+    # The same guard as the strict path: "open the window" fuzzy-matched the app Bottles, and
+    # "open a bottle" is a drink far more often than it is a launch.
+    if _NOT_A_LAUNCH.match(raw):
+        return None
+    target = _LEADING_ARTICLE.sub("", raw).strip()
+    return None if _NOT_A_LAUNCH.match(target) else (target or None)
 
 
 def _resolves(target: str) -> bool:
