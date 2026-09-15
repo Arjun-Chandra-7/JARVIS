@@ -171,3 +171,55 @@ def test_a_show_title_is_not_suggested_as_an_app(catalogue):
 
 def test_close_misspellings_are_still_suggested(catalogue):
     assert "Spotify" in da.candidates("spotifyy")
+
+
+# ----------------------------------------------------------------- starting the browser
+@pytest.fixture
+def browser_state(monkeypatch):
+    """A browser that is not running, recording how it gets started."""
+    from jarvis.integrations import browser
+
+    started: list[str] = []
+
+    def control(url="", wait_s=12.0):
+        started.append("control")
+        return True
+
+    def desktop(*args, **kwargs):
+        started.append("desktop")
+        return object()
+
+    monkeypatch.setattr(browser, "is_running", lambda: False)
+    monkeypatch.setattr(browser, "launch", control)
+    monkeypatch.setattr(da.subprocess, "Popen", desktop)
+    monkeypatch.setattr(da.shutil, "which", lambda name: f"/usr/bin/{name}")
+    return started
+
+
+def test_opening_the_browser_starts_it_under_control(catalogue, browser_state):
+    """Started the desktop's way it has no DevTools port, and regaining one costs the user
+    their tabs — which is how "play the latest X on YouTube" ended in "restart Opera"."""
+    assert da.launch(da.resolve("opera gx"))
+    assert browser_state == ["control"]
+
+
+def test_other_apps_are_started_the_desktop_way(catalogue, browser_state):
+    assert da.launch(da.resolve("spotify"))
+    assert browser_state == ["desktop"]
+
+
+def test_a_running_browser_is_not_restarted(catalogue, browser_state, monkeypatch):
+    """Restarting closes the user's tabs, so it stays their decision."""
+    from jarvis.integrations import browser
+
+    monkeypatch.setattr(browser, "is_running", lambda: True)
+    assert da.launch(da.resolve("opera gx"))
+    assert browser_state == ["desktop"]
+
+
+def test_control_disabled_leaves_the_browser_alone(catalogue, browser_state, monkeypatch):
+    from jarvis.config import CONFIG
+
+    monkeypatch.setattr(CONFIG, "browser_control", False)
+    assert da.launch(da.resolve("opera gx"))
+    assert browser_state == ["desktop"]
