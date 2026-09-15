@@ -8,7 +8,7 @@ Two transcripts come out of one utterance:
   is given and what gets stored.
 
 They deliberately use different models. Measured on this laptop (n=9, background services running):
-`tiny.en` greedy costs ~440 ms per partial update, `base.en` greedy transcribes a whole utterance
+`tiny` greedy costs ~440 ms per partial update, `base` greedy transcribes a whole utterance
 in ~550 ms, and the previous default (`small.en`, beam 5) took ~1.7 s.
 """
 
@@ -22,7 +22,9 @@ import numpy as np
 _models: dict[tuple[str, str], object] = {}
 _models_lock = threading.Lock()
 
-PARTIAL_MODEL = "tiny.en"
+# Multilingual, like the committed model: "tiny.en" cannot read Hindi at all, and it
+# is the partial that the user watches appear while they are still speaking.
+PARTIAL_MODEL = "tiny"
 
 
 def _get_model(model_name: str, compute_type: str = "int8"):
@@ -37,7 +39,7 @@ def _get_model(model_name: str, compute_type: str = "int8"):
         return model
 
 
-def warmup(model_name: str = "base.en", partial_model: Optional[str] = PARTIAL_MODEL) -> None:
+def warmup(model_name: str = "base", partial_model: Optional[str] = PARTIAL_MODEL) -> None:
     """Load the models ahead of time so the first transcription isn't slow."""
     _get_model(model_name)
     if partial_model:
@@ -61,7 +63,7 @@ def _to_float32(pcm_bytes: bytes, sample_rate: int) -> np.ndarray:
 def transcribe(
     pcm_bytes: bytes,
     sample_rate: int = 16000,
-    model_name: str = "base.en",
+    model_name: str = "base",
     beam_size: int = 1,
     language: str = "en",
     vocabulary: str = "Jarvis, Arjun, WhatsApp, VS Code, Codex, Claude, Antigravity, Opera GX, Google Meet",
@@ -100,7 +102,10 @@ def transcribe_partial(
     model = _get_model(model_name)
     segments, _info = model.transcribe(
         audio,
-        language="en",
+        # Hard-coded "en" here meant the live partial was always read as English even when the
+        # committed transcript was not — so a Hindi sentence appeared as English gibberish while
+        # it was being spoken. None lets Whisper decide, as the committed pass does.
+        language=None,
         initial_prompt=vocabulary or None,
         beam_size=1,
         vad_filter=False,

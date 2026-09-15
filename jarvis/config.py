@@ -170,13 +170,23 @@ class Config:
 
     # local (keyless) voice backend: openWakeWord + Whisper + Piper
     voice_backend: str = field(default_factory=lambda: os.environ.get("JARVIS_VOICE_BACKEND", "auto"))
-    # base.en greedy transcribes a whole utterance in ~0.55 s here versus ~1.70 s for small.en at
-    # beam 5, with no transcription errors on the Jarvis command set used to measure it. Set
-    # JARVIS_WHISPER_MODEL=small.en (and JARVIS_WHISPER_BEAM=5) to trade the latency back for
-    # accuracy on harder audio.
-    whisper_model: str = field(default_factory=lambda: os.environ.get("JARVIS_WHISPER_MODEL", "base.en"))
+    # The ".en" models cannot transcribe Hindi at all — not badly, at all — so understanding
+    # Hindi and Hinglish starts with leaving them. Measured here on one 2.5 s English clip,
+    # CPU int8, greedy:
+    #
+    #     base.en   0.85 s   heard "Open Networks"     English only
+    #     tiny      0.68 s   heard "Open Netflix"      multilingual, weak on Hindi
+    #     base      1.44 s   heard "Open Networks"     multilingual, the balance
+    #     small     4.06 s   heard "Open Netflix"      multilingual, best, too slow to talk to
+    #
+    # base is the default: multilingual, and about half a second dearer than what it replaces.
+    # Set JARVIS_WHISPER_MODEL=small for noticeably better Hindi if you will accept ~4 s, or
+    # =tiny for the fastest replies when you are speaking English.
+    whisper_model: str = field(default_factory=lambda: os.environ.get("JARVIS_WHISPER_MODEL", "base"))
     whisper_beam: int = field(default_factory=lambda: _int("JARVIS_WHISPER_BEAM", 1))
-    stt_language: str = field(default_factory=lambda: os.environ.get("JARVIS_STT_LANGUAGE", "en"))
+    # "auto" lets Whisper decide per utterance, which is what switching between English, Hindi and
+    # Hinglish mid-sentence requires. Pin it to "en" or "hi" only if you never change language.
+    stt_language: str = field(default_factory=lambda: os.environ.get("JARVIS_STT_LANGUAGE", "auto"))
     # Whisper biases towards these words. Without "Netflix" in the list it transcribed it as
     # "Networks" — which then failed to open anything and Jarvis reported a "temporary glitch".
     # Anything you say often and that Whisper can plausibly mishear belongs here.

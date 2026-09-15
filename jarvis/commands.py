@@ -28,7 +28,12 @@ _WAKE_RE = re.compile(
 
 
 async def handle(text: str, config, session_id: str = "local") -> str | None:
-    raw = clean_text(text)
+    from .hinglish import normalise
+
+    # Hindi and Hinglish are rewritten into English once, here, so every handler below works in
+    # both without knowing it. A sentence that is already English, or Hindi this does not
+    # recognise, comes back unchanged and carries on to the model as it was said.
+    raw = normalise(clean_text(text))
     command = raw.lower().rstrip(".!?")
 
     from .power import asleep, set_asleep
