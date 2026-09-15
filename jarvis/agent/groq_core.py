@@ -501,6 +501,8 @@ class GroqAgent:
                         and action_claims.claims_an_action(reply)):
                     stated = (list(self._failed_calls_advice.values())[-1]
                               if self._failed_calls_advice else "")
+                    from ..selfimprove import journal
+                    journal.record("claimed_without_acting", self._route_query, reply[:300], "brain")
                     reply = action_claims.honest_fallback(stated)
 
                 # A tool failed for a specific, stated reason; do not relay it as a vague fault.
@@ -631,6 +633,8 @@ class GroqAgent:
             if outcome is not tool_contract.Outcome.SUCCESS or said_no:
                 self._failed_calls[signature] = self._failed_calls.get(signature, 0) + 1
                 self._failed_calls_advice[signature] = body[:300]
+                from ..selfimprove import journal
+                journal.record("tool_failed", self._route_query, body[:300], resolved)
             self.messages.append({
                 "role": "tool", "tool_call_id": tid,
                 "content": body if outcome is tool_contract.Outcome.SUCCESS else f"[failure] {body}",

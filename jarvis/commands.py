@@ -119,6 +119,12 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
     if clicked is not None:
         return clicked
 
+    # "Fix yourself" — look at what has failed repeatedly and try to mend it.
+    from .selfimprove.command import handle as self_improve
+    mended = await self_improve(raw, config)
+    if mended is not None:
+        return mended
+
     # Requests that are several actions in a row — "play the latest X video on YouTube" — are
     # planned and then executed step by step, each one checked, rather than handed to the model
     # as one instruction it has to remember its way through. Before open_command, which would

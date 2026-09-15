@@ -180,6 +180,8 @@ async def run(steps: list[Step], request: str, config) -> TaskReport:
             result = StepResult(step, False, f"{step.action} raised {type(exc).__name__}")
         report.results.append(result)
         if not result.ok:
+            from .selfimprove import journal
+            journal.record("task_step_failed", request, result.detail, result.step.action)
             return report
     report.finished = bool(report.results)
     return report
