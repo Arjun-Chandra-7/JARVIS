@@ -183,3 +183,28 @@ def test_a_relevant_answer_is_left_alone(request_text, reply):
 
 def test_an_internal_tool_name_is_never_read_out():
     assert ac.is_a_non_sequitur("anything at all", "Please use `browser_type` instead.")
+
+
+# --------------------------------------------- the guard belongs to actions, not conversation
+@pytest.mark.parametrize("said", [
+    "how are you doing",        # answered "I didn't actually manage to do that, sir"
+    "No, do I ask you?",        # same, a minute later
+    "what can you do",
+    "tell me a joke",
+    "what's the weather",
+    "how do I open a file",     # contains "open", still a question
+])
+def test_a_question_is_not_a_failed_action(said):
+    """No tool runs when someone asks how you are, and that is the right outcome."""
+    assert not ac.asks_for_an_action(said)
+
+
+@pytest.mark.parametrize("said", [
+    "open netflix",
+    "click the allow button",
+    "set the volume to 30",
+    "can you open netflix",     # phrased as a question, plainly a request
+    "play the latest video on youtube",
+])
+def test_a_request_still_counts_as_one(said):
+    assert ac.asks_for_an_action(said)

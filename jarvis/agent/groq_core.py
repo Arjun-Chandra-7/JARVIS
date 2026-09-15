@@ -11,6 +11,7 @@ import base64
 import json
 import os
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
@@ -226,6 +227,7 @@ class GroqAgent:
                 pass
 
         self.messages: list[dict] = [{"role": "system", "content": _compact_system(config)}]
+        self._turn_times: dict[int, float] = {}   # when each user turn was actually spoken
         self._restore_history()
 
     # --- cross-session conversation memory -------------------------------------------------
@@ -376,7 +378,37 @@ class GroqAgent:
         self.model, self._on_local = model, True
         return True
 
+    # A conversation left open for hours is not one conversation. Observed in the log: at 16:41
+    # "How you doing?" was answered "I found several matches for 'Arnav Pandey'" — a reply to an
+    # unresolved WhatsApp question from a different sitting, still sitting in the last ten
+    # messages because trimming counted turns and never looked at the clock.
+    STALE_TURN_S = 20 * 60
+
+    def _drop_stale(self) -> None:
+        now = time.time()
+        first_live = None
+        for i, message in enumerate(self.messages[1:], start=1):
+            if message.get("role") != "user":
+                continue
+            stamped = re.match(r"\[time: .*?\]", str(message.get("content", "")))
+            if not stamped:
+                continue
+            seen = self._turn_times.get(id(message))
+            if seen is None:
+                continue
+            if now - seen <= self.STALE_TURN_S:
+                first_live = i
+                break
+        if first_live is None:
+            # Every remembered turn is old: start clean rather than answer from a past sitting.
+            if len(self.messages) > 1 and self._turn_times:
+                self.messages = [self.messages[0]]
+                self._turn_times.clear()
+        elif first_live > 1:
+            self.messages = [self.messages[0]] + self.messages[first_live:]
+
     def _trim(self) -> None:
+        self._drop_stale()
         # Keep the system message + a suffix that starts on a clean 'user' turn (never split a
         # tool_calls/tool pair, which the API rejects).
         if len(self.messages) <= 14:
@@ -424,7 +456,9 @@ class GroqAgent:
             )
             return str(result)
 
-        self.messages.append({"role": "user", "content": f"[time: {now:%A %Y-%m-%d %H:%M %Z}] {user_text}"})
+        turn = {"role": "user", "content": f"[time: {now:%A %Y-%m-%d %H:%M %Z}] {user_text}"}
+        self.messages.append(turn)
+        self._turn_times[id(turn)] = time.time()
 
         reply = ""
         linkedin_executed = False
@@ -485,7 +519,10 @@ class GroqAgent:
                 # Nothing worked this turn if no tool ran, or every tool that ran failed.
                 # "click on friends" failed and was still reported as "you've clicked on
                 # 'friends', which navigated to the Netflix profile".
-                nothing_worked = not self._any_tool_succeeded
+                # Only meaningful when something was actually asked for. A question that runs no
+                # tool has not failed to act; it has been answered.
+                nothing_worked = (not self._any_tool_succeeded
+                                  and action_claims.asks_for_an_action(self._route_query))
                 if (nothing_worked
                         and not action_claims_checked
                         and action_claims.claims_an_action(reply)):

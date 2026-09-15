@@ -93,3 +93,29 @@ def test_the_brief_carries_the_real_failure():
 def test_it_asks_for_the_model_and_effort_that_were_chosen():
     assert improve.MODEL == "opus"
     assert improve.EFFORT == "medium"
+
+
+def test_a_conversation_left_open_for_hours_is_not_one_conversation():
+    """At 16:41 "How you doing?" was answered "I found several matches for 'Arnav Pandey'" — a
+    reply to an unresolved question from a different sitting, still in the last ten messages
+    because trimming counted turns and never looked at the clock."""
+    import time as _time
+
+    from jarvis.agent.groq_core import GroqAgent
+
+    agent = GroqAgent.__new__(GroqAgent)
+    agent.messages = [{"role": "system", "content": "s"}]
+    agent._turn_times = {}
+
+    old = {"role": "user", "content": "[time: x] who is arnav"}
+    agent.messages.append(old)
+    agent._turn_times[id(old)] = _time.time() - 3600
+    agent.messages.append({"role": "assistant", "content": "Several matches for Arnav Pandey..."})
+
+    fresh = {"role": "user", "content": "[time: y] how are you doing"}
+    agent.messages.append(fresh)
+    agent._turn_times[id(fresh)] = _time.time()
+
+    agent._drop_stale()
+    kept = [m["content"] for m in agent.messages[1:]]
+    assert kept == ["[time: y] how are you doing"]

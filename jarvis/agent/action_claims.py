@@ -163,3 +163,43 @@ def is_a_non_sequitur(request: str, reply: str) -> bool:
 def misheard_fallback() -> str:
     """What to say when the words plainly did not come through."""
     return "Sorry sir, I didn't catch that — say it again?"
+
+
+# --------------------------------------------------------------- was an action even asked for?
+# The claim guard exists for "open Netflix" answered with "Opening Netflix…" while nothing opened.
+# Applied to a question it is nonsense: no tool runs when someone asks how you are, and that is
+# the correct outcome, not a failure to act. Observed in the log, twice in a minute:
+#
+#     you (voice)> How are you doing?
+#     jarvis>      I didn't actually manage to do that, sir — nothing was carried out.
+_ASKS_FOR_ACTION = re.compile(
+    r"""(?ix)
+    (?:^|\b)
+    (?: open | launch | start | run | play | watch | put \s+ on | close | quit | kill |
+        click | tap | press | select | choose | type | write | send | reply | message |
+        search | find | look \s+ up | google | download | install | delete | remove |
+        set | change | turn | mute | unmute | increase | decrease | raise | lower |
+        create | make | add | schedule | remind | call | join | share | screenshot |
+        scroll | drag | draw | fix | improve | restart | stop )
+    \b
+    """,
+)
+
+# Questions, even ones containing an action word ("what can you open?").
+_IS_A_QUESTION = re.compile(
+    r"""(?ix)^\s*(?:
+        who | what | when | where | why | how | which | whose |
+        is | are | am | was | were | do | does | did | can | could | will | would |
+        should | shall | may | might | have | has | had
+    )\b""",
+)
+
+
+def asks_for_an_action(request: str) -> bool:
+    """True when the user asked for something to be done, rather than asked a question."""
+    text = (request or "").strip()
+    if not text:
+        return False
+    if _IS_A_QUESTION.match(text) and not re.match(r"(?i)^(?:can|could|will|would)\s+you\b", text):
+        return False
+    return bool(_ASKS_FOR_ACTION.search(text))
