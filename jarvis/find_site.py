@@ -124,7 +124,8 @@ def parse(text: str) -> Optional[str]:
 _JOIN = re.compile(r"[,;]?\s+(?:and\s+)?(?:then\s+)?(?:draw|sketch|paint)\s+", re.IGNORECASE)
 _SURFACE = re.compile(r"\b(whiteboard|canvas|drawing\s+board|sketch\s*pad)\b", re.IGNORECASE)
 _LOOKING = re.compile(r"^(?:please\s+)?(?:find|get|open|look\s+for)\b", re.IGNORECASE)
-_LEAD = re.compile(r"^(?:me\s+)?(?:an|a|the)\b\s*", re.IGNORECASE)
+# "me" and the article are independently optional: "draw me mona lisa" has one and not the other.
+_LEAD = re.compile(r"^(?:me\b\s*)?(?:(?:an|a|the)\b\s*)?", re.IGNORECASE)
 # "an" before "a", and a word boundary after: without it "an owl" lost its first letter.
 _OF = re.compile(r"^(?:picture|image|photo|drawing|sketch)\s+of\s+(?:(?:an|a|the)\b\s*)?",
                  re.IGNORECASE)

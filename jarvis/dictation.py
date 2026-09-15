@@ -78,3 +78,23 @@ def type_out(text: str) -> bool:
     if not body:
         return False
     return bool(desktop_control.type_text(body + " "))
+
+
+# Roles that can receive typed text. A window with none of them showing means the words are
+# about to go nowhere, which is worth saying before the user dictates a paragraph into the void.
+_TAKES_TEXT = ("entry", "text", "document text", "document frame", "terminal",
+               "password text", "paragraph", "document web")
+
+
+def somewhere_to_type() -> bool:
+    """True when the focused window appears to have somewhere for the words to land."""
+    try:
+        from .integrations import accessibility
+
+        tree = accessibility.snapshot()
+        if not tree.get("ok"):
+            return True        # cannot tell; do not nag on a guess
+        return any(str(node.get("role", "")).lower() in _TAKES_TEXT
+                   for node in tree.get("nodes", []))
+    except Exception:  # noqa: BLE001
+        return True

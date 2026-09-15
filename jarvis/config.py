@@ -192,6 +192,10 @@ class Config:
     # Anything you say often and that Whisper can plausibly mishear belongs here.
     stt_vocabulary: str = field(default_factory=lambda: os.environ.get(
         "JARVIS_STT_VOCABULARY",
+        # Words Jarvis is asked for often enough that Whisper should expect them. Without
+        # "whiteboard" here it came back as "wide-board" and "vibe both"; without "dictate" the
+        # command that starts dictation cannot be recognised at all.
+        "whiteboard, dictate, dictation, sketch, canvas, Mona Lisa, draw me, "
         "Jarvis, Arjun, WhatsApp, VS Code, Codex, Claude, Antigravity, agy, Opera GX, "
         "Google Meet, Netflix, YouTube, Spotify, Hotstar, Prime Video, Instagram, LinkedIn, "
         "GitHub, ChatGPT, Gmail, F.R.I.E.N.D.S"))

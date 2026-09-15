@@ -807,7 +807,10 @@ class VoiceSession:
                     # like a command is just a sentence someone is writing.
                     from .. import dictation as _dict
                     from ..commands import clean_text as _dclean
-                    _said = _dclean(transcript)
+                    from ..misheard import fix as _fix_heard
+                    # The trigger is matched against a corrected transcript — "dick tate" is how
+                    # "dictate" arrives — but what gets typed is what was actually said.
+                    _said = _fix_heard(_dclean(transcript))
                     if self._dictating:
                         if _dict.wants_to_stop(_said) or _dict.wants_to_stop(transcript):
                             self._dictating = False
@@ -825,8 +828,14 @@ class VoiceSession:
                         continue
                     if _dict.wants_to_start(_said):
                         self._dictating = True
-                        self.on_event("reply", "Dictating — say “stop dictation” when you're done.")
-                        self._speak("Dictating, sir. Say stop dictation when you're done.")
+                        where = _dict.somewhere_to_type()
+                        opening = ("Dictating — say “stop dictation” when you're done."
+                                   if where else
+                                   "Dictating, but nothing on screen looks like a text box — "
+                                   "click where you want the words first.")
+                        self.on_event("reply", opening)
+                        self._speak(opening.split(" — ")[0] + ", sir." if where
+                                    else "Dictating, sir, but click into a text box first.")
                         transcript = self._record_transcript(wait_s=max(12, self.config.follow_up_s))
                         continue
 

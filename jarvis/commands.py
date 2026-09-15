@@ -40,7 +40,11 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
     # <that title>" — so the handlers below, which keep no state of their own, still see a whole
     # request. Both rewrites leave anything they do not recognise exactly as it was.
     context.set_current(session_id)
-    raw = context.resolve(normalise(clean_text(text)), session_id)
+    # Known mishearings of command words are put right first, because everything below is trying
+    # to match words: "wide-board" and "vibe both" are both "whiteboard", and no amount of
+    # careful parsing downstream recovers a word that never arrived.
+    from .misheard import fix as fix_misheard
+    raw = context.resolve(normalise(fix_misheard(clean_text(text))), session_id)
     command = raw.lower().rstrip(".!?")
 
     from .power import asleep, set_asleep
@@ -118,6 +122,13 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
     clicked = await screen_something(raw, config)
     if clicked is not None:
         return clicked
+
+    # "Restart Opera with control" — the sentence Jarvis suggests whenever a browser action
+    # fails. It was reachable only through the model's tool choice, so it almost never happened.
+    from .browser_control_command import handle as take_browser_control
+    took = await take_browser_control(raw, config)
+    if took is not None:
+        return took
 
     # "Find a site that does X" — opened and checked, not chosen from a blurb. Before the plain
     # draw handler, which would otherwise take the "draw…" half of a combined request.

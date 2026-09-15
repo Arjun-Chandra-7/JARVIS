@@ -53,3 +53,17 @@ def test_a_command_dictated_is_typed_not_obeyed():
     """The whole point: these words go on the page."""
     assert d.as_typed("open netflix and turn the volume up") == \
         "open netflix and turn the volume up"
+
+
+@pytest.mark.parametrize("heard", [
+    "Jarvis dictate",
+    "jarvis dick tate",        # how "dictate" actually arrives from a microphone
+    "Hey Jarvis, dictate",
+    "Jarvis, take dictation",
+])
+def test_the_trigger_survives_the_way_it_is_heard(heard):
+    """The trigger is matched against a corrected transcript; what gets typed is what was said."""
+    from jarvis.commands import clean_text
+    from jarvis.misheard import fix
+
+    assert d.wants_to_start(fix(clean_text(heard)))
