@@ -45,9 +45,23 @@ _running() {
     return 1
 }
 
-_voice_running()   { _running "$CTL_PY -m jarvis --voice"; }
-_web_running()     { _running "$CTL_PY -m jarvis --web"; }
-_whatsapp_running(){ _running "$CTL_REPO/whatsapp/wa_service.js"; }
+# systemd is the authority for units it owns; only fall back to matching processes for things
+# started outside it. Matching on this checkout's interpreter path alone reported a running
+# service as stopped whenever the service was started from a different checkout.
+_voice_running() {
+    _unit_active jarvis-voice.service && return 0
+    _running "/.venv/bin/python -m jarvis --voice"
+}
+
+_web_running() {
+    _unit_active jarvis-backend.service && return 0
+    _running "/.venv/bin/python -m jarvis --web"
+}
+
+_whatsapp_running() {
+    _unit_active jarvis-whatsapp.service && return 0
+    _running "whatsapp/wa_service.js"
+}
 
 _unit_exists() {
     systemctl --user cat "$1" >/dev/null 2>&1
@@ -69,10 +83,11 @@ _backend_port_busy() {
     fi
 }
 
-# Match only *our* Electron: the overlay directory, never every Electron app.
+# Match only *our* Electron. `overlay/node_modules/electron` is specific to Jarvis — VS Code and
+# other Electron apps run from their own install paths — and unlike a full repo path it still
+# matches an overlay started from a different checkout of Jarvis.
 _overlay_pids() {
-    pgrep -f "electron.*$CTL_REPO/overlay" 2>/dev/null
-    pgrep -f "$CTL_REPO/overlay/node_modules/electron" 2>/dev/null
+    pgrep -f "overlay/node_modules/electron" 2>/dev/null
 }
 
 _kill_overlay() {
