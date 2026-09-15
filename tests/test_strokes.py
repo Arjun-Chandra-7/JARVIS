@@ -126,3 +126,32 @@ def test_a_flat_field_has_nothing_to_draw(tmp_path):
 
     Image.fromarray(np.full((300, 300), 30, np.uint8)).save(tmp_path / "flat.png")
     assert strokes.from_image(tmp_path / "flat.png") is None
+
+
+def test_a_dark_feature_inside_a_bright_region_is_drawn(tmp_path):
+    """The case that was being lost: an eye on a lit face. Before local equalisation the whole
+    face sat above every global threshold, so Vermeer's girl, the figure in The Scream and
+    Einstein all came out as white cutouts with nothing but an outline."""
+    import numpy as np
+    from PIL import Image
+
+    field = np.full((400, 400), 120, np.uint8)      # mid ground
+    y, x = np.ogrid[:400, :400]
+    face = (x - 200) ** 2 / 110 ** 2 + (y - 200) ** 2 / 140 ** 2 < 1
+    field[face] = 225                                # a bright face
+    for eye_x in (165, 235):                         # two dark features on it
+        field[((x - eye_x) ** 2 + (y - 180) ** 2) < 16 ** 2] = 70
+    path = tmp_path / "face.png"
+    Image.fromarray(field).save(path)
+
+    plan = strokes.from_image(path)
+    assert plan is not None
+
+    w, h = plan.source_size
+    near_eyes = 0
+    for stroke in plan.strokes:
+        for cx, cy in stroke:
+            if 0.35 * h < cy < 0.55 * h and 0.35 * w < cx < 0.65 * w:
+                near_eyes += 1
+                break
+    assert near_eyes > 5, f"only {near_eyes} strokes reached the features"

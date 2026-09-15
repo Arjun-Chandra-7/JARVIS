@@ -44,6 +44,10 @@ WORKING_SIZE = 1000
 HATCH_LEVELS = 5
 HATCH_SPACING = 10
 HATCH_COVERAGE = 0.55
+
+# How hard local contrast is pushed before the tone is read. Higher brings out detail inside a
+# bright face; too high and flat areas fill with the texture of their own noise.
+CLAHE_CLIP = 2.5
 MIN_STROKE_POINTS = 4
 
 
@@ -237,7 +241,14 @@ def from_image(path: str | Path, budget: int = DEFAULT_BUDGET,
 
     # Tone first, features second. Hatching is what makes it recognisable; the traced edges put
     # the eyes, mouth and fingers back on top of it.
-    tone = cv2.GaussianBlur(cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX), (0, 0), 2.0)
+    # Local contrast before anything else. Hatching thresholds are taken across the whole picture,
+    # so a face brighter than the rest of the canvas sits above every one of them and receives no
+    # strokes at all — Vermeer's girl, the figure in The Scream and Einstein all came out as white
+    # cutouts with only an outline, while the Mona Lisa worked because her face happens to be
+    # mid-tone. Equalising in tiles gives the inside of a bright region its own range, so the
+    # shadow beside a nose is dark relative to the cheek even when the whole face is light.
+    equalised = cv2.createCLAHE(clipLimit=CLAHE_CLIP, tileGridSize=(8, 8)).apply(image)
+    tone = cv2.GaussianBlur(equalised, (0, 0), 2.0)
     hatch_strokes = _hatch(tone, levels=HATCH_LEVELS, spacing=HATCH_SPACING,
                            coverage=HATCH_COVERAGE)
 
