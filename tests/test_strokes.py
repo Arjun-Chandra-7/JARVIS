@@ -23,7 +23,9 @@ def test_a_picture_becomes_strokes(line_art):
     plan = strokes.from_image(line_art)
     assert plan is not None
     assert plan.strokes and plan.points > 0
-    assert plan.source_size == (400, 300)
+    # The working size, not the file's: strokes are produced in it and scaled_into fits from it.
+    assert plan.source_size[0] > plan.source_size[1]      # landscape in, landscape out
+    assert min(plan.source_size) == 1800
 
 
 def test_the_point_budget_is_respected(line_art):

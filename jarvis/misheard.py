@@ -16,11 +16,16 @@ import re
 # (pattern, replacement). Ordered: longer phrases before the words inside them.
 _FIXES: list[tuple[re.Pattern, str]] = [
     # "find a site where you can access the wide-board and runnyam onarisa"
-    (re.compile(r"\b(?:wide|white|vibe|why)[\s-]*(?:board|bored|both)\b", re.I), "whiteboard"),
+    (re.compile(r"\b(?:wide|white|vibe|why|wild|vibe|light|right)[\s-]*"
+                r"(?:board|bored|both|boards)\b", re.I), "whiteboard"),
     (re.compile(r"\bwhite\s*bird\b", re.I), "whiteboard"),
     # "Drone the Mona Lisa here!"  /  "runnyam onarisa"
     (re.compile(r"\b(?:drone|drawn|drow|throw)\s+(?=me\b|the\b|a\b|an\b)", re.I), "draw "),
     (re.compile(r"\brunny\s*am\b", re.I), "draw me"),
+    # "…website and Romina Mona Lisa" — "draw me" as it arrives. Not "Android", which is a real
+    # word that turns "open android studio" into nonsense; that one is handled where the sentence
+    # is known to be about a drawing surface.
+    (re.compile(r"\b(?:romina|romita|ramona)\b(?=\s+\w)", re.I), "draw"),
     (re.compile(r"\b(?:ona|onari|on a)\s*ris[ae]\b", re.I), "mona lisa"),
     (re.compile(r"\bmona\s*lis[ae]?\b", re.I), "mona lisa"),
     # dictation

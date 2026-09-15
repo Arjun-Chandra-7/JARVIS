@@ -17,8 +17,9 @@ _DRAW = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
-# Budget in points, which is really a time budget: roughly one mouse event each.
-BUDGET = 1400
+# Left to the extraction, which knows what a thinned pen can carry. This module used to keep its
+# own budget of 1400, which silently capped a twenty-thousand-point drawing at four strokes.
+from .vision.strokes import DEFAULT_BUDGET as BUDGET
 
 
 def parse(text: str) -> Optional[str]:
@@ -51,6 +52,11 @@ async def run(subject: str, config=None) -> str:
         return ("There is no drawing surface on this page, sir. Open a whiteboard first — "
                 "any page with a canvas will do.")
 
+    # Thin the pen first. Density is bounded by stroke width, not by the extraction: at the
+    # default width a detailed drawing fills its dark areas into a solid blob, because
+    # neighbouring contours end up closer together than the line is wide.
+    await browser.thin_pen()
+
     picture = await asyncio.to_thread(reference.find, subject)
     if picture is None:
         return f"I couldn't find a picture of {subject} to work from."
@@ -63,8 +69,9 @@ async def run(subject: str, config=None) -> str:
     drawn = await browser.draw_path(fitted)
     if not drawn.get("ok"):
         return drawn.get("error") or f"I couldn't draw {subject}."
-    return (f"Drew {subject} — {len(fitted)} strokes from a reference picture. "
-            f"It's a line rendering, not a copy.")
+    points = sum(len(stroke) for stroke in fitted)
+    return (f"Drew {subject} — {len(fitted)} strokes, {points:,} points, from a reference "
+            f"picture. It's a line rendering, not a copy.")
 
 
 async def handle(text: str, config=None) -> Optional[str]:

@@ -130,7 +130,11 @@ def parse(text: str) -> Optional[str]:
 # was going to survive "u" for "you" and an article in the middle.
 _JOIN = re.compile(r"[,;]?\s+(?:and\s+)?(?:then\s+)?(?:draw|sketch|paint)\s+", re.IGNORECASE)
 _SURFACE = re.compile(r"\b(whiteboard|canvas|drawing\s+board|sketch\s*pad)\b", re.IGNORECASE)
-_LOOKING = re.compile(r"^(?:please\s+)?(?:find|get|open|look\s+for)\b", re.IGNORECASE)
+# Searched rather than anchored: real sentences arrive with something in front of the verb —
+# "So open a free whiteboard…", "Vapor of free whiteboard site…" — and anchoring it to the start
+# threw those away before anything else got a look.
+_LOOKING = re.compile(r"\b(?:find|get|open|look\s+for|give\s+me|show\s+me|pull\s+up)\b",
+                      re.IGNORECASE)
 # "me" and the article are independently optional: "draw me mona lisa" has one and not the other.
 _LEAD = re.compile(r"^(?:me\b\s*)?(?:(?:an|a|the)\b\s*)?", re.IGNORECASE)
 # "an" before "a", and a word boundary after: without it "an owl" lost its first letter.
@@ -138,20 +142,56 @@ _OF = re.compile(r"^(?:picture|image|photo|drawing|sketch)\s+of\s+(?:(?:an|a|the
                  re.IGNORECASE)
 
 
+# Whatever sits between the surface and the subject when the verb did not survive. Real
+# transcripts: "whiteboard website and Romina Mona Lisa", "wildboard website and Romita Mona
+# Lisa", "free whiteboard site, Android, Mona Lisa". Chasing each mishearing of "draw" is a
+# losing game — the shape of the sentence is the reliable part, not that one word.
+_FILLER_RUN = re.compile(
+    r"""^(?:\s*[,;]?\s*(?:so|then|and|that|you|u|i|we|can|could|should|please|will|would|
+                 go|goes|going|get|gets|to|for|me|us|it|the|a|an|now|next|
+                 draw|drew|sketch|paint|android)\b)+""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_BRIDGE = re.compile(
+    r"""[,;]?\s+(?:and\s+|then\s+|so\s+)*
+        (?:\w+\s+)?                     # whatever "draw" came out as, if anything
+        (?:me\s+|for\s+me\s+)?
+        (?:a\s+|an\s+|the\s+)?""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
 def parse_find_and_draw(text: str) -> Optional[tuple[str, str]]:
     """(kind of surface to find, what to draw on it), or None."""
     said = (text or "").strip().rstrip(".!?")
-    if not _LOOKING.match(said):
-        return None
-    halves = _JOIN.split(said, maxsplit=1)
-    if len(halves) != 2:
-        return None
-    where, what = halves
-    surface = _SURFACE.search(where)
+    surface = _SURFACE.search(said)
     if not surface:
         return None
-    subject = _OF.sub("", _LEAD.sub("", what.strip())).strip()
-    return (re.sub(r"\s+", " ", surface.group(1).lower()), subject) if subject else None
+    # No opener needed once a surface is named: "Vapor of free whiteboard site, Android, Mona
+    # Lisa" is what "open a free whiteboard site and draw me the Mona Lisa" became, and demanding
+    # a recognisable verb threw it away. Nothing else asks for a whiteboard by name.
+
+    # The verb when it survived transcription.
+    halves = _JOIN.split(said, maxsplit=1)
+    if len(halves) == 2 and _SURFACE.search(halves[0]):
+        subject = _OF.sub("", _LEAD.sub("", halves[1].strip())).strip()
+        if subject:
+            return (re.sub(r"\s+", " ", surface.group(1).lower()), subject)
+
+    # It did not. Anything named after the surface, and worth naming, is the subject: a request
+    # to find a whiteboard does not otherwise end with the title of a painting.
+    tail = said[surface.end():]
+    tail = re.sub(r"^\s*(?:site|website|page|tool)\b", "", tail, flags=re.IGNORECASE)
+    tail = re.sub(r"^(?:\s+(?:for\s+free|free|online))+", "", tail, flags=re.IGNORECASE)
+    subject = _BRIDGE.sub(" ", tail, count=1).strip(" ,.;:!?")
+    # Whatever the sentence wandered through on its way to the subject. "so you can go to the
+    # Mona Lisa" is asking for the Mona Lisa.
+    subject = _FILLER_RUN.sub("", subject).strip(" ,.;:!?")
+    subject = _OF.sub("", _LEAD.sub("", subject)).strip()
+    if len(subject) < 3 or not re.search(r"[a-z]{3}", subject, re.IGNORECASE):
+        return None
+    return (re.sub(r"\s+", " ", surface.group(1).lower()), subject)
 
 
 async def handle(text: str, config=None) -> Optional[str]:

@@ -25,8 +25,13 @@ from typing import Optional
 # as a drawing, 14,000 fills the dark areas into a solid blob because neighbouring contours are
 # closer together than the stroke is wide. So the budget is generous and the detail dial is what
 # actually decides, and it is set where a normal pen still shows the lines apart.
-DEFAULT_BUDGET = 8000
-DEFAULT_DETAIL = 0.85
+# Every point is one entry in a list handed to the page, not a round trip, so the ceiling here is
+# what a pen can show rather than what finishes in time. With the tool thinned to its finest
+# setting first — see browser.thin_pen — seventeen thousand points draws in three seconds and
+# comes out as hair, shaded features and individual fingers. At the default four-pixel width the
+# same drawing is a blob, which is why thinning is not optional.
+DEFAULT_BUDGET = 40000
+DEFAULT_DETAIL = 0.9
 MIN_STROKE_POINTS = 4
 
 
@@ -82,7 +87,7 @@ def _edges(gray, detail: float):
 
 
 def from_image(path: str | Path, budget: int = DEFAULT_BUDGET,
-               detail: float = DEFAULT_DETAIL, max_side: int = 1200) -> Optional[Plan]:
+               detail: float = DEFAULT_DETAIL, short_side: int = 1800) -> Optional[Plan]:
     """A drawable plan for the picture at `path`, or None when it yields nothing worth drawing."""
     import cv2
     import numpy as np
@@ -91,9 +96,16 @@ def from_image(path: str | Path, budget: int = DEFAULT_BUDGET,
     if image is None:
         return None
     h, w = image.shape[:2]
-    if max(h, w) > max_side:                  # detail beyond this cannot survive the point budget
-        scale = max_side / float(max(h, w))
-        image = cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+    # Worked at a fixed size in both directions. Shrinking a large photograph keeps the budget
+    # honest; enlarging a small one samples its contours more finely, which is worth real points —
+    # the same painting at 800px gives about five thousand and at 1800px about seventeen thousand.
+    # Sized by the shorter side. Using the longer one made a portrait far coarser than a
+    # landscape of the same "size" — the Mona Lisa came out 1207 wide where a test that fixed the
+    # width to 1800 found nearly four times as many contour points.
+    if min(h, w) != short_side:
+        scale = short_side / float(min(h, w))
+        image = cv2.resize(image, (max(1, int(w * scale)), max(1, int(h * scale))),
+                           interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC)
         h, w = image.shape[:2]
 
     found, _ = cv2.findContours(_edges(image, detail), cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
@@ -108,7 +120,7 @@ def from_image(path: str | Path, budget: int = DEFAULT_BUDGET,
     # Below this a contour describes texture rather than shape. How short is "too short" is the
     # other half of the detail dial: at 0.5 it is a twentieth of the picture, at 1.0 a two
     # hundredth, which is the difference between an outline and a drawing with a face in it.
-    min_length = diagonal * (0.055 - 0.0505 * detail)
+    min_length = diagonal * (0.055 - 0.0567 * detail)
     measured = [(cv2.arcLength(c, False), c) for c in found]
     measured = [(length, c) for length, c in measured if length >= min_length]
     if not measured:
@@ -121,7 +133,8 @@ def from_image(path: str | Path, budget: int = DEFAULT_BUDGET,
         # destroys a small shape or leaves a large one needlessly dense.
         # How faithfully each contour is followed. Straightening a curve is what made the first
         # attempts look like a rubbing rather than a drawing.
-        epsilon = max(0.5, (0.004 - 0.0032 * detail) * length)
+        # Near-zero at full detail: following the contour as it is, rather than straightening it.
+        epsilon = max(0.5, (0.004 - 0.0039 * detail) * length)
         points = cv2.approxPolyDP(contour, epsilon, False).reshape(-1, 2)
         if len(points) >= MIN_STROKE_POINTS:
             simplified.append(points)

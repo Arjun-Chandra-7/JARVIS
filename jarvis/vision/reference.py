@@ -44,7 +44,9 @@ def find(subject: str, timeout: float = 20.0) -> Optional[Path]:
                 "action": "query", "format": "json", "generator": "search",
                 "gsrsearch": f"{subject} filetype:bitmap", "gsrnamespace": "6",
                 "gsrlimit": "8", "prop": "imageinfo", "iiprop": "url|size",
-                "iiurlwidth": "800",
+                # Detail cannot exceed what the reference holds: at 800px the Mona Lisa yields
+                # about five thousand contour points, at 1600 about seventeen thousand.
+                "iiurlwidth": "1600",
             }).json()
             pages = (hits.get("query") or {}).get("pages") or {}
             best, best_area = None, 0

@@ -1305,3 +1305,51 @@ async def canvas_box() -> Optional[dict]:
 
     got = await _with_page(do)
     return got if isinstance(got, dict) and got.get("w") else None
+
+
+# Thin the pen before drawing anything detailed. Density is bounded by stroke width, not by the
+# extraction: at a four-pixel line, fourteen thousand points filled the dark areas into a solid
+# blob because neighbouring contours ended up closer together than the stroke was wide. Most
+# drawing apps expose the width as a slider, and the thinnest setting is usually a quarter of the
+# default — which is four times the detail that can be told apart.
+_THIN_PEN_JS = r"""
+(() => {
+  const wanted = /size|width|stroke|thick|weight|brush/i;
+  const setter = Object.getOwnPropertyDescriptor(
+    window.HTMLInputElement.prototype, "value").set;
+  const changed = [];
+  for (const el of document.querySelectorAll('input[type=range]')) {
+    const name = `${el.id} ${el.name} ${el.className} ${el.getAttribute('aria-label') || ''}`;
+    if (!wanted.test(name)) continue;
+    const r = el.getBoundingClientRect();
+    // A control nobody can see is a control for something else.
+    if (r.width < 8 && r.height < 8) continue;
+    const min = String(el.min || 1);
+    if (el.value === min) { changed.push({name: el.id || el.name, already: true}); continue; }
+    setter.call(el, min);
+    el.dispatchEvent(new Event("input", {bubbles: true}));
+    el.dispatchEvent(new Event("change", {bubbles: true}));
+    changed.push({name: el.id || el.name || "slider", from: el.defaultValue, to: min});
+  }
+  if (changed.length) return {ok: true, via: "slider", changed};
+
+  // No slider: some apps offer named sizes instead.
+  for (const el of document.querySelectorAll('button,[role="button"],label')) {
+    if (/^(xs|s|thin|small|fine)$/i.test((el.innerText || "").trim())) {
+      el.click();
+      return {ok: true, via: "button", changed: [{name: el.innerText.trim()}]};
+    }
+  }
+  return {ok: false};
+})()
+"""
+
+
+async def thin_pen() -> dict:
+    """Set the drawing tool to its finest width, so detail survives being drawn."""
+
+    async def do(session: _Session):
+        return await session.js(_THIN_PEN_JS) or {"ok": False}
+
+    got = await _with_page(do)
+    return got if isinstance(got, dict) else {"ok": False}
