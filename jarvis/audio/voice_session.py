@@ -72,8 +72,9 @@ class VoiceSession:
         """
         while True:
             if self._ptt_pressed.is_set():
+                # The caller emits "wake" for every path, so do not emit it again here — doing so
+                # logged two wakes for one key press and looked like a double trigger.
                 self._ptt_pressed.clear()
-                self.on_event("wake", "push-to-talk")
                 return ("wake", None)
             if not self._events.empty():
                 return ("event", self._events.get_nowait())
