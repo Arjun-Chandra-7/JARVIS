@@ -319,6 +319,26 @@ _LIST_JS = r"""
 """
 
 
+# Netflix's search box is a React-controlled input: it re-renders from component state, so
+# Ctrl+A then typing appends rather than replaces (observed: ?q=f.r.i.e.n.d.sfriends). Setting
+# the value through the prototype's native setter and firing an input event is the way to make
+# React adopt a programmatic change.
+_CLEAR_FIELD_JS = """
+(() => {
+  const el = document.activeElement;
+  if (!el) return false;
+  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype
+                                                  : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, "value") || {};
+  if (setter.set && "value" in el) setter.set.call(el, "");
+  else if ("value" in el) el.value = "";
+  else el.textContent = "";
+  el.dispatchEvent(new Event("input", {bubbles: true}));
+  el.dispatchEvent(new Event("change", {bubbles: true}));
+  return true;
+})()
+"""
+
 _FOCUSED_JS = """
 (() => {
   const a = document.activeElement;
@@ -536,13 +556,8 @@ async def search_here(query: str) -> dict:
             await asyncio.sleep(0.04)
         await asyncio.sleep(0.2)
 
-        # Clear whatever is already in the box. Netflix keeps the previous query in its search
-        # field, so typing straight in appended and produced ?q=f.r.i.e.n.d.sfriends. Select-all
-        # first; insertText then replaces the selection.
-        for kind in ("keyDown", "keyUp"):
-            await session.call("Input.dispatchKeyEvent", {
-                "type": kind, "key": "a", "code": "KeyA", "modifiers": 2,
-                "windowsVirtualKeyCode": 65, "nativeVirtualKeyCode": 65})
+        # Clear whatever the box already holds, the way React will accept.
+        await session.js(_CLEAR_FIELD_JS)
         await asyncio.sleep(0.1)
 
         await session.call("Input.insertText", {"text": query})
@@ -652,12 +667,9 @@ async def type_into(field: str, text: str, submit: bool = True) -> dict:
                     "error": f"“{clicked.get('clicked')}” is not a text field, and no text field "
                              "appeared after clicking it."}
 
-        # Replace what is there rather than appending to it — a search field usually still holds
-        # the previous query.
-        for kind in ("keyDown", "keyUp"):
-            await session.call("Input.dispatchKeyEvent", {
-                "type": kind, "key": "a", "code": "KeyA", "modifiers": 2,
-                "windowsVirtualKeyCode": 65, "nativeVirtualKeyCode": 65})
+        # Replace what is there rather than appending — a search field usually still holds the
+        # previous query.
+        await session.js(_CLEAR_FIELD_JS)
         await asyncio.sleep(0.1)
 
         await session.call("Input.insertText", {"text": text})
