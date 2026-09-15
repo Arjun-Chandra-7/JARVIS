@@ -392,18 +392,21 @@ body[data-form="conversation"] #tab-system { display: none; }
 
 /* The clock matters when you are hunting for a particular moment, not while reading, so it sits
  * outside the flow and appears on hover rather than pushing every message taller. */
+/* Beside the bubble, not above it: at the top it collided with the message before whenever the
+ * pointer happened to be resting over the transcript. */
 .msg-time {
   position: absolute;
-  top: -2px;
+  bottom: 4px;
   font-size: var(--text-xs);
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
   opacity: 0;
   pointer-events: none;
+  white-space: nowrap;
   transition: opacity var(--dur-fast) var(--ease-out);
 }
-.msg.jarvis .msg-time { left: 2px; }
-.msg.you .msg-time { right: 2px; }
+.msg.jarvis .msg-time { left: calc(100% + var(--space-2)); }
+.msg.you .msg-time { right: calc(100% + var(--space-2)); }
 .msg:hover .msg-time { opacity: 1; }
 
 /* A partial transcript is visibly provisional: it is not what JARVIS heard yet. */
@@ -849,3 +852,113 @@ body[data-form="conversation"] #tab-system { display: none; }
                min-width: 62px; text-align: right; }
 .past-status.done { color: var(--success); }
 .past-status.failed { color: var(--error); }
+
+/* =========================== a surface that is awake ===========================
+ * The orb only moved while audio was flowing, so at rest the whole thing looked switched off,
+ * and listening and speaking were the same animation at different sizes. Everything below is
+ * driven by two things already known: data-state on the body, and --level, the smoothed
+ * microphone reading the meter is already computing. No new work per frame. */
+
+:root { --level: 0; }
+
+/* At rest: a slow breath, so the pill reads as waiting rather than dead. */
+@keyframes orb-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.72; }
+  50%      { transform: scale(1.07); opacity: 1; }
+}
+body[data-state="idle"] .orb-core {
+  animation: orb-breathe 4.2s var(--ease-out) infinite;
+}
+
+/* Listening: the glow follows your voice. The core is already scaled from JavaScript; this is
+ * the halo around it, which reads at a glance from across a desk. */
+body[data-state="listening"] .orb {
+  box-shadow:
+    0 0 0 calc(1px + var(--level) * 3px) var(--accent-line),
+    0 0 calc(8px + var(--level) * 22px) rgba(126, 200, 227, calc(0.15 + var(--level) * 0.5));
+}
+
+/* Speaking: rings travel outward, which is a different motion from the inward pulse of
+ * listening — you can tell which is happening without reading a word. */
+body[data-state="speaking"] .orb::after,
+body[data-state="speaking"] .orb::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid var(--accent-line);
+  animation: orb-ripple 1.8s var(--ease-out) infinite;
+  pointer-events: none;
+}
+body[data-state="speaking"] .orb::before { animation-delay: 0.9s; }
+@keyframes orb-ripple {
+  0%   { transform: scale(1);    opacity: 0.55; }
+  100% { transform: scale(2.15); opacity: 0; }
+}
+
+/* Thinking: no level to show, so the ring turns instead of pulsing. */
+body[data-state="thinking"] .orb {
+  box-shadow: 0 0 0 1px var(--accent-dim), 0 0 14px rgba(126, 200, 227, 0.12);
+}
+
+/* The panel edge picks up the state too — peripheral, never competing with the text. */
+.panel { position: relative; }
+.panel::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent-line), transparent);
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
+  pointer-events: none;
+}
+body[data-state="listening"] .panel::before,
+body[data-state="thinking"] .panel::before,
+body[data-state="speaking"] .panel::before { opacity: 1; }
+
+/* A reply still arriving gets a caret, so a pause reads as "still talking" not "finished". */
+.msg.is-revealing .msg-body::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: var(--accent);
+  animation: caret 900ms steps(2) infinite;
+}
+@keyframes caret { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+
+/* The focus ring was a hard cyan rectangle across the whole composer. */
+.composer-row:focus-within .input,
+.input:focus-visible {
+  outline: none;
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 1px var(--accent-line), 0 0 18px rgba(126, 200, 227, 0.10);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-state="idle"] .orb-core,
+  body[data-state="speaking"] .orb::after,
+  body[data-state="speaking"] .orb::before,
+  .msg.is-revealing .msg-body::after { animation: none; }
+}
+
+/* Choices offered inside a reply. */
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  padding-inline: 2px;
+}
+.choice {
+  font-size: var(--text-sm);
+  padding: 3px var(--space-2);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.choice:hover { border-color: var(--accent); color: var(--text-primary); }

@@ -155,7 +155,67 @@ function addMessage(who, text, { kind = "", animate = true } = {}) {
   els.log.appendChild(el);
   while (els.log.children.length > 120) els.log.removeChild(els.log.firstChild);
   autoScroll();
+  // A reply that appears all at once reads as a page load; one that arrives in pieces reads as
+  // someone answering. Only JARVIS, only when it is the newest thing, and never so slowly that
+  // reading has to wait for it.
+  if (who === "jarvis" && animate && text.length > 24 && !prefersStill()) reveal(el, text);
+  if (who === "jarvis") offerChoices(el, text);
   return el;
+}
+
+// A reply that lists what it found used to be a dead end: the names were right there and the
+// only way to act on one was to say its title back. They are buttons now.
+const _LIST = /(?:Results include|Options|I found|Several (?:visible )?controls match)[:\s]+([^.]{4,300})\./i;
+
+function offerChoices(el, text) {
+  const found = _LIST.exec(text || "");
+  if (!found) return;
+  const items = found[1].split(/,\s*(?![^(]*\))/)
+    .map((s) => s.replace(/^(?:and|or)\s+/i, "").trim())
+    .filter((s) => s.length > 2 && s.length < 70)
+    .slice(0, 6);
+  if (items.length < 2) return;
+
+  // What to do with a choice depends on what was being offered.
+  const verb = /control|button|click/i.test(text) ? "click" : "open";
+  const row = document.createElement("div");
+  row.className = "choices";
+  row.innerHTML = items
+    .map((i) => `<button type="button" class="chip choice" data-say="${escapeHtml(verb)} ${escapeHtml(i)}">${escapeHtml(i)}</button>`)
+    .join("");
+  el.appendChild(row);
+}
+
+els.log.addEventListener("click", (e) => {
+  const chip = e.target.closest(".choice");
+  if (chip && chip.dataset.say) send(chip.dataset.say);
+});
+
+function prefersStill() {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function reveal(el, text) {
+  const body_ = el.querySelector(".msg-body");
+  const words = text.split(/(\s+)/);
+  const perTick = Math.max(2, Math.ceil(words.length / 24));   // ~24 frames whatever the length
+  let i = 0;
+  body_.innerHTML = "";
+  el.classList.add("is-revealing");
+  const step = () => {
+    if (!el.isConnected) return;
+    i += perTick;
+    body_.innerHTML = renderInline(words.slice(0, i).join(""));
+    if (i < words.length) {
+      requestAnimationFrame(step);
+      if (state.pinnedToBottom) els.log.scrollTop = els.log.scrollHeight;
+    } else {
+      body_.innerHTML = renderInline(text);
+      el.classList.remove("is-revealing");
+      autoScroll();
+    }
+  };
+  requestAnimationFrame(step);
 }
 
 /** Show or update the provisional transcript. Replaced wholesale when the real one lands. */
@@ -259,10 +319,13 @@ function drawMeter() {
   }
   meterCtx.globalAlpha = 1;
 
-  // The orb breathes with the same signal, so the pill alone conveys level.
+  // The orb breathes with the same signal, so the pill alone conveys level. It is published as
+  // a custom property as well, so the glow and the rings can be driven from CSS rather than
+  // every visual effect needing its own line of JavaScript here.
   if (els.orbCore) {
     const scale = 1 + Math.min(0.85, currentLevel * 1.6);
     els.orbCore.style.transform = `scale(${scale.toFixed(3)})`;
+    body.style.setProperty("--level", Math.min(1, currentLevel * 2.4).toFixed(3));
   }
 }
 
@@ -290,6 +353,7 @@ function syncLoops() {
     history.fill(0);
     meterCtx.clearRect(0, 0, els.meter.width, els.meter.height);
     if (els.orbCore) els.orbCore.style.transform = "";
+    body.style.setProperty("--level", "0");
   }
 
   if (wantMeter && !levelTimer) levelTimer = setInterval(pollLevel, 50);
