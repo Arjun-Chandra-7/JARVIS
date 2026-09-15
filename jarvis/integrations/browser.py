@@ -500,6 +500,11 @@ def _is_known_destination(name: str) -> bool:
         return False
     if low in SITES or any(low.startswith(k + " ") for k in SITES):
         return True
+    # A mis-heard site name is still a site: "open Networks" means Netflix, and the user expects to
+    # land there, not to search Netflix for the word "Networks". _closest_site is already tuned to
+    # accept that and to reject real titles like "friends", which must stay searches.
+    if _closest_site(low):
+        return True
     return bool(re.match(r"^(https?|file|data|about)[:/]", raw)
                 or re.fullmatch(r"[\w-]+(\.[\w-]+)+(/\S*)?", raw))
 

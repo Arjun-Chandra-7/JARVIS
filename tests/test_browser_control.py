@@ -125,3 +125,21 @@ def test_profile_is_the_users_own(monkeypatch):
     """A scratch profile would have no Netflix session, so 'select my profile' could not work."""
     monkeypatch.setattr(browser, "PROFILE_DIR", "")
     assert browser._profile_dir().endswith(".config/opera-gx")
+
+
+# ------------------------------------------- a mis-heard site name is still a site
+def test_a_misheard_site_is_a_destination_not_a_search():
+    """"Open Networks" means go to Netflix, not search Netflix for the word "Networks"."""
+    from jarvis.integrations.browser import _is_known_destination
+
+    assert _is_known_destination("Networks")
+    assert _is_known_destination("Net Flix")
+    assert _is_known_destination("youtube")
+
+
+def test_real_titles_are_still_searched_for():
+    """The fuzzy match must not swallow things that are genuinely titles."""
+    from jarvis.integrations.browser import _is_known_destination
+
+    for title in ("friends", "f.r.i.e.n.d.s", "the office", "breaking bad"):
+        assert not _is_known_destination(title), title

@@ -16,7 +16,7 @@ let target = { color: STATES.standby.color.clone(), amp: STATES.standby.amp, spe
 // ---------- renderer ----------
 const canvas = document.getElementById("scene");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 100);
 camera.position.set(0, 0, 6);
@@ -73,7 +73,7 @@ const coreMat = new THREE.ShaderMaterial({
       gl_FragColor=vec4(col, 0.72);
     }`,
 });
-const core = new THREE.Mesh(new THREE.IcosahedronGeometry(1.4, 6), coreMat);
+const core = new THREE.Mesh(new THREE.IcosahedronGeometry(1.4, 5), coreMat);
 scene.add(core);
 
 // faint wireframe shell
@@ -126,9 +126,21 @@ function resize() {
 }
 addEventListener("resize", resize); resize();
 
-// ---------- render loop ----------
+// ---------- render loop (frame-capped so it stays light in the background) ----------
 const clock = new THREE.Clock();
-function tick() {
+const FPS_FOCUSED = 36;      // cap while the HUD window is focused & visible
+const FPS_BACKGROUND = 8;    // barely tick over when it's just sitting behind your editor
+let rafId = 0;
+let lastFrame = 0;
+function minFrameGap() {
+  if (!document.hasFocus()) return 1000 / FPS_BACKGROUND;
+  return 1000 / FPS_FOCUSED;
+}
+function tick(now) {
+  rafId = requestAnimationFrame(tick);
+  if (now - lastFrame < minFrameGap()) return;   // skip this frame — under the cap
+  lastFrame = now;
+
   const t = clock.getElapsedTime();
   coreUniforms.uTime.value = t * target.speed;
   coreUniforms.uAmp.value += (target.amp - coreUniforms.uAmp.value) * 0.05;
@@ -142,9 +154,12 @@ function tick() {
   camera.lookAt(0, 0, 0);
   bloom.strength = 0.45 + coreUniforms.uAmp.value * 0.4;
   composer.render();
-  requestAnimationFrame(tick);
 }
-tick();
+function startLoop() { if (!rafId) { lastFrame = 0; rafId = requestAnimationFrame(tick); } }
+function stopLoop()  { if (rafId) { cancelAnimationFrame(rafId); rafId = 0; } }
+// fully stop rendering when the tab/window is hidden; resume when it comes back
+document.addEventListener("visibilitychange", () => { document.hidden ? stopLoop() : startLoop(); });
+startLoop();
 
 // ---------- state control ----------
 function setState(s) {
