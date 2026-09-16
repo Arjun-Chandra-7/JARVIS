@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from ..config import Config
-from . import endpoint, hotkey, levels, speech_control, stt, tts, vad
+from . import endpoint, hotkey, inputs, levels, speech_control, stt, tts, vad
 from .mic import Microphone
 from .wake import WakeWord
 
@@ -228,6 +228,15 @@ class VoiceSession:
                 if partial is not None:
                     partial.submit(pcm_so_far)
 
+            # What the device delivered, whatever the endpointer made of it. A microphone that
+            # hands over nothing but empty frames is a different problem from someone mumbling,
+            # and the two used to produce the same apology.
+            heard = inputs.Heard()
+
+            def watch_level(level: float, probability: float) -> None:
+                heard.note(level)
+                levels.publish(level, "listening", probability)
+
             pcm = endpoint.record_utterance(
                 self.mic.read,
                 sample_rate=self.sample_rate,
@@ -238,7 +247,7 @@ class VoiceSession:
                 vad=self._endpointer,
                 on_speech_start=lambda: self.on_event("listening"),
                 on_partial=on_partial if partial is not None else None,
-                on_level=lambda lvl, prob: levels.publish(lvl, "listening", prob),
+                on_level=watch_level,
                 partial_every_ms=self.config.partial_every_ms,
             )
             speech_end[0] = time.monotonic()
@@ -258,9 +267,18 @@ class VoiceSession:
 
         if not pcm:
             # nothing detected → mic muted/wrong device, or the threshold is too high
+            # Silent and too-quiet look identical from here — nothing was captured — and they
+            # are fixed completely differently, so they are told apart and named.
+            wrong = inputs.verdict(heard) if self._endpointer else ""
             self.on_event("timing", f"no audio captured (endpointing="
-                                    f"{'silero' if self._endpointer else f'rms@{self.threshold}'})")
+                                    f"{'silero' if self._endpointer else f'rms@{self.threshold}'}"
+                                    f"{', microphone ' + wrong if wrong else ''}"
+                                    f"{f', loudest frame {heard.peak:.4f}' if heard.frames else ''})")
+            # Remembered rather than spoken here: this returns None for several reasons and the
+            # caller is the one that decides what to say about it.
+            self._capture_problem = inputs.explain(heard, self.config.audio_input_device)
             return None
+        self._capture_problem = ""
         duration = len(pcm) / 2 / self.sample_rate
         start = time.monotonic()
         text = self._transcribe(pcm)
@@ -795,7 +813,11 @@ class VoiceSession:
                     # Woke but captured nothing intelligible → say so instead of going silent, so it
                     # never looks "stuck". Usually a mic/VAD/threshold issue (see the timing log).
                     self.on_event("heard", "(nothing captured)")
-                    self._speak("Sorry sir, I didn't catch that.")
+                    # "I didn't catch that" sends someone off to repeat themselves, louder, at a
+                    # microphone that is not connected. When the device delivered pure silence,
+                    # say that instead, and name it.
+                    self._speak(getattr(self, "_capture_problem", "")
+                                or "Sorry sir, I didn't catch that.")
                     self.on_event("sleep")
                     continue
                 while transcript:

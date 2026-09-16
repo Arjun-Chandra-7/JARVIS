@@ -233,6 +233,49 @@ def _preflight() -> None:
         print("  (couldn't list — is PortAudio installed?)", exc)
 
 
+def _mic_check(seconds: float = 5.0) -> None:
+    """Which microphone actually hears you — asked of all of them at once.
+
+    Written because "Sorry sir, I didn't catch that" is the same sentence whether the microphone
+    is muted, pointing the wrong way, or listening to a headset on the far side of the desk, and
+    none of those is fixed by saying it again.
+    """
+    from .audio import inputs
+
+    in_use = inputs.describe(CONFIG.audio_input_device)
+    print(f"\nJarvis listens to: {in_use}")
+    candidates = inputs.real_inputs()
+    if not candidates:
+        print("no microphones found at all.")
+        return
+    print(f"speak normally for {seconds:.0f} seconds — every microphone is listening at once…\n")
+    readings = inputs.measure(seconds)
+    if not readings:
+        print("no microphone could be read.")
+        return
+    best = max((r for r in readings if not r.error), key=lambda r: r.peak, default=None)
+    for r in readings:
+        if r.error:
+            print(f"  {r.name[:46]:48} unavailable ({r.error})")
+            continue
+        bar = "#" * min(28, int(r.peak * 56))
+        verdict = ("heard you" if r.usable else
+                   "silent" if r.peak < inputs.SILENT_PEAK else "far too faint")
+        star = " <- loudest" if best is r and r.usable else ""
+        print(f"  {r.name[:46]:48} peak {r.peak:.4f}  {bar:<28} {verdict}{star}")
+    print()
+    if best is None or not best.usable:
+        print("Nothing heard you clearly. Check the microphone is unmuted and that the right one")
+        print("is selected as the system input, then run this again.")
+    elif best.name.lower() not in in_use.lower() and in_use.lower() not in best.name.lower():
+        print(f"Jarvis is listening to {in_use}, but {best.name} heard you best.")
+        print("Point Jarvis at it with:")
+        print(f"  JARVIS_INPUT_DEVICE=<index>   (see --check for indices)")
+        print("or make it the system default input.")
+    else:
+        print("The microphone Jarvis uses is the one that heard you best.")
+
+
 def _voice_selftest() -> None:
     backend = CONFIG.resolved_voice_backend()
     if backend == "cloud" and CONFIG.missing_voice_keys():
@@ -568,6 +611,8 @@ def main() -> None:
     parser.add_argument("--index", action="store_true", help="build the semantic memory index (needs Ollama)")
     parser.add_argument("--check", action="store_true", help="preflight: deps, keys, audio devices")
     parser.add_argument("--selftest", action="store_true", help="one live TTS→mic→STT round trip")
+    parser.add_argument("--mic-check", action="store_true",
+                        help="listen on every microphone at once and report which one hears you")
     parser.add_argument("--screen-test", action="store_true", help="diagnose screen capture (Wayland/X11)")
     parser.add_argument("--perplexity-login", action="store_true",
                         help="one-time: sign in to Perplexity so Jarvis can deep-research as your account")
@@ -607,6 +652,8 @@ def main() -> None:
             _run_index()
         elif args.selftest:
             _voice_selftest()
+        elif args.mic_check:
+            _mic_check()
         elif args.task:
             asyncio.run(_run_task(args.task))
         elif args.brief:
