@@ -283,15 +283,19 @@ body[data-form="conversation"] #tab-system { display: none; }
 }
 
 .badge {
-  display: inline-block;
-  min-width: 16px;
-  padding: 0 4px;
-  margin-left: 4px;
-  border-radius: 8px;
-  background: var(--accent-dim);
-  color: var(--text-primary);
+  display: inline-grid;
+  place-items: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  margin-left: var(--space-1);
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--surface-void);
   font-size: var(--text-xs);
-  text-align: center;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
 
 .view {
