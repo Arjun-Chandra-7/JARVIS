@@ -1155,3 +1155,10 @@ body[data-state="speaking"] .panel::before { opacity: 1; }
   white-space: nowrap;
 }
 @media (max-width: 620px) { .keyhint { display: none; } }
+
+
+/* One red dot among seven green ones is easy to miss at a glance across a desk. */
+.system:has(.status-dot.failed) {
+  background: var(--error-dim);
+  box-shadow: inset 2px 0 0 var(--error);
+}
