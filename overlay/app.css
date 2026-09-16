@@ -1070,3 +1070,10 @@ body[data-state="speaking"] .panel::before { opacity: 1; }
   background: var(--border-strong);
   border-radius: 4px;
 }
+
+/* Selected text used the browser's blue, which is the one colour in the design that belongs to
+ * nothing else on screen. */
+::selection {
+  background: var(--accent-glow);
+  color: var(--text-primary);
+}
