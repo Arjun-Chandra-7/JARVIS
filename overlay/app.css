@@ -1195,3 +1195,15 @@ body[data-state="speaking"] .panel::before { opacity: 1; }
 .past-title,
 .system-label,
 .memory-snippet { overflow-wrap: anywhere; }
+
+/* Present for assistive technology, absent for everyone else. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
