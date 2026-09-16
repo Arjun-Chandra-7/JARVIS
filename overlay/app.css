@@ -970,13 +970,36 @@ body[data-form="conversation"] #tab-system { display: none; }
 
 :root { --level: 0; }
 
-/* At rest: a slow breath, so the pill reads as waiting rather than dead. */
+/* At rest: a slow breath, so the pill reads as waiting rather than dead — but only for as long
+ * as anyone is there to see it.
+ *
+ * Measured on the running overlay, sampling the compositor process: the breath costs 27% of a
+ * core, continuously, to move a ten-pixel dot. The usual remedies do nothing, because the cost is
+ * not the animation — it is that a transparent always-on-top window has to be recomposited
+ * against whatever is behind it on every frame:
+ *
+ *     as written (scale + opacity)   25.2%
+ *     promoted to its own layer      25.5%
+ *     opacity only, no scale         27.5%
+ *     opacity only + promoted        24.8%
+ *     slowed to 12s                  25.0%
+ *     no animation at all             0.2%
+ *
+ * Only stopping stops it. So it breathes while you are looking and goes still when you are not:
+ * alive when it matters, free the rest of the time. Anything at all — a glance, a keystroke, a
+ * reply — wakes it back up. */
 @keyframes orb-breathe {
   0%, 100% { transform: scale(1); opacity: 0.72; }
   50%      { transform: scale(1.07); opacity: 1; }
 }
 body[data-state="idle"] .orb-core {
   animation: orb-breathe 4.2s var(--ease-out) infinite;
+}
+body[data-state="idle"][data-settled] .orb-core {
+  animation: none;
+  opacity: 0.72;
+  /* Faded in rather than snapped, so settling is not mistaken for the pill dying. */
+  transition: opacity var(--dur-slow) var(--ease-out);
 }
 
 /* Listening: the glow follows your voice. The core is already scaled from JavaScript; this is

@@ -91,7 +91,37 @@ function armStallWatchdog(next) {
   }, limit);
 }
 
+// The idle breath is the only thing this window animates forever, and measured it costs 27% of a
+// core to do it. It runs for this long after the last sign of life and then stops; every path
+// that could mean someone is watching calls stir() to start it again.
+const SETTLE_AFTER = 20000;
+let settleTimer = 0;
+
+function stir() {
+  delete body.dataset.settled;
+  clearTimeout(settleTimer);
+  // Only the idle pill breathes, so only the idle pill needs settling. Listening and speaking
+  // stop on their own when the state changes.
+  settleTimer = setTimeout(() => { body.dataset.settled = ""; }, SETTLE_AFTER);
+}
+
+// Anything that suggests a person is there. Pointer movement is listened for on the window rather
+// than the pill because the pill is small and the pointer passes near it far more often than over
+// it. Losing focus settles at once — nobody is looking at a background window.
+for (const event of ["pointermove", "pointerdown", "keydown", "wheel", "focus"]) {
+  window.addEventListener(event, stir, { passive: true });
+}
+window.addEventListener("blur", () => {
+  clearTimeout(settleTimer);
+  body.dataset.settled = "";
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") body.dataset.settled = "";
+  else stir();
+});
+
 function setActivity(next, detail = "") {
+  stir();                       // a change of state is the clearest sign of life there is
   state.activity = next;
   body.dataset.state = next;
   els.pillState.textContent = detail || STATE_LABEL[next] || next;
