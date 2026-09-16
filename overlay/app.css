@@ -802,7 +802,7 @@ body[data-form="conversation"] #tab-system { display: none; }
   color: var(--text-secondary);
 }
 .gauge-value {
-  font-size: var(--text-lg);
+  font-size: var(--text-xl);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--text-primary);
