@@ -32,6 +32,7 @@ const els = {
   cancelBtn: $("cancelBtn"),
   composer: $("composer"),
   input: $("input"),
+  sendBtn: $("sendBtn"),
   quick: $("quick"),
   contextChip: $("contextChip"),
   contextKind: $("contextKind"),
