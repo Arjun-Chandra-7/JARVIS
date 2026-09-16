@@ -229,6 +229,9 @@ def browser_named(name: str) -> Optional[str]:
 
     key = re.sub(r"\s+", " ", (name or "").strip().lower())
     key = re.sub(r"\b(?:browser|web)\b", "", key).strip()
+    if not key:
+        # An empty name matched every browser by substring and resolved to the first one.
+        return None
     candidates = BROWSERS.get(key)
     if candidates is None:
         # "google chrome browser", "the firefox" and so on.
