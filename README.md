@@ -34,6 +34,42 @@ need their own account, device, or desktop service configured before use.
 
 - Human radar: webcam face detection gives bearing + metric range, acoustic FMCW gives
   range only, and paired devices give names. See `docs/HUMAN_RADAR.md`.
+- Makes pictures. "Generate an image of a samurai in bamboo" writes a file and opens it.
+
+## Pictures
+
+SD-Turbo, one step, on the processor, offline and free. About 8 seconds for a 512px picture once
+the model is warm, 14 from cold. "Detailed" buys four steps and costs 25s; "a wallpaper" buys
+768px and costs 14s; neither happens unless it is asked for.
+
+It runs on the processor because it was measured not to fit on the card: 802 MiB free with Jarvis
+up, against the 2.5 GB the model wants, and Ollama and Whisper both have to stay resident. The
+stock decoder cost about twenty of the original 23 seconds, so it is replaced by the tiny
+distilled one — 5 MB, and the whole picture drops to 7.5s.
+
+The weights are 2.5 GB and are not fetched automatically. Until they are on disk, the picture tool
+is not offered to the brain at all, so it cannot promise a picture it has no way to make:
+
+    HF_HOME=~/Madara/.cache/huggingface .venv/bin/python -c \
+      "from huggingface_hub import snapshot_download as d; \
+       d('stabilityai/sd-turbo', allow_patterns=['*.json','*.txt','*/*fp16*','tokenizer/*','scheduler/*']); \
+       d('madebyollin/taesd')"
+
+Loaded, the model holds 5.4 GB of memory, so it is released five minutes after the last picture;
+reloading it and making another costs under seven seconds. Generation takes six of eight cores,
+leaving two for Whisper to keep hearing you — measured, that costs the picture nothing.
+
+## Fifteen specialists, one model
+
+A request is scored against fifteen specialists — desk, scribe, coder, researcher, scheduler,
+messenger, librarian, analyst, navigator, artist, watcher, planner, tutor, companion, guardian —
+and the turn runs under whichever one it belongs to, with that specialist's instruction,
+temperature and tools in front of the model.
+
+They are not fifteen sets of weights. Fifteen resident models cannot exist on 4 GB of video
+memory, and anything destructive routes to the guardian regardless of score. The routing is
+scored rather than classified by a model, so it answers in microseconds and cannot hallucinate a
+specialist. See `jarvis/brains/roster.py`.
 
 ## The overlay
 
