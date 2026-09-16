@@ -203,3 +203,47 @@ def asks_for_an_action(request: str) -> bool:
     if _IS_A_QUESTION.match(text) and not re.match(r"(?i)^(?:can|could|will|would)\s+you\b", text):
         return False
     return bool(_ASKS_FOR_ACTION.search(text))
+
+
+# --------------------------------------------------------------- promises with nothing behind
+# A false claim is easy to spot: "Opened Netflix" when nothing opened. A promise is not, because
+# it sounds like progress. Observed, asked to read the files and describe a project:
+#
+#     jarvis> I'll check your files now. Ready to tell you about this project.
+#     jarvis> I'll look into your files to find out more. Waiting for the results.
+#
+# Nothing was waiting. There is no later — the turn ends when the reply does.
+_PROMISE = re.compile(
+    r"""(?ix)
+    (?:^|[.!?]\s+|\band\s+|,\s*)
+    (?:
+        i(?:'?ll|\s+will|\s+am\s+going\s+to|'?m\s+going\s+to)\s+\w+ |
+        (?:let\s+me|allow\s+me\s+to)\s+\w+ |
+        (?:one\s+moment|just\s+a\s+(?:moment|second)|hold\s+on|stand\s+by) |
+        (?:waiting\s+for|checking|looking\s+into|working\s+on)\s+(?:the\s+)?\w+
+    )
+    """,
+)
+
+# A promise about the conversation rather than about doing something.
+_HARMLESS_PROMISE = re.compile(
+    r"(?ix)\bi(?:'?ll|\s+will)\s+(?:need|have\s+to|remember|keep|let\s+you\s+know|be\s+here|"
+    r"wait\s+for\s+you|try\s+again\s+if)\b",
+)
+
+
+def promises_without_acting(reply: str) -> bool:
+    """True when the reply undertakes to do something rather than reporting having done it."""
+    text = (reply or "").strip()
+    if not text or _HARMLESS_PROMISE.search(text):
+        return False
+    return bool(_PROMISE.search(text))
+
+
+def nudge_to_act() -> str:
+    """Said back to the model when it has promised instead of acted."""
+    return (
+        "You said you would do it rather than doing it. The turn ends when you reply, so there "
+        "is no later and nothing is waiting. Call the tool now and report what it returned, or "
+        "say plainly that you cannot."
+    )

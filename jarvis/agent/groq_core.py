@@ -523,6 +523,18 @@ class GroqAgent:
                 # tool has not failed to act; it has been answered.
                 nothing_worked = (not self._any_tool_succeeded
                                   and action_claims.asks_for_an_action(self._route_query))
+                # A promise is the same failure as a false claim, and harder to notice because
+                # it sounds like progress. Both get one push back to actually act.
+                if (nothing_worked
+                        and not action_claims_checked
+                        and action_claims.promises_without_acting(reply)):
+                    action_claims_checked = True
+                    self.on_tool("brain", "promised instead of acting — retrying")
+                    self.messages.append({"role": "assistant", "content": reply})
+                    self.messages.append({"role": "user",
+                                          "content": action_claims.nudge_to_act()})
+                    continue
+
                 if (nothing_worked
                         and not action_claims_checked
                         and action_claims.claims_an_action(reply)):

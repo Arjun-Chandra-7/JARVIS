@@ -137,6 +137,14 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
     if sited is not None:
         return sited
 
+    # "Tell me about this project" — the files are read here, deterministically, and only the
+    # describing is left to the model. Asked to do both it answered "I'll check your files now"
+    # and did nothing.
+    from .project_command import handle as describe_project
+    described = await describe_project(raw, config)
+    if described is not None:
+        return described
+
     # "Draw me X" — find a reference picture, reduce it to lines, draw them on the canvas.
     from .draw_command import handle as draw_something
     drawn = await draw_something(raw, config)

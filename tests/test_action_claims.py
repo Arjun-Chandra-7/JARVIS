@@ -208,3 +208,27 @@ def test_a_question_is_not_a_failed_action(said):
 ])
 def test_a_request_still_counts_as_one(said):
     assert ac.asks_for_an_action(said)
+
+
+# ----------------------------------------------------- promises with nothing behind them
+@pytest.mark.parametrize("reply", [
+    "I'll check your files now. Ready to tell you about this project.",
+    "I will look into your files to find out more. Waiting for the results.",
+    "Let me check that for you.",
+    "One moment, sir.",
+])
+def test_undertaking_to_do_it_is_not_doing_it(reply):
+    """A false claim is easy to spot. A promise sounds like progress, and nothing is waiting —
+    the turn ends when the reply does."""
+    assert ac.promises_without_acting(reply)
+
+
+@pytest.mark.parametrize("reply", [
+    "Volume is at 40%.",
+    "Opened Netflix.",
+    "I'll need you to run sudo usermod for that.",     # about the user, not a stalled action
+    "I'll let you know when it finishes.",             # a real background job
+    "Your next meeting is at 3pm.",
+])
+def test_reports_and_genuine_undertakings_are_left_alone(reply):
+    assert not ac.promises_without_acting(reply)
