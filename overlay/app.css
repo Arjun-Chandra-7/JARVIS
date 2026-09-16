@@ -192,13 +192,18 @@ body[data-state="offline"] .pill-state { color: var(--text-muted); }
 .pill-right { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; }
 
 .work-dot {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 8px var(--accent-glow);
-  animation: breathe 2.2s var(--ease-out) infinite;
+  box-shadow: 0 0 0 3px var(--accent-glow);
+  animation: work-pulse 1.8s var(--ease-out) infinite;
 }
+@keyframes work-pulse {
+  0%, 100% { opacity: 0.45; box-shadow: 0 0 0 2px var(--accent-glow); }
+  50%      { opacity: 1;    box-shadow: 0 0 0 5px var(--accent-glow); }
+}
+@media (prefers-reduced-motion: reduce) { .work-dot { animation: none; opacity: 1; } }
 @keyframes breathe { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
   .work-dot { animation: none; opacity: 0.9; }
