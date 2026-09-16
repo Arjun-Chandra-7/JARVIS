@@ -1222,3 +1222,15 @@ body[data-form="pill"][data-state="idle"] .pill-state {
   transition: opacity var(--dur-slow) var(--ease-out);
 }
 body[data-form="pill"][data-state="idle"] .shell:hover .pill-state { opacity: 1; }
+
+
+/* The level meter held its full width at all times and drew nothing for most of them, which is
+ * what made the pill feel like a strip of empty bar. */
+.meter {
+  max-height: 0;
+  opacity: 0;
+  transition: max-height var(--dur-base) var(--ease-out),
+              opacity var(--dur-fast) var(--ease-out);
+}
+body[data-state="listening"] .meter,
+body[data-state="speaking"] .meter { max-height: 20px; opacity: 1; }
