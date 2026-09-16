@@ -186,6 +186,15 @@ def _data_uri(path: str) -> Optional[str]:
         return None
 
 
+# How a per-turn specialist instruction is marked, so the next turn can find and remove it.
+TURN_NOTE = "For this turn:"
+
+
+def _is_a_turn_note(message: dict) -> bool:
+    return (message.get("role") == "system"
+            and str(message.get("content", "")).startswith(TURN_NOTE))
+
+
 class GroqAgent:
     def __init__(self, config: Config, mode: str = "text",
                  confirm_fn: Optional[ConfirmCallback] = None, on_tool: Optional[ToolCallback] = None) -> None:
@@ -313,17 +322,23 @@ class GroqAgent:
             return self.schemas
 
     def _complete(self):
+        """One completion, under whichever specialist this turn belongs to.
+
+        The temperature is chosen once, here. It was briefly passed twice — the specialist's
+        through a **kwargs and the configured one explicitly — which is not a wrong answer but a
+        TypeError, and every turn that reached this brain answered with it:
+
+            [groq error] Completions.create() got multiple values for keyword argument
+            'temperature'
+        """
         specialist = getattr(self, "_specialist", None)
-        extra = {}
-        if specialist is not None:
-            extra["temperature"] = specialist.temperature
         return self.client.chat.completions.create(
             model=(specialist.model if specialist and specialist.model else self.model),
-            **extra,
             messages=self.messages,
             tools=self._active_schemas(),
             tool_choice="auto",
-            temperature=self.config.temperature,
+            temperature=(specialist.temperature if specialist is not None
+                         else self.config.temperature),
             max_tokens=512,
         )
 
@@ -478,12 +493,18 @@ class GroqAgent:
         self._specialist, self._specialist_confidence = choose.pick(user_text)
 
         turn = {"role": "user", "content": f"[time: {now:%A %Y-%m-%d %H:%M %Z}] {user_text}"}
+        # Last turn's note goes before this turn's is added. It says "for this turn", and it
+        # meant it: left in the history they pile up, and three turns in the model is being told
+        # it is a coder, a scribe and a companion at once, with the oldest instruction sitting
+        # closest to the standing prompt. Trimming eventually removes them, but not for fourteen
+        # messages, which is far too late to stop them contradicting each other.
+        self.messages = [m for m in self.messages if not _is_a_turn_note(m)]
         if self._specialist is not None:
             # As a system note beside the turn rather than replacing the standing prompt: the
             # things that prompt establishes — who the user is, what this machine is — are true
             # whichever specialist is working.
             self.messages.append({"role": "system",
-                                  "content": f"For this turn: {self._specialist.instruction}"})
+                                  "content": f"{TURN_NOTE} {self._specialist.instruction}"})
         self.messages.append(turn)
         self._turn_times[id(turn)] = time.time()
 
