@@ -715,7 +715,22 @@ body[data-form="conversation"] #tab-system { display: none; }
   border-radius: var(--radius-card);
 }
 
-.memory-search { display: flex; gap: var(--space-2); flex: 0 0 auto; }
+.memory-search {
+  display: flex;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  margin-bottom: var(--space-1);
+}
+/* Chrome's own clear button is a grey cross that does not belong to this palette. */
+.memory-search input[type="search"]::-webkit-search-cancel-button {
+  appearance: none;
+  height: 12px;
+  width: 12px;
+  background: var(--text-faint);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 2l8 8M10 2l-8 8' stroke='%23000' stroke-width='2'/%3E%3C/svg%3E") center/contain no-repeat;
+  cursor: pointer;
+}
+.memory-search input[type="search"]::-webkit-search-cancel-button:hover { background: var(--text-primary); }
 
 /* --------------------------- system --------------------------- */
 .systems { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
