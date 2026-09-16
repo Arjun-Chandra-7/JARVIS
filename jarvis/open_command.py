@@ -127,6 +127,7 @@ async def run(target: str, config) -> str:
         if desktop_apps.launch(app):
             from . import context
             context.note_opened(app=app.name, target=app.name)
+            context.note_action(f"open {target}", target)
             return f"Opened {app.name}."
         return f"I found {app.name} but couldn't start it."
 
@@ -152,6 +153,7 @@ async def run(target: str, config) -> str:
     if result.get("ok"):
         from . import context
         context.note_opened(site=target, target=target)
+        context.note_action(f"open {target}", target)
         return result.get("message") or f"Opened {target}."
     return result.get("error") or f"I couldn't open {target}."
 

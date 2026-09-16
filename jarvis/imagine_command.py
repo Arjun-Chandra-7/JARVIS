@@ -106,6 +106,11 @@ async def run(subject: str, said: str = "") -> str:
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:  # noqa: BLE001
         pass
+    # The file is remembered so "now draw this on a whiteboard" has something to point at, and
+    # the subject so "now a dragon" rebuilds this request.
+    from . import context
+    context.note_picture(str(made.path))
+    context.note_action(said or subject, subject)
     return f"Made it in {made.seconds} seconds, sir — saved to {made.path}."
 
 

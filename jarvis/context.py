@@ -32,6 +32,13 @@ class Context:
     target: str = ""            # the last thing acted on, whatever kind
     results: list[str] = field(default_factory=list)   # the last list offered
     activity: dict[str, Any] = field(default_factory=dict)  # a game, a form, anything ongoing
+    # The last request a handler actually carried out, and the thing it was carried out on. Kept
+    # so that a follow-up naming only a new thing — "now Albert Einstein" — can be rebuilt into
+    # the whole request that worked a moment ago.
+    said: str = ""
+    subject: str = ""
+    said_at: float = 0.0
+    picture: str = ""           # the last picture Jarvis generated, for "draw this"
     at: float = 0.0
 
     def fresh(self) -> bool:
@@ -75,6 +82,36 @@ def note_opened(session_id: str = "", *, site: str = "", app: str = "", target: 
     if target:
         ctx.target = target
     ctx.touch()
+
+
+def note_action(said: str, subject: str, session_id: str = "") -> None:
+    """Record a request that worked, and what it was about.
+
+    Called by the handlers that succeed, because only they know which part of the sentence was
+    the subject — "find a free whiteboard site and draw me the Mona Lisa" is a drawing request
+    about "the Mona Lisa", and no amount of looking at the sentence afterwards recovers that as
+    reliably as the parser that already worked it out.
+    """
+    said, subject = (said or "").strip(), (subject or "").strip()
+    if not said or not subject:
+        return
+    ctx = of(session_id or current())
+    ctx.said, ctx.subject, ctx.said_at = said, subject, time.time()
+    ctx.touch()
+
+
+def note_picture(path: str, session_id: str = "") -> None:
+    """Remember the picture just generated, so "draw this" has something to mean."""
+    if not path:
+        return
+    ctx = of(session_id or current())
+    ctx.picture = str(path)
+    ctx.touch()
+
+
+def last_picture(session_id: str = "") -> str:
+    ctx = of(session_id or current())
+    return ctx.picture if ctx.fresh() else ""
 
 
 def note_results(results: list[str], session_id: str = "") -> None:
@@ -124,6 +161,72 @@ def pick_from_results(text: str, ctx: Context) -> Optional[str]:
     return ctx.results[n - 1] if 0 < n <= len(ctx.results) else None
 
 
+# A follow-up that changes only the subject: "now Albert Einstein", "and a dragon", "how about
+# Batman". The lead-in is what makes it a follow-up rather than a new request, so it is listed
+# rather than guessed at.
+_CARRY_ON = re.compile(
+    r"""(?ix)^
+        (?: now | then | and | also | next | ok(?:ay)? |
+            (?:how|what)\s+about |
+            (?:do|try|make) |
+            (?:again\s+(?:with|for)) | instead |
+            (?:this\s+time) )
+        [,\s]+ (?P<subject>.{2,60}) $""")
+
+# A lead-in is required, and that is not a stylistic choice — it was tried without one, where any
+# short phrase within a few minutes of a successful command was treated as a new subject for it.
+# "Wake up" became a request to draw something called "wake up"; so did "scan the room" and
+# "go to sleep". A follow-up that changes the subject is nearly always announced as one, and the
+# cost of missing a bare "Albert Einstein" is one repeated word, while the cost of guessing wrong
+# is that short commands stop working.
+
+# Words that make it a request in its own right. If the follow-up carries its own verb it does
+# not need the previous one, and rebuilding it would produce "open draw a dragon".
+_HAS_ITS_OWN_VERB = re.compile(
+    r"""(?ix)\b(?: open | launch | start | run | play | watch | close | quit |
+        draw | sketch | paint | generate | create | make | render |
+        click | tap | press | type | write | send | reply | search | find | look |
+        set | change | turn | mute | increase | decrease | raise | lower |
+        read | show | tell | explain | remind | schedule | call | stop | pause )\b""")
+
+# A question is not a follow-up subject.
+_IS_A_QUESTION = re.compile(r"""(?ix)^\s*(?:who|what|when|where|why|how|which|is|are|do|does|
+    did|can|could|will|would|should)\b""")
+
+
+def carry_on(text: str, session_id: str = "local") -> Optional[str]:
+    """Rebuild "now Albert Einstein" into the whole request that just worked, or None.
+
+    The rewrite is a substitution into the previous sentence rather than a verb glued to a noun,
+    because the previous sentence carries everything else that mattered — "find a free whiteboard
+    site and draw me the Mona Lisa" is not "draw" plus "the Mona Lisa", and only the first of
+    those opens a whiteboard.
+    """
+    raw = (text or "").strip().rstrip(".!?")
+    if not raw:
+        return None
+    ctx = of(session_id)
+    if not ctx.said or not ctx.subject or not ctx.fresh():
+        return None
+
+    match = _CARRY_ON.match(raw)
+    if not match:
+        return None
+    subject = match.group("subject").strip()
+
+    subject = subject.strip().strip("\"'").strip()
+    if not subject or _HAS_ITS_OWN_VERB.search(subject) or _IS_A_QUESTION.match(subject):
+        return None
+    # Nothing to swap it into. Better to hand the words on untouched than to invent a sentence.
+    if ctx.subject.lower() not in ctx.said.lower():
+        return None
+    if subject.lower() == ctx.subject.lower():
+        return None
+
+    start = ctx.said.lower().index(ctx.subject.lower())
+    return (ctx.said[:start] + subject + ctx.said[start + len(ctx.subject):]).strip()
+
+
 def resolve(text: str, session_id: str = "local") -> str:
     """Rewrite a follow-up so the handlers see a full request.
 
@@ -137,6 +240,12 @@ def resolve(text: str, session_id: str = "local") -> str:
     ctx = of(session_id)
     if not ctx.fresh():
         return raw
+
+    # Before the pronoun rules: "now Albert Einstein" has no pronoun to resolve, and the answer
+    # is the whole of the last request with one word changed rather than a word substituted here.
+    carried = carry_on(raw, session_id)
+    if carried:
+        return carried
 
     chosen = pick_from_results(raw, ctx)
     if chosen:
