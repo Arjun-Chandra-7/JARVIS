@@ -1003,3 +1003,11 @@ body[data-state="speaking"] .panel::before { opacity: 1; }
                               #000 calc(100% - var(--fade)), transparent 100%);
 }
 .log.at-top { --fade: 0px; }
+
+/* Nothing typed, nothing to send. The button looked identical either way, which invited a click
+ * that did nothing. */
+.send-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}

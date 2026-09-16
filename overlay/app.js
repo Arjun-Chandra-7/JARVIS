@@ -458,6 +458,12 @@ async function send(text) {
   }
 }
 
+function syncSendButton() {
+  els.sendBtn.disabled = !els.input.value.trim();
+}
+els.input.addEventListener("input", syncSendButton);
+syncSendButton();
+
 els.composer.addEventListener("submit", (e) => {
   e.preventDefault();
   const v = els.input.value;
