@@ -111,3 +111,33 @@ def test_a_missing_model_is_said_plainly_rather_than_crashing(monkeypatch):
 
 def test_a_sentence_that_is_not_ours_is_handed_back_untouched():
     assert asyncio.run(ic.handle("draw me a fox")) is None
+
+
+# --------------------------------------------------------------- offered to the model, or not
+def _tool_names(monkeypatch, ready: bool):
+    from jarvis.agent.groq_tools import build_registry
+    from jarvis.config import Config
+    from jarvis.vision import imagine
+    monkeypatch.setattr(imagine, "ready", lambda: ready)
+    schemas, _ = build_registry(Config(), None, None)
+    return [s["function"]["name"] for s in schemas]
+
+
+def test_the_tool_is_offered_when_the_weights_are_here(monkeypatch):
+    assert "generate_image" in _tool_names(monkeypatch, True)
+
+
+def test_the_tool_is_withheld_when_they_are_not(monkeypatch):
+    """Offering it without weights teaches the model to promise pictures it cannot make."""
+    assert "generate_image" not in _tool_names(monkeypatch, False)
+
+
+def test_the_artist_asks_for_the_tool_that_exists():
+    """The roster names tools by string; a typo there is silent until someone asks for a picture."""
+    from jarvis.agent.groq_tools import build_registry
+    from jarvis.brains.roster import BY_NAME
+    from jarvis.config import Config
+    schemas, _ = build_registry(Config(), None, None)
+    offered = {s["function"]["name"] for s in schemas}
+    assert "generate_image" in BY_NAME["artist"].tools
+    assert "generate_image" in offered

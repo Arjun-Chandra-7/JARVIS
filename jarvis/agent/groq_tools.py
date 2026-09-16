@@ -1077,6 +1077,36 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         from ..integrations import meet_bot
         return await meet_bot.stop_meet()
 
+    @tool("generate_image",
+          "Make a picture from a description and save it. Runs on this machine, no internet and "
+          "no cost. About 8 seconds. Use for 'make me a picture of X'. This is NOT the whiteboard "
+          "— draw_on_canvas traces a reference onto an open board; this produces an image file.",
+          {"prompt": {"type": "string",
+                      "description": "What the picture shows. A full visual description works far "
+                                     "better than a single noun: subject, setting, lighting, style."},
+           "detailed": {"type": "boolean",
+                        "description": "Four diffusion steps instead of one: 25s instead of 8s. "
+                                       "Only when the user asked for quality."},
+           "size": {"type": "integer", "description": "Pixels per side, 256-768. Default 512."}},
+          ["prompt"])
+    async def generate_image(a):
+        from ..vision import imagine
+        try:
+            made = await asyncio.to_thread(
+                imagine.generate, a.get("prompt", ""),
+                steps=4 if a.get("detailed") else imagine.DEFAULT_STEPS,
+                size=int(a.get("size") or imagine.DEFAULT_SIZE))
+        except imagine.Unavailable as exc:
+            return f"Cannot generate images: {exc}"
+        except ValueError as exc:
+            return f"Cannot generate images: {exc}"
+        try:
+            subprocess.Popen(["xdg-open", str(made.path)],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:  # noqa: BLE001
+            pass
+        return f"Generated and saved to {made.path} in {made.seconds}s."
+
     @tool("toggle_sports_widget",
           "Opens or closes the live cricket sports widget on the screen.",
           {"state": {"type": "string", "description": "Must be exactly one of: on, off, toggle."}},
@@ -1108,11 +1138,18 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     # writes — so a fully linked Google account still had all eight of its tools dropped, and
     # Jarvis would claim it could not see the calendar it was already authorised for.
     has_google = config.google_client_secret.exists() or config.google_token_file.exists()
+    # The picture model is 2.5 GB and optional. Offering a tool whose weights were never fetched
+    # teaches the model to promise pictures it cannot make, which is the exact failure the claim
+    # guard exists to catch — cheaper to not offer it.
+    from ..vision import imagine as _imagine
+    can_make_pictures = _imagine.ready()
     for s, _ in reg.values():
         f = s.get("function", {})
         name = f.get("name", "")
         # Drop inactive tool suites to save thousands of tokens!
         if not has_google and name.startswith("google_"):
+            continue
+        if name == "generate_image" and not can_make_pictures:
             continue
 
         if config.browser_control and name in ("open_url", "launch_app"):
