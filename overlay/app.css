@@ -271,16 +271,6 @@ body[data-form="conversation"] #tab-system { display: none; }
   transition: transform var(--dur-fast) var(--ease-out);
 }
 .tab.is-active::after { transform: scaleX(1); }
-.tab.is-active::after.legacy {
-  content: "";
-  position: absolute;
-  left: var(--space-3);
-  right: var(--space-3);
-  bottom: 0;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--accent);
-}
 
 .badge {
   display: inline-grid;
