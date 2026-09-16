@@ -17,6 +17,7 @@ from ..config import Config
 from ..integrations.chatgpt import ChatGPTSession
 from ..jobs.runner import JobRunner
 from ..memory import vault as vaultmod
+from . import action_claims
 from .groq_core import _parse_calls
 from .groq_tools import build_registry
 
@@ -160,21 +161,54 @@ class ChatGPTAgent:
             except Exception:  # noqa: BLE001
                 pass
 
+        from . import gate
+
+        # Half a sentence is not a request. Completing it is the model's imagination rather than
+        # anyone's intent, and "generate an image of a" became a picture of whatever it liked.
+        if gate.looks_unfinished(user_text):
+            return gate.ask_for_the_rest(user_text)
+
+        # What this turn is allowed to touch, worked out before the model sees it.
+        permitted = {sch.get("function", {}).get("name", "")
+                     for sch in gate.allowed(self.schemas, user_text)}
+
         try:
             await self._prime()
             now = datetime.now().astimezone()
-            nudge = "\n\n(Jarvis: use <function=tool>{...}</function> for anything live/actionable; never defer to me.)"
+            # The standing nudge — "use a tool for anything live/actionable; never defer to me" —
+            # is the right thing to say about a request and exactly the wrong thing to say about
+            # "see you, daddy", which it answered by sending a message to Daddy. What is asked
+            # for on this turn decides which instruction it gets.
+            if not permitted:
+                nudge = ("\n\n(Jarvis: this is conversation, not a request. Reply in words. "
+                         "Do not call any tool.)")
+            elif len(permitted) < len(self.schemas):
+                nudge = ("\n\n(Jarvis: nothing was asked to be done. You may look things up, but "
+                         "do not send, open, create, change or generate anything.)")
+            else:
+                nudge = ("\n\n(Jarvis: use <function=tool>{...}</function> for anything "
+                         "live/actionable; never defer to me.)")
             reply = await self.session.ask(f"[time: {now:%A %Y-%m-%d %H:%M %Z}] {user_text}{nudge}")
 
+            anything_ran = False
             for _ in range(8):  # bounded tool rounds
                 calls = _parse_calls(reply)
                 if not calls:
                     break
                 results = []
                 for name, args in calls:
+                    # The nudge is advice and this is the rule. A model that reaches for the send
+                    # button during small talk does not get to press it just because it asked.
+                    if name not in permitted:
+                        self.on_tool(name, "refused — nothing was asked to be done")
+                        results.append(
+                            f"{name} -> REFUSED. Nothing in this turn asked for an action, so "
+                            f"tools that change anything are unavailable. Answer in words.")
+                        continue
                     self.on_tool(name, ", ".join(f"{k}={v}" for k, v in list(args.items())[:2]))
                     try:
                         res = await self.dispatch(name, args)
+                        anything_ran = True
                     except Exception as exc:  # noqa: BLE001
                         res = f"error: {exc}"
                     results.append(f"{name} -> {str(res)[:2500]}")
@@ -183,6 +217,18 @@ class ChatGPTAgent:
                 reply = await self.session.ask(msg)
 
             final = _strip_tags(reply) or reply
+
+            # "See you, daddy." was answered with "Message sent to Daddy." and no message was
+            # sent — the tool had been withheld, and the model said it had done it anyway. The
+            # Groq brain has been checking for this for months; this one, which is the default,
+            # never has. A reply that asserts an action nobody performed is not a bad answer, it
+            # is a false one, and it goes into the history where it teaches the same trick.
+            if not anything_ran and action_claims.claims_an_action(final):
+                if not permitted:
+                    return ("I haven't done anything, sir — that sounded like conversation "
+                            "rather than a request. Say the word if you did want it done.")
+                return action_claims.honest_fallback()
+
             vaultmod.git_autocommit(self.config.vault_path, f"jarvis: memory update {now:%Y-%m-%d %H:%M}")
             return final or "(no reply)"
         except Exception as exc:  # noqa: BLE001

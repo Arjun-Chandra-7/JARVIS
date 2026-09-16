@@ -302,8 +302,11 @@ class GroqAgent:
         (1.48 s -> 0.91 s median) because there was far less schema to re-read. Set
         JARVIS_TOOL_ROUTING=0 to send everything again.
         """
+        from . import gate
+
+        said = self._route_query or ""
         if not self.config.tool_routing or not self._route_query:
-            return self.schemas
+            return gate.allowed(self.schemas, said)
         specialist = getattr(self, "_specialist", None)
         try:
             chosen = tool_router.select(
@@ -317,9 +320,13 @@ class GroqAgent:
             wanted = [s for s in self.schemas
                       if s["function"]["name"] in specialist.tools]
             names = {s["function"]["name"] for s in wanted}
-            return wanted + [s for s in chosen if s["function"]["name"] not in names]
+            # The gate is applied last, over everything the router and the specialist chose
+            # between them. A specialist's own tools are not an exemption: the artist may always
+            # reach for generate_image when a picture was asked for, and never when it was not.
+            return gate.allowed(wanted + [s for s in chosen
+                                          if s["function"]["name"] not in names], said)
         except Exception:  # noqa: BLE001 - routing must never block a turn
-            return self.schemas
+            return gate.allowed(self.schemas, said)
 
     def _complete(self):
         """One completion, under whichever specialist this turn belongs to.
@@ -487,6 +494,14 @@ class GroqAgent:
             )
             return str(result)
 
+        # A sentence that stops mid-phrase is the first half of a request. Completing it is the
+        # model's imagination, not the user's intent, and "generate an image of a" became a
+        # picture of whatever it felt like.
+        from . import gate
+
+        if gate.looks_unfinished(user_text):
+            return gate.ask_for_the_rest(user_text)
+
         # Which specialist this turn belongs to. It changes the instruction, the temperature and
         # which tools are put in front of the model — all of which matter more to a small local
         # brain than they would to a large one.
@@ -571,6 +586,19 @@ class GroqAgent:
                 # tool has not failed to act; it has been answered.
                 nothing_worked = (not self._any_tool_succeeded
                                   and action_claims.asks_for_an_action(self._route_query))
+                # The gap that rule leaves open, found live: "See you, daddy." was answered
+                # with "Message sent to Daddy." Nothing was asked for, so nothing_worked is
+                # false, so none of the checks below ever looked at it — and a turn that asked
+                # for nothing is exactly the turn where a claim to have acted is a fabrication
+                # rather than a shortfall. There is nothing to retry, either: the tools were
+                # withheld precisely because nothing was asked for.
+                if (not self._any_tool_succeeded
+                        and not action_claims.asks_for_an_action(self._route_query)
+                        and action_claims.claims_an_action(reply)):
+                    self.on_tool("brain", "claimed an action nobody asked for — replaced")
+                    return ("I haven't done anything, sir — that sounded like conversation "
+                            "rather than a request. Say the word if you did want it done.")
+
                 # A promise is the same failure as a false claim, and harder to notice because
                 # it sounds like progress. Both get one push back to actually act.
                 if (nothing_worked

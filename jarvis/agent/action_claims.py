@@ -37,6 +37,34 @@ _CLAIM = re.compile(
     """,
 )
 
+# The same assertion with the object in front and the pronoun dropped entirely — the way a model
+# reports a job done in three words. Observed, none of which the patterns above catch:
+#
+#     you> See you, daddy.        jarvis> Message sent to Daddy.
+#     you> dictation, go Don.     jarvis> Image generated. Ready.
+#     you> generate an image of a jarvis> Image generated. Ready.
+#
+# Nothing was sent and nothing was generated. "I sent the message" was caught and "Message sent"
+# was not, which is the same lie with the words in the other order.
+_CLAIM_OBJECT_FIRST = re.compile(
+    r"""(?ix)
+    (?:^|[.!?]\s+|\n\s*|\band\s+|,\s*)
+    (?:the\s+|your\s+|a\s+|an\s+|my\s+)?
+    (?P<thing>
+        message | email | mail | text | reply | image | picture | photo | screenshot |
+        reminder | timer | alarm | file | note | event | meeting | post | call |
+        song | video | tab | page | document | task | drawing | wallpaper | logo
+    )s?
+    \s+
+    (?P<done>
+        sent | generated | created | saved | set | made | opened | launched | started |
+        played | deleted | removed | scheduled | added | posted | updated | changed |
+        drawn | downloaded | uploaded | copied | moved | renamed
+    )
+    \b
+    """,
+)
+
 # The same assertion with the setting as the subject: "Brightness set to 30%", "Volume is now 40%".
 # These carry no "I", so the clause-start pattern above never saw them, and a refused brightness
 # change was delivered as "Brightness set to 30%." while the backlight stayed where it was.
@@ -63,14 +91,26 @@ _NOT_A_CLAIM = re.compile(
 )
 
 
+# A reply is judged sentence by sentence, not as one blob. "Message sent to Daddy. How else may
+# I assist you, Sir?" was read as honest because the courtesy at the end contains "may I", which
+# is on the not-a-claim list — so a false claim escaped by being followed by good manners. The
+# exemption has to sit in the same sentence as the claim to excuse it.
+_SENTENCE = re.compile(r"[^.!?\n]+[.!?]*")
+
+
 def claims_an_action(reply: str) -> bool:
     """True when the text asserts that an action was carried out in this turn."""
     text = (reply or "").strip()
     if not text:
         return False
-    if _NOT_A_CLAIM.search(text):
-        return False
-    return bool(_CLAIM.search(text) or _CLAIM_ABOUT_A_SETTING.search(text))
+    for sentence in _SENTENCE.findall(text):
+        said = sentence.strip()
+        if not said or _NOT_A_CLAIM.search(said):
+            continue
+        if (_CLAIM.search(said) or _CLAIM_OBJECT_FIRST.search(said)
+                or _CLAIM_ABOUT_A_SETTING.search(said)):
+            return True
+    return False
 
 
 # Vague technical excuses a model reaches for when a tool failed with a perfectly specific
