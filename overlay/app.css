@@ -242,6 +242,7 @@ body[data-form="conversation"] #tab-system { display: none; }
 .tabs-spacer { flex: 1 1 auto; }
 
 .tab {
+  position: relative;
   border: 0;
   background: transparent;
   color: var(--text-muted);
