@@ -752,8 +752,12 @@ body[data-form="conversation"] #tab-system { display: none; }
 .memory-search input[type="search"]::-webkit-search-cancel-button:hover { background: var(--text-primary); }
 
 /* --------------------------- system --------------------------- */
-.systems { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-           gap: var(--space-2); flex: 0 0 auto; }
+.systems {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-2);
+  flex: 0 0 auto;
+}
 .system {
   display: flex; align-items: center; gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
