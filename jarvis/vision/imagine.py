@@ -63,6 +63,21 @@ _pipe = None
 _lock = threading.Lock()        # one picture at a time; the model is not re-entrant
 
 
+def _cache() -> Path:
+    """The hub cache to read the weights from, passed explicitly rather than through HF_HOME.
+
+    Setting the environment variable here does not work and the failure is quiet: huggingface_hub
+    reads HF_HOME once, at its own import, and something else in Jarvis imports it long before
+    anyone asks for a picture. The weights then get looked for under the default cache on the root
+    disk, which reports "sd-turbo does not appear to have a file named model_index.json" — a
+    missing-model message for a model that is present, 2.5 GB of it, on the other disk.
+
+    An explicit directory cannot be beaten to the punch by an import order. A HF_HOME set by the
+    user is still honoured, because that is a deliberate choice about where weights live.
+    """
+    return Path(os.environ.get("HF_HOME") or WEIGHTS) / "hub"
+
+
 @dataclass(frozen=True)
 class Picture:
     path: Path
@@ -81,7 +96,6 @@ def _load():
     global _pipe
     if _pipe is not None:
         return _pipe
-    os.environ.setdefault("HF_HOME", str(WEIGHTS))
     try:
         import torch
         from diffusers import AutoencoderTiny, AutoPipelineForText2Image
@@ -94,11 +108,11 @@ def _load():
     # When the weights are already here, say so, and the load never touches the network. Left to
     # itself the hub checks for a newer revision on every single load: a round trip before each
     # picture, and a hang rather than a picture when the laptop is offline.
-    local = {"local_files_only": True} if ready() else {}
+    where = {"cache_dir": str(_cache()), "local_files_only": ready()}
     try:
         pipe = AutoPipelineForText2Image.from_pretrained(
-            MODEL, torch_dtype=torch.float32, variant="fp16", safety_checker=None, **local)
-        pipe.vae = AutoencoderTiny.from_pretrained(DECODER, torch_dtype=torch.float32, **local)
+            MODEL, torch_dtype=torch.float32, variant="fp16", safety_checker=None, **where)
+        pipe.vae = AutoencoderTiny.from_pretrained(DECODER, torch_dtype=torch.float32, **where)
     except Exception as exc:  # noqa: BLE001 — usually "not downloaded yet", worth saying plainly
         raise Unavailable(f"the image model weights aren't ready — {exc}") from exc
 
@@ -125,7 +139,7 @@ def ready() -> bool:
             return False
     except Exception:  # noqa: BLE001
         return False
-    hub = Path(os.environ.get("HF_HOME", WEIGHTS)) / "hub"
+    hub = _cache()
     unet = hub / f"models--{MODEL.replace('/', '--')}" / "snapshots"
     decoder = hub / f"models--{DECODER.replace('/', '--')}" / "snapshots"
     return (any(unet.glob("*/unet/*fp16*.safetensors"))

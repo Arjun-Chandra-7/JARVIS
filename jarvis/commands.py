@@ -152,6 +152,14 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
     if described is not None:
         return described
 
+    # "Make me a picture of X" — generated here and saved. Before the draw handler, which is the
+    # other half of the same idea: draw traces a reference onto an open whiteboard, this makes a
+    # file. Their verbs do not overlap, so the order is documentation rather than precedence.
+    from .imagine_command import handle as imagine_something
+    made = await imagine_something(raw, config)
+    if made is not None:
+        return made
+
     # "Draw me X" — find a reference picture, reduce it to lines, draw them on the canvas.
     from .draw_command import handle as draw_something
     drawn = await draw_something(raw, config)
