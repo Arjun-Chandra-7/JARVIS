@@ -1239,3 +1239,16 @@ body[data-form="pill"][data-state="idle"] .shell:hover .pill-state { opacity: 1;
 }
 body[data-state="listening"] .meter,
 body[data-state="speaking"] .meter { max-height: 20px; opacity: 1; }
+
+
+/* Two thin strokes at 8% opacity in the corner of a dark pill: present, but not something anyone
+ * would find without knowing it was there. */
+.icon-btn {
+  color: var(--text-faint);
+  transition: color var(--dur-fast) var(--ease-out),
+              background var(--dur-fast) var(--ease-out);
+}
+.icon-btn:hover {
+  color: var(--text-primary);
+  background: var(--surface-overlay);
+}
