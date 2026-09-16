@@ -121,3 +121,43 @@ def test_readiness_does_not_depend_on_a_complete_repository(monkeypatch, tmp_pat
     (tmp_path / f"hub/models--{imagine.DECODER.replace('/', '--')}/snapshots/abc"
                 / "diffusion_pytorch_model.safetensors").write_bytes(b"")
     assert imagine.ready() is True
+
+
+# --------------------------------------------------------------- giving the memory back
+def test_releasing_nothing_is_not_an_error(monkeypatch):
+    monkeypatch.setattr(imagine, "_pipe", None)
+    assert imagine.release() is False
+
+
+def test_releasing_drops_the_model(monkeypatch):
+    monkeypatch.setattr(imagine, "_pipe", object())
+    assert imagine.release() is True
+    assert imagine._pipe is None
+
+
+def test_making_a_picture_arms_the_release(pipe, monkeypatch):
+    armed = []
+    monkeypatch.setattr(imagine, "_arm_reaper", lambda: armed.append(True))
+    imagine.generate("a fox")
+    assert armed, "nothing would ever give the 5.4 GB back"
+
+
+def test_the_release_does_not_fire_while_the_model_is_still_in_use(monkeypatch):
+    """The reaper wakes on a timer; by then another picture may have been asked for."""
+    import time as _time
+    monkeypatch.setattr(imagine, "_pipe", object())
+    monkeypatch.setattr(imagine, "_last_used", _time.time())   # used just now
+    imagine._reap()
+    assert imagine._pipe is not None
+    monkeypatch.setattr(imagine, "_last_used", _time.time() - imagine.IDLE_RELEASE - 10)
+    imagine._reap()
+    assert imagine._pipe is None
+
+
+def test_the_reaper_never_holds_up_a_shutdown(monkeypatch):
+    monkeypatch.setattr(imagine, "_reaper", None)
+    imagine._arm_reaper()
+    try:
+        assert imagine._reaper.daemon is True
+    finally:
+        imagine._reaper.cancel()

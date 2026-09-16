@@ -59,8 +59,60 @@ DEFAULT_SIZE = 512
 # seconds. Whisper needs some of them to hear the next sentence, so it does not get all eight.
 THREADS = max(1, (os.cpu_count() or 4) - 2)
 
+# Loaded, the model holds 5.4 GB of memory — measured — and this machine has 22 GB with Electron,
+# a browser and Ollama already in it. Pictures come in bursts and then not for hours, so it is
+# kept for a few minutes after the last one and then let go. Reloading costs about ten seconds
+# cold and rather less once the files are in the page cache; holding a quarter of the machine's
+# memory overnight to save that is the wrong way round.
+IDLE_RELEASE = 300.0
+
 _pipe = None
+_last_used = 0.0
 _lock = threading.Lock()        # one picture at a time; the model is not re-entrant
+_reaper: Optional[threading.Timer] = None
+
+
+def release() -> bool:
+    """Drop the model and give the memory back. True when something was actually released.
+
+    Takes the same lock as generation, so it can never pull the model out from under a picture
+    that is halfway through.
+    """
+    global _pipe, _reaper
+    with _lock:
+        if _pipe is None:
+            return False
+        _pipe = None
+        if _reaper is not None:
+            _reaper.cancel()
+            _reaper = None
+    import gc
+
+    gc.collect()
+    # Python hands the pages back to its allocator, not to the kernel. malloc_trim is what
+    # actually returns them, and without it the resident size barely moves.
+    try:
+        import ctypes
+
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:  # noqa: BLE001 — a nicety, not a requirement
+        pass
+    return True
+
+
+def _arm_reaper() -> None:
+    """Release the model once it has gone unused for long enough."""
+    global _reaper
+    if _reaper is not None:
+        _reaper.cancel()
+    _reaper = threading.Timer(IDLE_RELEASE, _reap)
+    _reaper.daemon = True       # never hold up a shutdown for this
+    _reaper.start()
+
+
+def _reap() -> None:
+    if _pipe is not None and time.time() - _last_used >= IDLE_RELEASE - 1:
+        release()
 
 
 def _cache() -> Path:
@@ -165,8 +217,10 @@ def generate(prompt: str, *, steps: int = DEFAULT_STEPS, size: int = DEFAULT_SIZ
     size = max(256, min(768, int(size) // 8 * 8))
     steps = max(1, min(8, int(steps)))
 
+    global _last_used
     with _lock:
         pipe = _load()
+        _last_used = time.time()
         import torch
 
         generator = torch.Generator("cpu").manual_seed(seed) if seed is not None else None
@@ -175,6 +229,8 @@ def generate(prompt: str, *, steps: int = DEFAULT_STEPS, size: int = DEFAULT_SIZ
                      height=size, width=size, generator=generator).images[0]
         elapsed = time.time() - started
 
+    _last_used = time.time()
+    _arm_reaper()
     path = _filename(text)
     image.save(path)
     return Picture(path=path, prompt=text, seconds=round(elapsed, 1), steps=steps, size=size)
