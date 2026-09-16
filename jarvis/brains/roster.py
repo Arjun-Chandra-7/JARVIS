@@ -40,7 +40,7 @@ ROSTER: tuple[Specialist, ...] = (
         name="desk",
         does="short commands about this machine",
         cues=("open", "close", "launch", "volume", "brightness", "mute", "screenshot",
-              "screen", "click", "type", "window", "app"),
+              "click", "type", "window", "app"),
         instruction=(
             "You carry out one action on this computer and report what happened. Use a tool or "
             "say plainly that you cannot. Never describe what you are about to do."
@@ -158,7 +158,8 @@ ROSTER: tuple[Specialist, ...] = (
     Specialist(
         name="watcher",
         does="what is on the screen right now",
-        cues=("on my screen", "see", "look at", "reading", "what does it say", "this window"),
+        cues=("on my screen", "my screen", "the screen", "screen say", "see", "look at",
+              "reading", "what does it say", "what is on", "this window"),
         instruction=(
             "You describe what is actually visible. Read the text before interpreting it, and "
             "separate what is on the screen from what you infer about it."
