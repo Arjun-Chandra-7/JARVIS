@@ -925,6 +925,12 @@ function handleEvent(kind, text) {
 // ---------------------------------------------------------------- keyboard
 document.addEventListener("keydown", (e) => {
   // Typing is the commonest thing to want and it needed a click on the right box first.
+  if (/^[1-4]$/.test(e.key) && !/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || "")
+      && state.form === "workspace") {
+    e.preventDefault();
+    selectTab(TABS[Number(e.key) - 1]);
+    return;
+  }
   if (e.key === "/" && !/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || "")) {
     e.preventDefault();
     if (state.form === "pill") setForm("conversation");
