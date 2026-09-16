@@ -521,7 +521,13 @@ body[data-form="conversation"] #tab-system { display: none; }
 .ghost-btn.danger:hover { border-color: var(--error); color: var(--error); }
 
 /* --------------------------- composer --------------------------- */
-.composer { flex: 0 0 auto; display: grid; gap: var(--space-2); }
+.composer {
+  flex: 0 0 auto;
+  display: grid;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
 .composer-row { display: flex; gap: var(--space-2); align-items: stretch; }
 
 .input {
