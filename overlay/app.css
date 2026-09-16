@@ -255,7 +255,21 @@ body[data-form="conversation"] #tab-system { display: none; }
 }
 .tab:hover { color: var(--text-secondary); }
 .tab.is-active { color: var(--text-primary); }
-.tab.is-active::after {
+.tab::after {
+  content: "";
+  position: absolute;
+  left: var(--space-2);
+  right: var(--space-2);
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: center;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.tab.is-active::after { transform: scaleX(1); }
+.tab.is-active::after.legacy {
   content: "";
   position: absolute;
   left: var(--space-3);
