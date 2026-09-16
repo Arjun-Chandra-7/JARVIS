@@ -692,10 +692,11 @@ els.memorySearch.addEventListener("submit", async (e) => {
   e.preventDefault();
   const q = els.memoryQuery.value.trim();
   if (!q) return;
-  els.memoryResults.innerHTML = '<p class="empty">Searching…</p>';
+  els.memoryResults.classList.add("is-searching");
   try {
     const r = await fetch(`${API}/memory/search?q=${encodeURIComponent(q)}`);
     const j = await r.json();
+    els.memoryResults.classList.remove("is-searching");
     renderMemory(j.results || []);
   } catch (err) {
     els.memoryResults.innerHTML = `<p class="empty">Search failed: ${escapeHtml(err.message)}</p>`;

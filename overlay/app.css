@@ -1108,3 +1108,8 @@ body[data-state="speaking"] .panel::before { opacity: 1; }
   background: var(--accent-glow);
   color: var(--text-primary);
 }
+
+
+/* A search that takes a moment showed the previous results until the new ones replaced them, so
+ * there was no moment where the panel admitted it was working. */
+.is-searching { opacity: 0.55; transition: opacity var(--dur-fast) var(--ease-out); }
