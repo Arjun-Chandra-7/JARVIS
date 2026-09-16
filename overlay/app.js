@@ -924,6 +924,15 @@ function handleEvent(kind, text) {
 
 // ---------------------------------------------------------------- keyboard
 document.addEventListener("keydown", (e) => {
+  // Typing is the commonest thing to want and it needed a click on the right box first.
+  if (e.key === "/" && !/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || "")) {
+    e.preventDefault();
+    if (state.form === "pill") setForm("conversation");
+    selectTab("chat");
+    els.input.focus();
+    return;
+  }
+
   // Escape always steps back: clear context, then collapse, then hide.
   if (e.key === "Escape") {
     if (state.context) return void clearContext();
