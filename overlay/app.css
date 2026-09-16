@@ -530,7 +530,15 @@ body[data-form="conversation"] #tab-system { display: none; }
               border-color var(--dur-fast) var(--ease-out);
 }
 .ghost-btn:hover { background: var(--surface-hover); color: var(--text-primary); }
-.ghost-btn.danger:hover { border-color: var(--error); color: var(--error); }
+.ghost-btn.danger {
+  color: var(--error);
+  border-color: transparent;
+}
+.ghost-btn.danger:hover {
+  color: var(--error);
+  border-color: var(--error);
+  background: var(--error-dim);
+}
 
 /* --------------------------- composer --------------------------- */
 .composer {
