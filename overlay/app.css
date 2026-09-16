@@ -1051,3 +1051,22 @@ body[data-state="speaking"] .panel::before { opacity: 1; }
   outline-offset: 2px;
   border-radius: var(--radius-chip);
 }
+
+/* Everything that scrolls, not just the transcript: the cards list, memory results and the
+ * event log each had the platform's default bar, which is wider and brighter than the panel. */
+.cards,
+.memory-results,
+.log-dump,
+.inspector {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.cards::-webkit-scrollbar,
+.memory-results::-webkit-scrollbar,
+.log-dump::-webkit-scrollbar { width: 8px; }
+.cards::-webkit-scrollbar-thumb,
+.memory-results::-webkit-scrollbar-thumb,
+.log-dump::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
