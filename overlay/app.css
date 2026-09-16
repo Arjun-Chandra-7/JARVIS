@@ -1259,3 +1259,10 @@ body[data-state="speaking"] .meter { max-height: 20px; opacity: 1; }
 body[data-state="thinking"] .pill-state { color: var(--accent-dim); }
 body[data-state="speaking"] .pill-state { color: var(--accent); }
 body[data-state="offline"] .pill-state { color: var(--text-faint); }
+
+
+/* The pill is movable and nothing said so. A cursor is the cheapest possible hint. */
+body[data-form="pill"] .pillbar { cursor: grab; }
+body[data-form="pill"] .pillbar:active { cursor: grabbing; }
+body[data-form="pill"] .orb,
+body[data-form="pill"] .icon-btn { cursor: pointer; }
