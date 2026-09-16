@@ -381,6 +381,24 @@ function watchScreencast() {
   }
 }
 
+// Only one Jarvis. Without this, starting it a second time — the launcher clicked twice, the
+// service running alongside a manual start — silently brings up a whole second copy: a second
+// window, a second compositor process, a second websocket to the backend, and two of every poll
+// loop. It was measured happening on this machine: two overlays, 27% of a core each.
+//
+// Nothing warns you, because both copies work. The second start now hands its request to the
+// copy already running and gets out of the way, which is also what a person clicking the
+// launcher again actually wants: show me Jarvis.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!win || win.isDestroyed()) return;
+    if (win.isMinimized()) win.restore();
+    show({ focus: true });
+  });
+}
+
 app.whenReady().then(() => {
   loadState();
 
