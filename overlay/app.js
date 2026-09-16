@@ -926,8 +926,9 @@ function handleEvent(kind, text) {
 // ---------------------------------------------------------------- keyboard
 document.addEventListener("keydown", (e) => {
   // Typing is the commonest thing to want and it needed a click on the right box first.
-  if (/^[1-4]$/.test(e.key) && !/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || "")
-      && state.form === "workspace") {
+  // Alt, not a bare number: expanding the panel puts the cursor in the input, so plain 1-4 were
+  // unreachable exactly when someone would want them, and typing a digit would have moved the tab.
+  if (/^[1-4]$/.test(e.key) && e.altKey && state.form === "workspace") {
     e.preventDefault();
     selectTab(TABS[Number(e.key) - 1]);
     return;
