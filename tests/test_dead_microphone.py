@@ -99,3 +99,55 @@ def test_naming_the_device_never_throws(monkeypatch):
     monkeypatch.setattr(sd, "query_devices", explode)
     assert inputs.describe() == "the default microphone"
     assert "the default microphone" in inputs.advice()
+
+
+# --------------------------------------------------------------- asking for mono breaks capture
+class _FakeSd:
+    def __init__(self, most):
+        self.most = most
+
+    def query_devices(self, device=None, kind=None):
+        if self.most is None:
+            raise RuntimeError("no audio server")
+        return {"max_input_channels": self.most}
+
+
+@pytest.mark.parametrize("advertised, asked_for", [
+    (128, 2),   # the audio server's catch-all "default" device
+    (2, 2),     # an ordinary stereo capture device
+    (32, 2),    # the "pulse" alias
+    (1, 1),     # a headset microphone addressed directly, genuinely mono
+    (0, 1),
+])
+def test_two_channels_are_asked_for_whenever_the_device_has_them(advertised, asked_for):
+    """Asking the catch-all device for one channel returns garbage, not audio. Measured on the
+    same stream in the same second: channel 0 was the room at peak 0.0005, channel 1 was a
+    750 Hz tone at full scale, and a mono request came back as that tone at peak 0.599."""
+    from jarvis.audio.mic import Microphone
+    assert Microphone._native_channels(_FakeSd(advertised), None) == asked_for
+
+
+def test_an_unqueryable_device_still_gets_two():
+    """Whatever went wrong, one channel is the option known to return garbage."""
+    from jarvis.audio.mic import Microphone
+    assert Microphone._native_channels(_FakeSd(None), None) == 2
+
+
+def test_the_frame_is_the_first_channel_never_a_mix_of_them():
+    """Averaging looks like the careful thing to do and was tried: it put the full-scale tone
+    from channel 1 over the microphone at half amplitude, peak 0.50, hiding the speech."""
+    import numpy as np
+    from jarvis.audio.mic import Microphone
+
+    mic = Microphone.__new__(Microphone)          # no device, no stream
+    mic.frame_length = 4
+    mic.channels = 2
+
+    class _Stream:
+        def read(self, _n):
+            room = np.array([10, -12, 9, -8], dtype="int16")
+            tone = np.array([32000, -32000, 32000, -32000], dtype="int16")
+            return np.stack([room, tone], axis=1), False
+
+    mic._stream = _Stream()
+    assert mic.read() == [10, -12, 9, -8]
