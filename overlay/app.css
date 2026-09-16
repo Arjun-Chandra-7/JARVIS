@@ -178,10 +178,10 @@ body[data-state="thinking"] .orb-ring {
 .pill-state {
   font-size: var(--text-sm);
   color: var(--text-secondary);
-  letter-spacing: 0.01em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  transition: color var(--dur-fast) var(--ease-out);
 }
 body[data-state="listening"] .pill-state { color: var(--accent); }
 body[data-state="failed"] .pill-state { color: var(--error); }
