@@ -630,7 +630,16 @@ body[data-form="conversation"] #tab-system { display: none; }
  * metadata. As flex items with flex-shrink 0 they keep their content height. */
 .cards { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex;
          flex-direction: column; gap: var(--space-2); }
-.cards > .card { flex: 0 0 auto; }
+.cards > .card {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-card);
+  transition: box-shadow var(--dur-fast) var(--ease-out);
+}
+.card:hover { box-shadow: var(--shadow-lifted); }
 .card {
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
