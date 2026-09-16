@@ -699,6 +699,7 @@ els.memorySearch.addEventListener("submit", async (e) => {
     els.memoryResults.classList.remove("is-searching");
     renderMemory(j.results || []);
   } catch (err) {
+    els.memoryResults.classList.remove("is-searching");
     els.memoryResults.innerHTML = `<p class="empty">Search failed: ${escapeHtml(err.message)}</p>`;
   }
 });
