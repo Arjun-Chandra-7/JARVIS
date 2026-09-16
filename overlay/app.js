@@ -150,7 +150,8 @@ function addMessage(who, text, { kind = "", animate = true } = {}) {
   if (label) el.setAttribute("aria-label", `${label} said`);
   el.innerHTML =
     (label ? `<span class="msg-who">${label}</span>` +
-             `<span class="msg-time">${time}</span>` : "") +
+             `<span class="msg-time">${time}</span>` +
+             `<button class="msg-copy" type="button" title="Copy">copy</button>` : "") +
     `<div class="msg-body">${renderInline(text)}</div>`;
   els.log.appendChild(el);
   while (els.log.children.length > 120) els.log.removeChild(els.log.firstChild);
@@ -186,9 +187,24 @@ function offerChoices(el, text) {
   el.appendChild(row);
 }
 
-els.log.addEventListener("click", (e) => {
+els.log.addEventListener("click", async (e) => {
   const chip = e.target.closest(".choice");
-  if (chip && chip.dataset.say) send(chip.dataset.say);
+  if (chip && chip.dataset.say) {
+    send(chip.dataset.say);
+    return;
+  }
+  const copy = e.target.closest(".msg-copy");
+  if (!copy) return;
+  const body = copy.closest(".msg")?.querySelector(".msg-body");
+  if (!body) return;
+  try {
+    await navigator.clipboard.writeText(body.innerText);
+    copy.textContent = "copied";
+    setTimeout(() => { copy.textContent = "copy"; }, 1200);
+  } catch {
+    copy.textContent = "can't";
+    setTimeout(() => { copy.textContent = "copy"; }, 1200);
+  }
 });
 
 function prefersStill() {
