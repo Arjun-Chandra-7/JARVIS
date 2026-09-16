@@ -7,6 +7,7 @@ not allow launching arbitrary apps remotely, so that's the ceiling.
 
 from __future__ import annotations
 
+import re
 import os
 import shutil
 import subprocess
@@ -202,3 +203,61 @@ def read_clipboard() -> str | None:
         except Exception:  # noqa: BLE001
             continue
     return None
+
+
+# Browsers by the names people say. "Open YouTube on Chrome" names the browser, not a website to
+# search inside — but the phrase has the same shape as "open Friends on Netflix", so it was being
+# read the second way and the page opened in whatever browser Jarvis normally drives.
+BROWSERS: dict[str, tuple[str, ...]] = {
+    "chrome": ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"),
+    "google chrome": ("google-chrome", "google-chrome-stable"),
+    "chromium": ("chromium", "chromium-browser"),
+    "firefox": ("firefox", "firefox-esr"),
+    "opera": ("opera", "opera-gx"),
+    "opera gx": ("opera-gx", "opera"),
+    "edge": ("microsoft-edge", "microsoft-edge-stable"),
+    "microsoft edge": ("microsoft-edge", "microsoft-edge-stable"),
+    "brave": ("brave-browser", "brave"),
+    "vivaldi": ("vivaldi", "vivaldi-stable"),
+    "tor": ("torbrowser-launcher", "tor-browser"),
+}
+
+
+def browser_named(name: str) -> Optional[str]:
+    """The executable for a browser someone named aloud, or None when it is not one."""
+    import shutil
+
+    key = re.sub(r"\s+", " ", (name or "").strip().lower())
+    key = re.sub(r"\b(?:browser|web)\b", "", key).strip()
+    candidates = BROWSERS.get(key)
+    if candidates is None:
+        # "google chrome browser", "the firefox" and so on.
+        for known, exes in BROWSERS.items():
+            if known in key or key in known:
+                candidates = exes
+                break
+    if not candidates:
+        return None
+    for exe in candidates:
+        found = shutil.which(exe)
+        if found:
+            return found
+    return None
+
+
+def open_url_in(browser: str, url: str) -> bool:
+    """Open a page in the browser that was asked for, rather than the usual one."""
+    import os
+    import subprocess
+
+    exe = browser_named(browser)
+    if not exe or not url:
+        return False
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("LD_LIBRARY_PATH", "LD_PRELOAD", "GTK_PATH", "GIO_MODULE_DIR")}
+    try:
+        subprocess.Popen([exe, url], env=env, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+        return True
+    except OSError:
+        return False

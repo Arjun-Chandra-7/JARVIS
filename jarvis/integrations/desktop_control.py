@@ -509,4 +509,17 @@ def click_target(target: str, button: str = "left", double: bool = False, config
 
     if available() is None:
         return "Desktop control isn't ready — run scripts/enable-control.sh once."
+
+    # Read the screen before asking a model to look at it. "Where is the Allow button" is a
+    # question about text, and OCR answers it in about a second with an exact box; the vision
+    # model took eleven seconds to place one target and then could not confirm its own answer.
+    from ..vision import ocr
+
+    if ocr.available():
+        word = ocr.find(target)
+        if word is not None:
+            if move_click(word.x, word.y, button, double):
+                return f"Clicked “{word.text}” on screen at ({word.x}, {word.y})."
+            return f"I found “{word.text}” on screen but the click did not go through."
+
     return find_and_click(target, button, double, config)

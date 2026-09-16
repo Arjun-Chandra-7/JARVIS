@@ -99,6 +99,17 @@ async def run(target: str, config) -> str:
     if pair:
         where = pair.group("where").strip()
         what = pair.group("what").strip()
+
+        # "open YouTube on Chrome" names the browser to use. It has the same shape as "open
+        # Friends on Netflix", which names a site to search inside, so it was read the second way
+        # and the page opened in whichever browser Jarvis normally drives.
+        from .integrations import apps
+
+        if apps.browser_named(where):
+            url = browser.resolve_site(what)
+            if apps.open_url_in(where, url):
+                return f"Opened {what} in {where}."
+            return f"I couldn't start {where}."
         if browser._is_known_destination(where) or browser._closest_site(where.lower()):
             if config.browser_control and browser.ensure(browser.resolve_site(where))["ok"]:
                 await browser.open_site(where)

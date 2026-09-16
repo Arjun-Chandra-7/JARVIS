@@ -13,6 +13,7 @@ needs no extra permission and no new dependency — selecting text in any applic
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from typing import Optional
@@ -87,21 +88,43 @@ def active_window() -> Optional[str]:
     return None
 
 
+# Questions about meaning rather than wording — these are worth the vision model's time.
+_IS_ABOUT_TEXT = re.compile(
+    r"\b(?:read|says?|saying|text|written|word|words|error|message|title|label|"
+    r"what does it say|transcribe)\b", re.IGNORECASE)
+
+
 def screen(question: str = "", config=None) -> Optional[str]:
-    """A textual reading of the screen, via the screenshot path plus a vision model."""
+    """A textual reading of the screen.
+
+    Two different questions get two different tools. "What does it say" is answered by reading
+    the words, which takes a second or so and reports them exactly. "What am I looking at" is
+    about meaning, and that is what the vision model is for — it is slower and it paraphrases,
+    which is the right trade only when the answer is not already written on the screen.
+    """
     from ..config import CONFIG
-    from ..vision import analyze, screenshot
+    from ..vision import analyze, ocr, screenshot
 
     path = screenshot.capture("/tmp")
     if not path:
         return None
+
+    wants_meaning = bool(question) and not _IS_ABOUT_TEXT.search(question)
+    if not wants_meaning and ocr.available():
+        words = ocr.read(path)
+        if words:
+            return ocr.describe(words)
+
     described = analyze.describe(
         path,
         question or "Describe what is on this screen, including any visible text, errors and "
                     "which application is in focus.",
         config or CONFIG,
     )
-    return described or None
+    if described:
+        return described
+    # The model is unavailable or gave nothing; the words are better than silence.
+    return ocr.describe(ocr.read(path)) if ocr.available() else None
 
 
 def capture(kind: str) -> dict:

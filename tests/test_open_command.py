@@ -182,3 +182,27 @@ def test_a_qualified_noun_is_still_not_a_launch(text):
 def test_the_guard_does_not_swallow_real_launches(text):
     loose = oc.parse_loose(text)
     assert oc.parse(text) is not None or (loose and oc._resolves(loose))
+
+
+# ------------------------------------------------- naming the browser, not a site to search in
+def test_a_browser_name_is_recognised_as_one():
+    """"open YouTube on Chrome" has the same shape as "open Friends on Netflix", so it was read
+    as a site to search inside and the page opened in whichever browser Jarvis normally drives."""
+    from jarvis.integrations import apps
+
+    for said in ("chrome", "google chrome", "firefox", "opera gx"):
+        assert apps.browser_named(said), said
+
+
+def test_a_website_is_not_mistaken_for_a_browser():
+    from jarvis.integrations import apps
+
+    for said in ("netflix", "youtube", "spotify", "friends", ""):
+        assert apps.browser_named(said) is None, said
+
+
+def test_the_browser_half_is_separated_from_the_page():
+    target = oc.parse("open youtube on chrome")
+    match = oc._ON_SITE_RE.match(target)
+    assert match.group("what") == "youtube"
+    assert match.group("where") == "chrome"
