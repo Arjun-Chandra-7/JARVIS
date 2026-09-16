@@ -1135,3 +1135,9 @@ body[data-state="speaking"] .panel::before { opacity: 1; }
 /* A search that takes a moment showed the previous results until the new ones replaced them, so
  * there was no moment where the panel admitted it was working. */
 .is-searching { opacity: 0.55; transition: opacity var(--dur-fast) var(--ease-out); }
+
+
+/* The orb opens the conversation, and nothing about it said it could be clicked. */
+.orb:hover .orb-core { filter: brightness(1.25); }
+.orb:active { transform: scale(0.94); }
+.orb { transition: transform var(--dur-fast) var(--ease-out); }
