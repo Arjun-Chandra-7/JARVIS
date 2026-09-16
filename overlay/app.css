@@ -988,3 +988,12 @@ body[data-state="speaking"] .panel::before { opacity: 1; }
   white-space: nowrap;
 }
 .choice:hover { border-color: var(--accent); color: var(--text-primary); }
+
+/* A conversation longer than the panel gave no sign of it: the first and last lines simply met
+ * the edge, so there was nothing to say whether anything was above or below. */
+.log {
+  --fade: 18px;
+  mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade),
+                              #000 calc(100% - var(--fade)), transparent 100%);
+}
+.log.at-top { --fade: 0px; }
