@@ -778,7 +778,15 @@ body[data-form="conversation"] #tab-system { display: none; }
 .inspector { border-top: 1px solid var(--border); padding-top: var(--space-3);
              flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .inspector[open] { overflow: hidden; }
-.inspector summary { cursor: pointer; color: var(--text-muted); font-size: var(--text-sm); }
+.inspector summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  padding: var(--space-1) 0;
+  user-select: none;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.inspector summary:hover { color: var(--text-primary); }
 .setting { margin: var(--space-3) 0; display: grid; gap: var(--space-2); }
 .setting label { font-size: var(--text-sm); color: var(--text-secondary); }
 .setting-row { display: flex; gap: var(--space-2); }
