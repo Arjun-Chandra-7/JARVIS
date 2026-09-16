@@ -80,7 +80,24 @@ def test_what_is_being_asked_for(said, subject):
 
 @pytest.mark.parametrize("said", ["draw it", "draw", "open netflix", "what is the volume"])
 def test_not_a_drawing_request(said):
+    """"Draw it" with nothing to point at is still not a request — the context is cleared here
+    because it is global, and a picture left behind by another test would give "it" a meaning."""
+    from jarvis import context
+    context.forget("local")
     assert draw_command.parse(said) is None
+
+
+def test_draw_it_means_the_picture_that_was_just_made():
+    """The other half of the rule above: once Jarvis has generated a picture, "it" is that."""
+    from jarvis import context
+    context.forget("local")
+    assert draw_command.parse("draw it on a whiteboard") is None
+    context.note_picture("/tmp/whatever.png")
+    try:
+        assert draw_command.parse("draw it on a whiteboard") == "it"
+        assert draw_command.parse("draw this") == "this"
+    finally:
+        context.forget("local")
 
 
 def test_tone_is_what_makes_it_a_picture(tmp_path):

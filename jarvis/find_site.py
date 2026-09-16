@@ -162,6 +162,15 @@ _BRIDGE = re.compile(
 )
 
 
+# Trailing politeness. "Draw this for me" is a request to draw this, not to draw "this for me".
+_COURTESY = re.compile(r"(?ix)\s*\b(?:for\s+me|please|thanks|thank\s+you|sir|now)\b\s*$")
+
+# A subject that points at something already made rather than naming a thing to look up.
+_POINTS_AT_A_PICTURE = re.compile(
+    r"(?ix)^(?:this|it|that|them|the\s+(?:image|picture|photo|one)|"
+    r"(?:this|that)\s+(?:image|picture|photo))$")
+
+
 def parse_find_and_draw(text: str) -> Optional[tuple[str, str]]:
     """(kind of surface to find, what to draw on it), or None."""
     said = (text or "").strip().rstrip(".!?")
@@ -176,6 +185,7 @@ def parse_find_and_draw(text: str) -> Optional[tuple[str, str]]:
     halves = _JOIN.split(said, maxsplit=1)
     if len(halves) == 2 and _SURFACE.search(halves[0]):
         subject = _OF.sub("", _LEAD.sub("", halves[1].strip())).strip()
+        subject = _COURTESY.sub("", subject).strip(" ,.;:!?")
         if subject:
             return (re.sub(r"\s+", " ", surface.group(1).lower()), subject)
 
@@ -189,8 +199,12 @@ def parse_find_and_draw(text: str) -> Optional[tuple[str, str]]:
     # Mona Lisa" is asking for the Mona Lisa.
     subject = _FILLER_RUN.sub("", subject).strip(" ,.;:!?")
     subject = _OF.sub("", _LEAD.sub("", subject)).strip()
+    subject = _COURTESY.sub("", subject).strip(" ,.;:!?")
     if len(subject) < 3 or not re.search(r"[a-z]{3}", subject, re.IGNORECASE):
-        return None
+        # "draw this for me" leaves "this", which is two characters and means something precise:
+        # the picture just generated. The length guard exists to reject transcription debris, not
+        # to reject a pronoun that the drawing handler knows how to resolve.
+        return (re.sub(r"\s+", " ", surface.group(1).lower()), subject) if _POINTS_AT_A_PICTURE.match(subject) else None
     return (re.sub(r"\s+", " ", surface.group(1).lower()), subject)
 
 
@@ -199,7 +213,27 @@ async def handle(text: str, config=None) -> Optional[str]:
     pair = parse_find_and_draw(text)
     if pair:
         kind, subject = pair
+        from . import context
         from .draw_command import run as draw
+        from .integrations import browser
+
+        # A surface already in front of us is the one to draw on. This is not only faster: going
+        # off to find another whiteboard navigates away from the board just drawn on, which is
+        # exactly the wrong thing for the follow-up that asks for this — "now Albert Einstein"
+        # means on that board, not on a fresh one somewhere else.
+        already = None
+        if browser.control_ready():
+            try:
+                already = await browser.canvas_box()
+            except Exception:  # noqa: BLE001 — no page, no canvas; fall through and find one
+                already = None
+
+        if already:
+            said = await draw(subject, config)
+            if said.startswith("Drew "):
+                context.note_action(text, subject)
+            return said
+
         try:
             found = await find(kind, f"free online {kind} no signup")
         except NoBrowserControl as why:
@@ -208,6 +242,9 @@ async def handle(text: str, config=None) -> Optional[str]:
             return f"I couldn't find a {kind} that actually worked, sir."
         await asyncio.sleep(2.0)
         said = await draw(subject, config)
+        # Remembered so "now Albert Einstein" rebuilds this whole request, surface and all.
+        if said.startswith("Drew "):
+            context.note_action(text, subject)
         return f"Found {found.host} and {said[0].lower()}{said[1:]}"
 
     purpose = parse(text)
