@@ -41,6 +41,15 @@ contextBridge.exposeInMainWorld("jarvis", {
       ipcRenderer.send("open-external", url);
     }
   },
+  // Open a picture Jarvis generated. A separate channel rather than letting openExternal take
+  // file:// URLs: that one is for the web, and widening it to the filesystem would let any link
+  // in any reply open any file on this machine. The main process checks the path again and only
+  // accepts one inside the folder Jarvis writes pictures to.
+  openPicture: (path) => {
+    if (typeof path === "string" && path.includes("/Pictures/Jarvis/") && !path.includes("..")) {
+      ipcRenderer.send("open-picture", path);
+    }
+  },
 
   // --- main -> renderer ---------------------------------------------------
   onToast: (cb) => ipcRenderer.on("toast", (_e, msg) => cb(String(msg))),

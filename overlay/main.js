@@ -365,6 +365,21 @@ ipcMain.on("open-external", (_e, url) => {
   if (typeof url === "string" && /^https?:\/\//.test(url)) shell.openExternal(url);
 });
 
+// Generated pictures only. The renderer already filtered, but the renderer is the side that
+// renders text written by a language model, so the path is resolved here — which collapses any
+// ".." and any symlink in it — and opened only if it is still inside the pictures folder.
+const PICTURES = path.join(app.getPath("home"), "Pictures", "Jarvis");
+ipcMain.on("open-picture", (_e, file) => {
+  if (typeof file !== "string") return;
+  let real;
+  try {
+    real = fs.realpathSync(path.resolve(file));
+  } catch {
+    return;                       // not a file that exists; nothing to open
+  }
+  if (real === PICTURES || real.startsWith(PICTURES + path.sep)) shell.openPath(real);
+});
+
 function handlerFor(which) {
   if (which === "toggle") return toggle;
   if (which === "workspace") return () => show({ focus: true, to: "workspace" });

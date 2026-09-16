@@ -214,6 +214,30 @@ body[data-state="offline"] .pill-state { color: var(--text-muted); }
   transition: opacity var(--dur-base) var(--ease-out);
 }
 .pill-reply[data-shown] { opacity: 1; }
+
+/* A picture on the pill. Square and small — it is a "here it is", not a viewer; the conversation
+ * below shows it properly and a click gets to the file itself. */
+.pill-thumb {
+  width: 46px;                    /* THUMB in app.js */
+  height: 46px;
+  object-fit: cover;
+  border-radius: var(--radius-chip);
+  float: left;
+  margin: 0 var(--space-2) 0 0;
+  background: var(--surface-raised);
+}
+.pill-reply.has-thumb { -webkit-line-clamp: 3; }
+
+.msg-picture {
+  display: block;
+  clear: both;
+  max-width: min(100%, 320px);
+  margin-top: var(--space-2);
+  border-radius: var(--radius-card);
+  border: 1px solid var(--border);
+  cursor: zoom-in;
+  background: var(--surface-raised);
+}
 .pill-reply:hover { color: var(--accent-bright); }
 .pill-reply:focus-visible { outline: 1px solid var(--border-focus); outline-offset: 2px; }
 

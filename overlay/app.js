@@ -179,26 +179,74 @@ function readingTime(text) {
 
 let replyTimer = 0;
 
+// A reply that made a picture names the file it wrote. Showing the picture is the whole point of
+// having asked for one, and a path is not a picture.
+//
+// Deliberately narrow: only files Jarvis itself writes pictures to. The renderer will happily
+// load any file:// image it is given, and a reply is text from a language model — it should not
+// be able to name an arbitrary path on the disk and have the window render it.
+const PICTURE_RE = /(\/[^\s"'<>]*\/Pictures\/Jarvis\/[^\s"'<>]+\.(?:png|jpe?g|webp))/;
+
+function pictureIn(text) {
+  const found = PICTURE_RE.exec(text || "");
+  return found ? found[1] : null;
+}
+
+// Once the picture itself is on the pill, the path is noise and so is being told it was saved —
+// "Made it in 7.7 seconds, sir — saved to 20260916-125534_a_fox.png" says nothing the picture and
+// the clock do not. The clause goes; what is left is the part worth reading.
+//
+// A phrasing this does not recognise keeps its path, shortened to the file name, rather than
+// being mangled — an odd-looking reply is better than a wrong one.
+function withoutTheLongPath(text, path) {
+  const quoted = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const trimmed = (text || "")
+    .replace(new RegExp(`\\s*(?:[—-]|,)?\\s*(?:and\\s+)?saved to\\s+${quoted}`), "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  if (!trimmed.includes(path)) return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+  return trimmed.replace(path, path.split("/").pop());
+}
+
 // The pill is 280px wide and about twenty-five characters fit on a line, so most answers need
 // more room than it has. It is given up to two extra lines — beyond that an answer is something
 // to read in the panel, not on a chip — and the pill grows to fit and shrinks back after.
 const REPLY_LINE = 18;
 const REPLY_MAX_LINES = 3;
+const THUMB = 46;               /* .pill-thumb in app.css — the two must agree */
 
 function showOnPill(text) {
   const line = (text || "").replace(/\s+/g, " ").trim();
   clearTimeout(replyTimer);
   if (!line) return hideFromPill();
-  els.pillReply.textContent = line;
+  const picture = pictureIn(line);
+  const shown = picture ? withoutTheLongPath(line, picture) : line;
+  els.pillReply.textContent = shown;
   els.pillReply.hidden = false;
+  els.pillReply.classList.toggle("has-thumb", Boolean(picture));
 
-  // Measured rather than guessed from the character count: the font is proportional, so "Opened
-  // Netflix" and "WWWWWWWWWWWWWW" are the same length and nothing like the same width.
+  if (picture) {
+    // Built as an element with its src assigned, never by pasting a path into markup.
+    const img = document.createElement("img");
+    img.className = "pill-thumb";
+    img.src = `file://${picture}`;
+    img.alt = "";
+    els.pillReply.prepend(img);
+  }
+
+  // Measured, and measured with the thumbnail already in place. The font is proportional, so
+  // "Opened Netflix" and "WWWWWWWWWWWWWW" are the same length and nothing like the same width;
+  // and a thumbnail floated beside the text takes 46 of the 162 pixels the line had, so a
+  // measurement taken before it was inserted clamped a two-word answer down to "Made it in 7.7…".
   els.pillReply.style.whiteSpace = "normal";
+  els.pillReply.style.webkitLineClamp = String(REPLY_MAX_LINES);
   const lines = Math.min(REPLY_MAX_LINES,
     Math.max(1, Math.ceil(els.pillReply.scrollHeight / REPLY_LINE)));
   els.pillReply.style.webkitLineClamp = String(lines);
-  window.jarvis?.growPill?.((lines - 1) * REPLY_LINE);
+
+  // The pill has to clear the thumbnail even when the words beside it would have fitted on one.
+  const needed = Math.max(lines * REPLY_LINE, picture ? THUMB : 0);
+  window.jarvis?.growPill?.(Math.max(0, needed - REPLY_LINE));
 
   // A frame between unhiding and marking it shown, or the fade has nothing to fade from.
   requestAnimationFrame(() => els.pillReply.setAttribute("data-shown", ""));
@@ -243,6 +291,22 @@ function addMessage(who, text, { kind = "", animate = true } = {}) {
              `<span class="msg-time">${time}</span>` +
              `<button class="msg-copy" type="button" title="Copy">copy</button>` : "") +
     `<div class="msg-body">${renderInline(text)}</div>`;
+  // The same picture, at a size worth looking at, in the conversation. Appended as an element so
+  // the path never passes through innerHTML. Clicking opens it in the system image viewer.
+  //
+  // Attached to the message rather than to its body: a reply long enough to earn the typing
+  // animation has its body's innerHTML rebuilt on every frame of it, which threw the picture
+  // away each time. Every reply that makes a picture is long enough, so it never survived.
+  const picture = who === "jarvis" ? pictureIn(text) : null;
+  if (picture) {
+    const img = document.createElement("img");
+    img.className = "msg-picture";
+    img.src = `file://${picture}`;
+    img.alt = text;
+    img.title = "Open";
+    img.addEventListener("click", () => window.jarvis?.openPicture?.(picture));
+    el.appendChild(img);
+  }
   els.log.appendChild(el);
   while (els.log.children.length > 120) els.log.removeChild(els.log.firstChild);
   autoScroll();
