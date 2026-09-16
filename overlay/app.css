@@ -1170,3 +1170,18 @@ body[data-state="speaking"] .panel::before { opacity: 1; }
   background: var(--error-dim);
   box-shadow: inset 2px 0 0 var(--error);
 }
+
+
+/* Everything added since the last pass: the tab underline, the chip press, the orb press and the
+ * toast all animate, and someone who asks for less motion should get none of it. */
+@media (prefers-reduced-motion: reduce) {
+  .tab::after,
+  .chip,
+  .orb,
+  .toast,
+  .card,
+  .msg-copy,
+  .is-searching { transition: none; }
+  .chip:active,
+  .orb:active { transform: none; }
+}
