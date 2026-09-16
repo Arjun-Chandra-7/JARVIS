@@ -137,6 +137,13 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
     if sited is not None:
         return sited
 
+    # "What does my screen say" — read it. Left to the model this took twenty-three seconds and
+    # came back with "It's a screenshot of your current desktop."
+    from .screen_read_command import handle as read_screen
+    on_screen = await read_screen(raw, config)
+    if on_screen is not None:
+        return on_screen
+
     # "Tell me about this project" — the files are read here, deterministically, and only the
     # describing is left to the model. Asked to do both it answered "I'll check your files now"
     # and did nothing.
