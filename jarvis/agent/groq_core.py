@@ -295,10 +295,20 @@ class GroqAgent:
         """
         if not self.config.tool_routing or not self._route_query:
             return self.schemas
+        specialist = getattr(self, "_specialist", None)
         try:
-            return tool_router.select(
+            chosen = tool_router.select(
                 self.schemas, self._route_query, keep=self.config.tool_routing_keep
             )
+            if specialist is None or not specialist.tools:
+                return chosen
+            # The specialist's own tools go in front, and are never crowded out by the router's
+            # ranking. A coder should always be able to read a file even when the wording of the
+            # question did not say so.
+            wanted = [s for s in self.schemas
+                      if s["function"]["name"] in specialist.tools]
+            names = {s["function"]["name"] for s in wanted}
+            return wanted + [s for s in chosen if s["function"]["name"] not in names]
         except Exception:  # noqa: BLE001 - routing must never block a turn
             return self.schemas
 
