@@ -43,6 +43,10 @@
   /* --- elevation --- */
   --shadow-pill: 0 6px 24px rgba(0, 0, 0, 0.55), 0 1px 0 rgba(255, 255, 255, 0.05) inset;
   --shadow-panel: 0 18px 60px rgba(0, 0, 0, 0.65), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  /* A raised surface inside the panel — a card, a gauge — needs to lift off it without a border
+   * heavy enough to compete with the text it contains. */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.03);
+  --shadow-lifted: 0 4px 14px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.05);
 
   /* --- shape --- */
   --radius-pill: 26px;
