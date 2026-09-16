@@ -27,6 +27,113 @@ _WAKE_RE = re.compile(
     r"resume|back online|power (?:on|up)|boot up|reactivate)$")
 
 
+# The deterministic layer, in the order it is tried. Each entry answers with a string when the
+# request is its own and None when it is not, so the first one to recognise the request wins.
+#
+# This is a list rather than a run of if-statements because more than one thing walks it now:
+# a plain turn goes through it once, and a chained request — "generate a picture of X, then find
+# a whiteboard and draw it" — walks it once per part. Two copies of this order would drift, and
+# the order is the whole design.
+#
+# Imported inside each entry rather than at module scope: most turns touch two or three of these,
+# and importing the browser stack, the OCR stack and the diffusion stack on every turn would cost
+# far more than the routing saves.
+def deterministic_handlers():
+    """(name, handler) pairs, most specific first. Handlers return None to pass."""
+
+    async def chain(text, config):
+        # First, because a chained request contains the others' requests inside it. "Generate a
+        # picture of Iron Man, then draw it on a whiteboard" would otherwise be taken by the
+        # whiteboard handler, which would look for a picture that had not been made yet.
+        from .chain_command import handle as run_chain
+        return await run_chain(text, config)
+
+    async def system(text, config):
+        # Volume, brightness and mute: one meaning, one number, no ambiguity. Offered the
+        # registered set_brightness tool at the top of its shortlist, the local 3B brain answered
+        # "I don't have a tool for that" and then claimed the brightness had been set.
+        from .system_command import handle as f
+        return await f(text, config)
+
+    async def screen_click(text, config):
+        # An explicit visible click is a computer action, not an "open a website" request.
+        from .screen_command import handle as f
+        return await f(text, config)
+
+    async def take_browser_control(text, config):
+        # "Restart Opera with control" — the sentence Jarvis suggests whenever a browser action
+        # fails. It was reachable only through the model's tool choice, so it almost never happened.
+        from .browser_control_command import handle as f
+        return await f(text, config)
+
+    async def find_a_site(text, config):
+        # "Find a site that does X" — opened and checked, not chosen from a blurb. Before the
+        # plain draw handler, which would otherwise take the "draw…" half of a combined request.
+        from .find_site import handle as f
+        return await f(text, config)
+
+    async def read_screen(text, config):
+        # "What does my screen say" — read it. Left to the model this took twenty-three seconds
+        # and came back with "It's a screenshot of your current desktop."
+        from .screen_read_command import handle as f
+        return await f(text, config)
+
+    async def describe_project(text, config):
+        # "Tell me about this project" — the files are read here, deterministically, and only the
+        # describing is left to the model. Asked to do both it answered "I'll check your files
+        # now" and did nothing.
+        from .project_command import handle as f
+        return await f(text, config)
+
+    async def make_a_picture(text, config):
+        # "Make me a picture of X" — generated here and saved. Before the draw handler, which is
+        # the other half of the same idea: draw traces a reference onto an open whiteboard, this
+        # makes a file. Their verbs do not overlap.
+        from .imagine_command import handle as f
+        return await f(text, config)
+
+    async def draw_something(text, config):
+        # "Draw me X" — find a reference picture, reduce it to lines, draw them on the canvas.
+        from .draw_command import handle as f
+        return await f(text, config)
+
+    async def self_improve(text, config):
+        # "Fix yourself" — look at what has failed repeatedly and try to mend it.
+        from .selfimprove.command import handle as f
+        return await f(text, config)
+
+    async def run_task(text, config):
+        # Requests that are several actions in a row — "play the latest X video on YouTube" — are
+        # planned and executed step by step, each one checked, rather than handed to the model as
+        # one instruction it has to remember its way through. Before open_command, which would
+        # see only the first action.
+        from .task_runner import handle as f
+        return await f(text, config)
+
+    async def open_something(text, config):
+        # Last, so the specific handlers above keep priority: "open phone" and "open meet" are
+        # theirs. Everything else shaped like "open X" has one meaning, and measured, routing it
+        # through the local 3B model called no tool at all on three of five attempts at
+        # "open friends".
+        from .open_command import handle as f
+        return await f(text, config)
+
+    return [
+        ("chain", chain),
+        ("system", system),
+        ("screen_click", screen_click),
+        ("browser_control", take_browser_control),
+        ("find_site", find_a_site),
+        ("read_screen", read_screen),
+        ("project", describe_project),
+        ("imagine", make_a_picture),
+        ("draw", draw_something),
+        ("self_improve", self_improve),
+        ("task", run_task),
+        ("open", open_something),
+    ]
+
+
 async def handle(text: str, config, session_id: str = "local") -> str | None:
     from .hinglish import normalise
 
@@ -108,86 +215,10 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
                     r"|bluetooth(?: devices?| scan)|what(?:'?s| is) (?:on |around )?bluetooth", command):
         from .presence import bluetooth
         return await asyncio.to_thread(bluetooth.report, config)
-    # Volume, brightness and mute: one meaning, one number, no ambiguity. Offered the registered
-    # set_brightness tool at the top of its shortlist, the local 3B brain answered "I don't have a
-    # tool for that" and then claimed the brightness had been set.
-    from .system_command import handle as system_something
-    adjusted = await system_something(raw, config)
-    if adjusted is not None:
-        return adjusted
-
-    # An explicit visible click is a computer action, not an "open a website" request. Route it
-    # through the active native UI/screen targeter before the general open-command parser.
-    from .screen_command import handle as screen_something
-    clicked = await screen_something(raw, config)
-    if clicked is not None:
-        return clicked
-
-    # "Restart Opera with control" — the sentence Jarvis suggests whenever a browser action
-    # fails. It was reachable only through the model's tool choice, so it almost never happened.
-    from .browser_control_command import handle as take_browser_control
-    took = await take_browser_control(raw, config)
-    if took is not None:
-        return took
-
-    # "Find a site that does X" — opened and checked, not chosen from a blurb. Before the plain
-    # draw handler, which would otherwise take the "draw…" half of a combined request.
-    from .find_site import handle as find_a_site
-    sited = await find_a_site(raw, config)
-    if sited is not None:
-        return sited
-
-    # "What does my screen say" — read it. Left to the model this took twenty-three seconds and
-    # came back with "It's a screenshot of your current desktop."
-    from .screen_read_command import handle as read_screen
-    on_screen = await read_screen(raw, config)
-    if on_screen is not None:
-        return on_screen
-
-    # "Tell me about this project" — the files are read here, deterministically, and only the
-    # describing is left to the model. Asked to do both it answered "I'll check your files now"
-    # and did nothing.
-    from .project_command import handle as describe_project
-    described = await describe_project(raw, config)
-    if described is not None:
-        return described
-
-    # "Make me a picture of X" — generated here and saved. Before the draw handler, which is the
-    # other half of the same idea: draw traces a reference onto an open whiteboard, this makes a
-    # file. Their verbs do not overlap, so the order is documentation rather than precedence.
-    from .imagine_command import handle as imagine_something
-    made = await imagine_something(raw, config)
-    if made is not None:
-        return made
-
-    # "Draw me X" — find a reference picture, reduce it to lines, draw them on the canvas.
-    from .draw_command import handle as draw_something
-    drawn = await draw_something(raw, config)
-    if drawn is not None:
-        return drawn
-
-    # "Fix yourself" — look at what has failed repeatedly and try to mend it.
-    from .selfimprove.command import handle as self_improve
-    mended = await self_improve(raw, config)
-    if mended is not None:
-        return mended
-
-    # Requests that are several actions in a row — "play the latest X video on YouTube" — are
-    # planned and then executed step by step, each one checked, rather than handed to the model
-    # as one instruction it has to remember its way through. Before open_command, which would
-    # see only the first action.
-    from .task_runner import handle as run_task
-    carried_out = await run_task(raw, config)
-    if carried_out is not None:
-        return carried_out
-
-    # Last, so the specific handlers above keep priority: "open phone" and "open meet" are theirs.
-    # Everything else shaped like "open X" has one meaning, and measured, routing it through the
-    # local 3B model called no tool at all on three of five attempts at "open friends".
-    from .open_command import handle as open_something
-    opened = await open_something(raw, config)
-    if opened is not None:
-        return opened
+    for _name, _handler in deterministic_handlers():
+        answer = await _handler(raw, config)
+        if answer is not None:
+            return answer
 
     from .integrations import coding_jobs
     return await coding_jobs.handle_message(raw, session_id=session_id)
