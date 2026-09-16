@@ -582,7 +582,12 @@ body[data-form="conversation"] #tab-system { display: none; }
   transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out),
               border-color var(--dur-fast) var(--ease-out);
 }
-.chip:hover { border-color: var(--accent-line); color: var(--text-primary); }
+.chip:hover {
+  border-color: var(--accent-line);
+  color: var(--text-primary);
+  background: var(--surface-overlay);
+}
+.chip:active { transform: translateY(1px); }
 
 /* Attached context — visible, scoped, and removable. */
 .context-chip {
