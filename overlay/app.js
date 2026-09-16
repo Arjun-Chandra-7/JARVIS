@@ -278,6 +278,8 @@ function autoScroll() {
   }
 }
 els.log.addEventListener("scroll", () => {
+  // No fade at the very top: the first message of a conversation should not look cut off.
+  els.log.classList.toggle("at-top", els.log.scrollTop < 4);
   const gap = els.log.scrollHeight - els.log.scrollTop - els.log.clientHeight;
   state.pinnedToBottom = gap < 40;
   if (state.pinnedToBottom) els.scrollPin.hidden = true;
