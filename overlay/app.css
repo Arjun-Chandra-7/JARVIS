@@ -1252,3 +1252,10 @@ body[data-state="speaking"] .meter { max-height: 20px; opacity: 1; }
   color: var(--text-primary);
   background: var(--surface-overlay);
 }
+
+
+/* State deserves colour in the collapsed pill, where the orb is small and the words are the only
+ * other thing there. */
+body[data-state="thinking"] .pill-state { color: var(--accent-dim); }
+body[data-state="speaking"] .pill-state { color: var(--accent); }
+body[data-state="offline"] .pill-state { color: var(--text-faint); }
