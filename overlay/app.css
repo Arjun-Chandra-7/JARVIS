@@ -815,7 +815,10 @@ body[data-form="conversation"] #tab-system { display: none; }
   border-bottom: 1px solid var(--border);
 }
 .group-note { text-transform: none; letter-spacing: 0; color: var(--text-faint); }
-.card.is-live { border-color: var(--accent-line); background: var(--surface-overlay); }
+.card.is-live {
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-card), inset 2px 0 0 var(--accent);
+}
 
 /* ------------------------- telemetry gauges (System) -------------------------
  * The backend reports temperatures, totals and GPU memory. All of it used to be reduced to one
