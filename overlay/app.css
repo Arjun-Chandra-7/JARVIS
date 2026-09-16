@@ -784,18 +784,21 @@ body[data-form="conversation"] #tab-system { display: none; }
 .toast {
   position: fixed;
   left: 50%;
-  bottom: var(--space-4);
-  transform: translate(-50%, 12px);
-  background: var(--surface-overlay);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-chip);
+  bottom: var(--space-6);
+  transform: translateX(-50%) translateY(8px);
   padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-pill);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-lifted);
+  color: var(--text-primary);
   font-size: var(--text-sm);
   opacity: 0;
   pointer-events: none;
-  transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
-  z-index: 10;
+  transition: opacity var(--dur-fast) var(--ease-out),
+              transform var(--dur-fast) var(--ease-out);
+  z-index: 40;
 }
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
 /* --------------------------- focus --------------------------- */
