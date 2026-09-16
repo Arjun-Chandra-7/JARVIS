@@ -1011,3 +1011,23 @@ body[data-state="speaking"] .panel::before { opacity: 1; }
   cursor: default;
   pointer-events: none;
 }
+
+/* Copying a reply meant selecting it by hand across a bubble with rounded corners. The control
+ * appears on hover so it is there when wanted and invisible while reading. */
+.msg-copy {
+  position: absolute;
+  top: -2px;
+  opacity: 0;
+  border: 0;
+  padding: 2px var(--space-1);
+  border-radius: var(--radius-chip);
+  background: var(--surface-overlay);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: opacity var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.msg.jarvis .msg-copy { right: -4px; }
+.msg.you .msg-copy { left: -4px; }
+.msg:hover .msg-copy { opacity: 1; }
+.msg-copy:hover { color: var(--text-primary); }
