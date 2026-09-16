@@ -1037,3 +1037,17 @@ body[data-state="speaking"] .panel::before { opacity: 1; }
 .msg.you .msg-copy { left: -4px; }
 .msg:hover .msg-copy { opacity: 1; }
 .msg-copy:hover { color: var(--text-primary); }
+
+/* Reaching a control by keyboard showed nothing on most of them — the browser's own outline is
+ * suppressed by the resets, and only the composer had been given a replacement. */
+.tab:focus-visible,
+.chip:focus-visible,
+.icon-btn:focus-visible,
+.ghost-btn:focus-visible,
+.send-btn:focus-visible,
+.orb:focus-visible,
+.msg-copy:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-chip);
+}
