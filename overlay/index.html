@@ -73,7 +73,8 @@
 
         <!-- ---------- conversation ---------- -->
         <section class="view is-active" id="view-chat" role="tabpanel" aria-labelledby="tab-chat">
-          <div class="log" id="log" tabindex="0" aria-live="polite" aria-label="Conversation"></div>
+          <div class="log" id="log" tabindex="0" aria-live="polite" aria-atomic="false"
+               aria-relevant="additions" aria-label="Conversation"></div>
 
           <div class="scroll-pin" id="scrollPin" hidden>
             <button type="button" id="scrollPinBtn">New messages ↓</button>
