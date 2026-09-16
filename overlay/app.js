@@ -468,6 +468,7 @@ els.composer.addEventListener("submit", (e) => {
   e.preventDefault();
   const v = els.input.value;
   els.input.value = "";
+  syncSendButton();
   send(v);
 });
 
