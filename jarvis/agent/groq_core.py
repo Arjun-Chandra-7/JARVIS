@@ -20,6 +20,7 @@ from ..config import Config
 from ..jobs.runner import JobRunner
 from ..memory import vault as vaultmod
 from . import action_claims, tool_contract, tool_router
+from ..brains import choose
 from .groq_tools import build_registry
 
 ToolCallback = Callable[[str, str], None]
@@ -302,8 +303,13 @@ class GroqAgent:
             return self.schemas
 
     def _complete(self):
+        specialist = getattr(self, "_specialist", None)
+        extra = {}
+        if specialist is not None:
+            extra["temperature"] = specialist.temperature
         return self.client.chat.completions.create(
-            model=self.model,
+            model=(specialist.model if specialist and specialist.model else self.model),
+            **extra,
             messages=self.messages,
             tools=self._active_schemas(),
             tool_choice="auto",
@@ -456,7 +462,18 @@ class GroqAgent:
             )
             return str(result)
 
+        # Which specialist this turn belongs to. It changes the instruction, the temperature and
+        # which tools are put in front of the model — all of which matter more to a small local
+        # brain than they would to a large one.
+        self._specialist, self._specialist_confidence = choose.pick(user_text)
+
         turn = {"role": "user", "content": f"[time: {now:%A %Y-%m-%d %H:%M %Z}] {user_text}"}
+        if self._specialist is not None:
+            # As a system note beside the turn rather than replacing the standing prompt: the
+            # things that prompt establishes — who the user is, what this machine is — are true
+            # whichever specialist is working.
+            self.messages.append({"role": "system",
+                                  "content": f"For this turn: {self._specialist.instruction}"})
         self.messages.append(turn)
         self._turn_times[id(turn)] = time.time()
 
