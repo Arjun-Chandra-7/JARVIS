@@ -1141,3 +1141,13 @@ body[data-state="speaking"] .panel::before { opacity: 1; }
 .orb:hover .orb-core { filter: brightness(1.25); }
 .orb:active { transform: scale(0.94); }
 .orb { transition: transform var(--dur-fast) var(--ease-out); }
+
+/* Shortcuts nobody is told about are shortcuts nobody uses. Quiet enough to ignore while working,
+ * and in the one place you look when you are not sure what to do next. */
+.keyhint {
+  margin-right: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+@media (max-width: 620px) { .keyhint { display: none; } }
