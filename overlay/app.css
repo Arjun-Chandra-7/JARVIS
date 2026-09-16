@@ -947,6 +947,7 @@ body[data-form="conversation"] #tab-system { display: none; }
   color: var(--text-secondary);
 }
 .past-row:nth-child(even) { background: rgba(255, 255, 255, 0.015); }
+.past-row:hover { background: var(--surface-raised); }
 .past-title { flex: 1 1 auto; min-width: 0; overflow: hidden;
               text-overflow: ellipsis; white-space: nowrap; }
 .past-meta { flex: 0 0 auto; color: var(--text-faint); font-family: var(--font-mono);
