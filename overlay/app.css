@@ -1185,3 +1185,12 @@ body[data-state="speaking"] .panel::before { opacity: 1; }
   .chip:active,
   .orb:active { transform: none; }
 }
+
+
+/* A URL or a stack trace with no spaces in it pushed the panel wider than the screen and left
+ * the composer half off the edge. */
+.msg-body,
+.card-body,
+.past-title,
+.system-label,
+.memory-snippet { overflow-wrap: anywhere; }
