@@ -939,6 +939,15 @@ document.addEventListener("keydown", (e) => {
     return;
   }
 
+  // Escape from the input gives the box up before it gives the panel up: one press to stop
+  // typing, another to close. Collapsing mid-sentence loses what was typed.
+  if (e.key === "Escape" && document.activeElement === els.input && els.input.value) {
+    e.preventDefault();
+    els.input.value = "";
+    syncSendButton();
+    return;
+  }
+
   // Escape always steps back: clear context, then collapse, then hide.
   if (e.key === "Escape") {
     if (state.context) return void clearContext();
