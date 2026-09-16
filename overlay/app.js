@@ -18,6 +18,7 @@ const els = {
   orb: $("orb"),
   orbCore: document.querySelector(".orb-core"),
   pillState: $("pillState"),
+  pillReply: $("pillReply"),
   meter: $("meter"),
   workDot: $("workDot"),
   expandBtn: $("expandBtn"),
@@ -122,6 +123,9 @@ document.addEventListener("visibilitychange", () => {
 
 function setActivity(next, detail = "") {
   stir();                       // a change of state is the clearest sign of life there is
+  // A new question makes the previous answer stale; leaving it up reads as a reply to the thing
+  // being asked right now.
+  if (next === "listening" || next === "thinking") hideFromPill();
   state.activity = next;
   body.dataset.state = next;
   els.pillState.textContent = detail || STATE_LABEL[next] || next;
@@ -166,10 +170,65 @@ function remember(who, text) {
   lastSaid.at = Date.now();
 }
 
+// How long an answer stays on the pill: long enough to read it, and no longer. Roughly the time
+// it takes to read at a relaxed pace, floored so a two-word answer does not blink past and capped
+// so a long one does not sit there all afternoon. The whole answer is always a click away.
+function readingTime(text) {
+  return Math.min(14000, Math.max(3500, text.length * 55));
+}
+
+let replyTimer = 0;
+
+// The pill is 280px wide and about twenty-five characters fit on a line, so most answers need
+// more room than it has. It is given up to two extra lines — beyond that an answer is something
+// to read in the panel, not on a chip — and the pill grows to fit and shrinks back after.
+const REPLY_LINE = 18;
+const REPLY_MAX_LINES = 3;
+
+function showOnPill(text) {
+  const line = (text || "").replace(/\s+/g, " ").trim();
+  clearTimeout(replyTimer);
+  if (!line) return hideFromPill();
+  els.pillReply.textContent = line;
+  els.pillReply.hidden = false;
+
+  // Measured rather than guessed from the character count: the font is proportional, so "Opened
+  // Netflix" and "WWWWWWWWWWWWWW" are the same length and nothing like the same width.
+  els.pillReply.style.whiteSpace = "normal";
+  const lines = Math.min(REPLY_MAX_LINES,
+    Math.max(1, Math.ceil(els.pillReply.scrollHeight / REPLY_LINE)));
+  els.pillReply.style.webkitLineClamp = String(lines);
+  window.jarvis?.growPill?.((lines - 1) * REPLY_LINE);
+
+  // A frame between unhiding and marking it shown, or the fade has nothing to fade from.
+  requestAnimationFrame(() => els.pillReply.setAttribute("data-shown", ""));
+  replyTimer = setTimeout(hideFromPill, readingTime(line));
+}
+
+function hideFromPill() {
+  clearTimeout(replyTimer);
+  els.pillReply.removeAttribute("data-shown");
+  // The pill shrinks with the fade rather than after it, so the text does not sit in a box that
+  // is visibly too big for it on the way out.
+  window.jarvis?.growPill?.(0);
+  // Left in the layout until the fade finishes, so the pill does not jump as it goes.
+  replyTimer = setTimeout(() => { els.pillReply.hidden = true; }, 280);
+}
+
+els.pillReply.addEventListener("click", () => {
+  setForm("conversation");
+  hideFromPill();
+});
+
 function addMessage(who, text, { kind = "", animate = true } = {}) {
   if (kind !== "partial") {
     if (sameAsLast(who, text)) return null;
     remember(who, text);
+  }
+  // An answer you can read without opening anything. Only while collapsed — the panel below is
+  // already showing this very message — and never for a partial, which is still being written.
+  if (who === "jarvis" && kind !== "partial" && state.form === "pill" && animate) {
+    showOnPill(text);
   }
   const el = document.createElement("div");
   el.className = `msg ${who}${kind ? " " + kind : ""}`;

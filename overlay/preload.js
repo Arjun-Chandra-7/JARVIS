@@ -11,6 +11,13 @@ contextBridge.exposeInMainWorld("jarvis", {
   setForm: (name) => {
     if (FORMS.includes(name)) ipcRenderer.send("form", name);
   },
+  // Ask the pill to make room for an answer, in pixels of extra height. Clamped here as well as
+  // in the main process: the renderer is the least trusted side of this boundary and a number it
+  // sends should not be able to become a window of any size it likes.
+  growPill: (extra) => {
+    const px = Number(extra);
+    if (Number.isFinite(px) && px >= 0 && px <= 160) ipcRenderer.send("grow-pill", Math.round(px));
+  },
   hide: () => ipcRenderer.send("hide"),
   focusWindow: () => ipcRenderer.send("focus-window"),
   quit: () => ipcRenderer.send("quit"),

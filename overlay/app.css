@@ -187,6 +187,39 @@ body[data-state="listening"] .pill-state { color: var(--accent); }
 body[data-state="failed"] .pill-state { color: var(--error); }
 body[data-state="offline"] .pill-state { color: var(--text-muted); }
 
+/* The last answer, on the pill itself.
+ *
+ * The pill is a chip on someone's desktop, so this gets one line and an ellipsis rather than
+ * growing to fit; the whole answer is one click away and the click target is the line itself.
+ * Off-white against the state line's grey, because the answer is the content and the state is
+ * the label — at a glance the eye should land on the answer. */
+.pill-reply {
+  font-size: var(--text-base);
+  line-height: 18px;              /* REPLY_LINE in app.js — the two must agree */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;          /* raised from JavaScript once the answer has been measured */
+  color: var(--text-primary);
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font-family: inherit;
+  text-align: left;
+  /* The clamp supplies the ellipsis; text-overflow does not apply to a wrapped box. */
+  overflow: hidden;
+  cursor: pointer;
+  max-width: 100%;
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+.pill-reply[data-shown] { opacity: 1; }
+.pill-reply:hover { color: var(--accent-bright); }
+.pill-reply:focus-visible { outline: 1px solid var(--border-focus); outline-offset: 2px; }
+
+/* Only the pill needs it — the panel below shows the whole conversation already. */
+body:not([data-form="pill"]) .pill-reply { display: none; }
+
 .meter { width: 100%; height: 20px; display: block; }
 
 .pill-right { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; }

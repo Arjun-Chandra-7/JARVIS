@@ -43,6 +43,15 @@ const DEFAULT_SHORTCUTS = {
 };
 
 let win = null;
+
+// The pill grows to show an answer and shrinks back when it has gone. It grows upward — the
+// bottom edge stays put — because the pill lives near the bottom of the screen and an edge that
+// moves is an edge you have to look for. The bounds from before the growth are kept here and
+// restored exactly, and none of it is written to disk: a temporary height saved as the remembered
+// one would leave the pill a little taller after every answer.
+// Declared beside the window it belongs to, because applyForm reads it and is defined far above
+// the handler that sets it.
+let pillRestore = null;
 let form = "pill";
 let visible = true;
 let state = { bounds: {}, shortcuts: {}, form: "pill" };
@@ -114,6 +123,12 @@ function defaultBounds(name) {
 
 function applyForm(name, { animate = true } = {}) {
   if (!win || !FORMS[name] || win.isDestroyed()) return;
+  // Drop any temporary growth before measuring, so an answer showing at the moment someone
+  // expands the pill cannot be remembered as the pill's real height.
+  if (pillRestore) {
+    win.setBounds(clampToDisplay(pillRestore));
+    pillRestore = null;
+  }
   if (name !== form) rememberBounds();
   form = name;
   state.form = name;
@@ -285,6 +300,21 @@ process.on("SIGUSR2", toggle);
 ipcMain.on("form", (_e, name) => {
   if (FORMS[name]) applyForm(name);
 });
+ipcMain.on("grow-pill", (_e, extra) => {
+  if (!win || win.isDestroyed() || form !== "pill") return;
+  const px = Math.max(0, Math.min(160, Math.round(Number(extra) || 0)));
+
+  if (px === 0) {
+    if (pillRestore) win.setBounds(clampToDisplay(pillRestore));
+    pillRestore = null;
+    return;
+  }
+  const base = pillRestore || win.getBounds();
+  pillRestore = base;
+  const height = base.height + px;
+  win.setBounds(clampToDisplay({ ...base, height, y: base.y + base.height - height }));
+});
+
 ipcMain.on("hide", hide);
 ipcMain.on("focus-window", () => {
   if (win && !win.isDestroyed()) win.focus();

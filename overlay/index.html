@@ -32,6 +32,11 @@
 
         <div class="pill-mid">
           <div class="pill-state" id="pillState" role="status" aria-live="polite">Starting…</div>
+          <!-- What Jarvis just said, shown on the collapsed pill so an answer does not cost an
+               expand. Not aria-live: the state line above already announces, and two live
+               regions on one bar talk over each other. -->
+          <button class="pill-reply" id="pillReply" type="button" hidden
+                  title="Read the whole answer"></button>
           <canvas
             class="meter"
             id="meter"
