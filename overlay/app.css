@@ -672,8 +672,17 @@ body[data-form="conversation"] #tab-system { display: none; }
 .step.done .step-mark { color: var(--success); }
 .step.failed .step-mark { color: var(--error); }
 
-.empty { color: var(--text-faint); font-size: var(--text-sm); margin: var(--space-4) 0;
-         text-align: center; }
+/* Nothing here is a normal state, not a failure. It gets room and a calm colour rather than the
+ * centred grey line that read as something having gone wrong. */
+.empty {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  margin: var(--space-5) 0;
+  padding: var(--space-5) var(--space-4);
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-card);
+}
 
 .memory-search { display: flex; gap: var(--space-2); flex: 0 0 auto; }
 
