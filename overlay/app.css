@@ -254,7 +254,8 @@ body[data-form="conversation"] #tab-system { display: none; }
   position: relative;
   transition: color var(--dur-fast) var(--ease-out);
 }
-.tab:hover { color: var(--text-secondary); }
+.tab:hover { color: var(--text-primary); }
+.tab:hover::after { transform: scaleX(0.4); background: var(--accent-dim); }
 .tab.is-active { color: var(--text-primary); }
 .tab::after {
   content: "";
