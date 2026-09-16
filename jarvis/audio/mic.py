@@ -30,6 +30,7 @@ class Microphone:
 
         self.frame_length = frame_length
         device = None if device_index < 0 else device_index
+        self._device = device
         self.channels = self._native_channels(sd, device)
         self._stream = sd.InputStream(
             samplerate=16000,
@@ -73,6 +74,35 @@ class Microphone:
         # looks like the careful thing to do, and was tried — puts a full-scale tone at half
         # amplitude over the microphone and hides the speech underneath it.
         return data[:, 0].tolist()
+
+    def reopen(self) -> None:
+        """Close and open again, onto whatever the machine offers now.
+
+        The stream is opened once at startup and the microphone underneath it is not one fixed
+        thing: over an afternoon it can be a Bluetooth headset, the built-in one when that
+        wanders off, a wired pair, then a second headset. The channel count is worked out again
+        because the new device may not have the shape of the old one.
+        """
+        import sounddevice as sd
+
+        try:
+            if self._stream.active:
+                self._stream.stop()
+            self._stream.close()
+        except Exception:  # noqa: BLE001 — it is being replaced either way
+            pass
+        from . import inputs
+
+        inputs.refresh_devices()
+        self.channels = self._native_channels(sd, self._device)
+        self._stream = sd.InputStream(
+            samplerate=16000,
+            channels=self.channels,
+            dtype="int16",
+            blocksize=self.frame_length,
+            device=self._device,
+        )
+        self._stream.start()
 
     def delete(self) -> None:
         self._stream.close()

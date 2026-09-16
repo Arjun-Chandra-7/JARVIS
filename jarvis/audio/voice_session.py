@@ -38,6 +38,10 @@ class VoiceSession:
     def __init__(self, config: Config, on_event: Optional[EventCallback] = None) -> None:
         self.config = config
         self.on_event: EventCallback = on_event or (lambda kind, text="": None)
+        # Why a capture came back empty, kept for whoever decides what to say about it, and a
+        # guard so mending the microphone can never call itself.
+        self._capture_problem = ""
+        self._recovering = False
         self.backend = config.resolved_voice_backend()
         if self.backend == "local":
             from .local_wake import LocalWakeWord
@@ -213,6 +217,32 @@ class VoiceSession:
         if not away_now and notifications_enabled():  # while away, handle silently; muted = no readout
             self._speak(f"{app} message from {who}. {msg}.")
 
+    def _recover_and_listen(self, wait_s: float) -> Optional[str]:
+        """Mend the microphone and take one more listen. Never recurses — one attempt per turn."""
+        self._recovering = True
+        try:
+            healthy, what = inputs.recover(
+                self.config.audio_input_device,
+                note=lambda message: self.on_event("timing", message))
+            self.on_event("timing", what)
+            if not healthy:
+                self._capture_problem = (
+                    "Every microphone on this machine is pinned at full volume, sir, and "
+                    "restarting the audio did not clear it. Something outside Jarvis has the "
+                    "sound system wedged.")
+                return None
+            # The stream in hand still points at the old device; the recovery replaced what is
+            # underneath it.
+            try:
+                self.mic.reopen()
+            except Exception as exc:  # noqa: BLE001
+                self._capture_problem = f"I couldn't reopen the microphone — {exc}"
+                return None
+            self._capture_problem = ""
+            return self._record_transcript(wait_s)
+        finally:
+            self._recovering = False
+
     def _record_transcript(self, wait_s: float) -> Optional[str]:
         capture_start = time.monotonic()
         speech_end = [0.0]
@@ -277,6 +307,11 @@ class VoiceSession:
             # Remembered rather than spoken here: this returns None for several reasons and the
             # caller is the one that decides what to say about it.
             self._capture_problem = inputs.explain(heard, self.config.audio_input_device)
+            if wrong == "saturated" and not self._recovering:
+                # A device that is pinned at full scale will stay that way for every turn until
+                # something is done about it, and the person talking has no way to know. Put it
+                # right and listen again, once, rather than making them ask.
+                return self._recover_and_listen(wait_s)
             return None
         self._capture_problem = ""
         duration = len(pcm) / 2 / self.sample_rate

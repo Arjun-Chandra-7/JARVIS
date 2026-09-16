@@ -151,3 +151,125 @@ def test_the_frame_is_the_first_channel_never_a_mix_of_them():
 
     mic._stream = _Stream()
     assert mic.read() == [10, -12, 9, -8]
+
+
+# ------------------------------------------------------- the microphone that is far too loud
+def test_a_pinned_window_is_saturated():
+    """Measured after a headset reconnect: peak 1.01, rms 0.78, 18% of samples at full scale,
+    on every input on the machine. Silero declines to call it speech, so nothing is captured."""
+    heard = inputs.Heard()
+    for _ in range(40):
+        heard.note(1.01)
+    assert inputs.verdict(heard) == "saturated"
+
+
+def test_a_clap_in_a_normal_utterance_is_not_saturation():
+    """One pinned frame is a door slamming; all of them is a fault."""
+    heard = inputs.Heard()
+    for i in range(40):
+        heard.note(1.0 if i < 3 else 0.06)
+    assert inputs.verdict(heard) == ""
+
+
+def test_ordinary_speech_is_not_saturation():
+    heard = inputs.Heard()
+    for _ in range(40):
+        heard.note(0.3)
+    assert inputs.verdict(heard) == ""
+
+
+def test_saturation_is_the_only_fault_provable_without_anyone_speaking():
+    """An idle probe of a healthy microphone in a quiet room is silent by definition. Treating
+    that as a fault would restart the audio server every time the house went quiet."""
+    quiet = inputs.Heard()
+    for _ in range(20):
+        quiet.note(0.00001)
+    assert inputs.verdict(quiet) == "silent"
+    assert inputs.broken_without_anyone_speaking(quiet) is False
+
+    loud = inputs.Heard()
+    for _ in range(20):
+        loud.note(1.01)
+    assert inputs.broken_without_anyone_speaking(loud) is True
+
+
+def test_the_saturated_advice_says_it_is_being_dealt_with(monkeypatch):
+    monkeypatch.setattr(inputs, "describe", lambda _i=-1: "Built-in Analog Stereo")
+    heard = inputs.Heard()
+    for _ in range(20):
+        heard.note(1.01)
+    said = inputs.explain(heard)
+    assert "Built-in Analog Stereo" in said and "reset the audio" in said
+
+
+def test_only_gain_that_is_pinned_at_maximum_is_touched(monkeypatch):
+    """A microphone someone deliberately set low is left where they put it — this undoes a
+    profile reset, it does not overrule a person."""
+    calls = []
+
+    class _Run:
+        def __init__(self, out, code=0):
+            self.stdout, self.returncode = out, code
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        if "scontrols" in cmd:
+            return _Run("Simple mixer control 'Capture',0\nSimple mixer control 'Internal Mic Boost',0\n")
+        if "sget" in cmd:
+            return _Run("  Front Left: Capture 30 [45%] [12.00dB] [on]\n")   # not pinned
+        return _Run("", 0)
+
+    monkeypatch.setattr(inputs, "_capture_cards", lambda: ["1"])
+    import subprocess
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert inputs.calm_the_gain() is False
+    assert not any("sset" in c for c in calls), "changed a gain nobody had pinned"
+
+
+def test_gain_pinned_at_maximum_is_turned_down(monkeypatch):
+    sset = []
+
+    class _Run:
+        def __init__(self, out, code=0):
+            self.stdout, self.returncode = out, code
+
+    def fake_run(cmd, **kw):
+        if "scontrols" in cmd:
+            return _Run("Simple mixer control 'Capture',0\nSimple mixer control 'Internal Mic Boost',0\n")
+        if "sget" in cmd:
+            return _Run("  Front Left: Capture 63 [100%] [30.00dB] [on]\n")
+        if "sset" in cmd:
+            sset.append(cmd)
+        return _Run("", 0)
+
+    monkeypatch.setattr(inputs, "_capture_cards", lambda: ["1"])
+    import subprocess
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert inputs.calm_the_gain() is True
+    assert any(inputs.NO_BOOST in c for c in sset)
+    assert any(inputs.QUIET_CAPTURE in c for c in sset)
+
+
+def test_recovery_stops_at_the_first_rung_that_works(monkeypatch):
+    """A rung that did not help must not be reported as the fix."""
+    monkeypatch.setattr(inputs, "refresh_devices", lambda: None)
+    # The first look after reopening finds a healthy device, so the ladder must stop there.
+    verdicts = iter([False])
+    monkeypatch.setattr(inputs, "sample", lambda *a, **k: inputs.Heard())
+    monkeypatch.setattr(inputs, "broken_without_anyone_speaking",
+                        lambda _h: next(verdicts, True))
+    restarted = []
+    monkeypatch.setattr(inputs, "restart_audio_server", lambda: restarted.append(1) or True)
+    ok, what = inputs.recover()
+    assert ok and what == "reopened the microphone"
+    assert not restarted, "restarted the audio server when reopening had already worked"
+
+
+def test_recovery_admits_when_nothing_worked(monkeypatch):
+    monkeypatch.setattr(inputs, "refresh_devices", lambda: None)
+    monkeypatch.setattr(inputs, "sample", lambda *a, **k: inputs.Heard())
+    monkeypatch.setattr(inputs, "broken_without_anyone_speaking", lambda _h: True)
+    monkeypatch.setattr(inputs, "calm_the_gain", lambda: False)
+    monkeypatch.setattr(inputs, "restart_audio_server", lambda: False)
+    ok, what = inputs.recover()
+    assert ok is False and "could not" in what
