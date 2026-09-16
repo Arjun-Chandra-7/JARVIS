@@ -1207,3 +1207,18 @@ body[data-state="speaking"] .panel::before { opacity: 1; }
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+
+/* ===================== the pill, which is what is on screen almost all the time =====================
+ * It was a fixed 280x60 strip carrying the words Say "Hey JARVIS" whether or not anyone needed
+ * telling, and it looked identical while listening, thinking and speaking. The width now follows
+ * what there is to show. */
+body[data-form="pill"] .pillbar { transition: padding var(--dur-base) var(--ease-out); }
+
+/* At rest the hint fades out after a while: it is instruction, and instruction stops being useful
+ * once it has been read. */
+body[data-form="pill"][data-state="idle"] .pill-state {
+  opacity: 0.55;
+  transition: opacity var(--dur-slow) var(--ease-out);
+}
+body[data-form="pill"][data-state="idle"] .shell:hover .pill-state { opacity: 1; }
