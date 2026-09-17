@@ -693,6 +693,37 @@ class VoiceSession:
                                 f"returned on {where} with: {job.get('summary') or 'no notable output'}")
             first_pass = False
 
+    async def _watch_coding_terminal(self) -> None:
+        """Say what the agent in the editor concluded, once it has stopped writing.
+
+        Only looks when an answer is actually expected, so the terminal is not being read — and
+        the clipboard borrowed — every few seconds for no reason.
+        """
+        from ..coding import terminal, watch
+
+        while True:
+            await asyncio.sleep(6.0)
+            if watch.waiting_for() is None:
+                continue
+            try:
+                done = await asyncio.to_thread(watch.check, lambda: terminal.tail(80))
+            except Exception:  # noqa: BLE001 — a failed look must not end the watcher
+                continue
+            if done is None:
+                continue
+            if done.said:
+                self.on_event("coding", f"{done.agent}: {done.said[:160]}")
+                self._speak(f"{done.agent.title()} says: {done.said}")
+            if done.link:
+                # The thing you wanted next. Opened rather than read out, because a URL spoken
+                # aloud is unusable and this one is one click of work.
+                try:
+                    from ..integrations import apps
+                    await asyncio.to_thread(apps.open_url, done.link)
+                    self._speak("I've opened the link it printed.")
+                except Exception:  # noqa: BLE001
+                    pass
+
     async def _watch_power(self) -> None:
         """Announce the charger going in or coming out, with the battery level."""
         from ..integrations.power_supply import PowerWatcher
@@ -787,6 +818,7 @@ class VoiceSession:
         asyncio.create_task(self._watch_coding_jobs())  # speak coding-job completions + chime
         asyncio.create_task(self._watch_meet())  # announce when a joined Meet ends, with summary
         asyncio.create_task(self._watch_power())  # "laptop charging, battery N%" on plug/unplug
+        asyncio.create_task(self._watch_coding_terminal())  # speak what the editor's agent concluded
 
         if self.config.screen_always:  # keep screen vision on from the start
             from ..vision import live

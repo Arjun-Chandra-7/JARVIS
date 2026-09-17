@@ -18,7 +18,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from .coding import handover, prompts, quota, roster, session, vscode
+from .coding import handover, prompts, quota, roster, session, vscode, watch
 
 # How the next piece of work gets asked for, once you are already working.
 _ASK = re.compile(
@@ -172,7 +172,10 @@ async def run(work: str, text: str) -> str:
     if not await asyncio.to_thread(vscode.send_prompt, work):
         return opening + "But I couldn't type the prompt."
     live.touch()
-    return opening + f"Asked it to {work[:90]}."
+    # The answer takes anywhere from seconds to minutes; it is announced when it lands rather
+    # than waited for here.
+    watch.expect(live.spoken, work)
+    return opening + f"Asked it to {work[:90]}. I'll tell you what it says."
 
 
 async def handle(text: str, config=None) -> Optional[str]:
