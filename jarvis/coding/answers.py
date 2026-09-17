@@ -61,6 +61,18 @@ _NOT_PROSE = re.compile(r"""(?x)
     )\s*$""", re.IGNORECASE)
 
 
+# Progress chatter is short and punchy — "Building...", "✔ Deployed to <url>", "Local: <url>" —
+# and an agent explaining what it did is not. Word count separates them better than any pattern:
+# once the links are removed, a status line has almost nothing left and a sentence still does.
+MIN_WORDS = 6
+
+
+def _is_a_sentence(line: str) -> bool:
+    without_links = _URL.sub("", line)
+    words = [w for w in re.split(r"\s+", without_links) if any(c.isalpha() for c in w)]
+    return len(words) >= MIN_WORDS
+
+
 def spoken_answer(terminal_text: str, limit: int = 400) -> Optional[str]:
     """The agent's own words, short enough to say out loud.
 
@@ -72,7 +84,7 @@ def spoken_answer(terminal_text: str, limit: int = 400) -> Optional[str]:
     kept: list[str] = []
     for line in reversed(terminal_text.splitlines()):
         stripped = line.strip()
-        if not stripped or _NOT_PROSE.match(stripped):
+        if not stripped or _NOT_PROSE.match(stripped) or not _is_a_sentence(stripped):
             if kept:
                 break                   # the prose has ended; what is above is older
             continue
