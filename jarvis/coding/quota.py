@@ -1,18 +1,12 @@
-"""How much of each coding agent is left — as far as any of them will actually say.
+"""Which coding agents are worth starting, and why not when they are not.
 
-The intent was "only use an agent if it has more than 15% of its tokens left". That number is
-not obtainable. None of the three CLIs reports a balance: `claude`, `codex` and `agy` each have
-no usage or quota subcommand, and nothing on disk carries a percentage. What Claude does record,
-in its session transcripts, is the moment it was refused:
+The threshold asked for was "only if it has more than 15% of its tokens left", and that number is
+now real rather than approximated: `usage.py` gets it from the agents themselves. What remains
+here is the cheaper, blunter signal — an agent that is installed, and not currently refusing.
 
-    "quotaLimits":{"status":"rejected","resetsAt":1789464600,"rateLimitType":"five_hour", ...}
-
-So what can be known is not "how much is left" but "is this one refusing right now, and until
-when" — which answers the question the threshold was really asking: do not start a job on an
-agent that is going to stop halfway through.
-
-Reported as such rather than dressed up as a percentage. When a real balance becomes available
-this is the one place that has to change.
+Both are used, cheapest first. A refusal already recorded on disk costs nothing to read and is
+conclusive; asking an agent for a percentage costs a subprocess and a few seconds, so it is only
+done for the agents that are still candidates after the free check.
 """
 
 from __future__ import annotations
@@ -117,9 +111,32 @@ def standing(provider: str) -> Standing:
     return Standing(True)
 
 
-def usable() -> dict[str, bool]:
-    """Which agents to consider, in the shape the roster wants."""
-    return {name: standing(name).ready for name in ("claude", "codex", "agy")}
+def usable(check_balance: bool = True) -> dict[str, bool]:
+    """Which agents to consider, in the shape the roster wants.
+
+    An agent has to be installed, not currently refusing, and — when it will say — above the
+    threshold worth starting on. An agent that will not say is kept: silence is not evidence of
+    an empty account, and dropping it on a guess can leave nothing to do the work with.
+    """
+    from . import usage
+
+    ready = {}
+    for name in ("claude", "codex", "agy"):
+        if not standing(name).ready:
+            ready[name] = False
+            continue
+        if not check_balance:
+            ready[name] = True
+            continue
+        ready[name] = usage.left_for(name).enough_to_start()
+    return ready
+
+
+def balances() -> dict[str, "object"]:
+    """What each agent says it has left, for saying out loud."""
+    from . import usage
+
+    return {name: usage.left_for(name) for name in ("claude", "codex", "agy")}
 
 
 def why_not(provider: str) -> Optional[str]:
