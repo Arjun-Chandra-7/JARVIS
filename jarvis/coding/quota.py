@@ -74,23 +74,11 @@ def _claude_standing() -> Standing:
     return Standing(True)
 
 
-_CODEX_REFUSAL = re.compile(r"(?i)(429|rate[ _-]?limit(?:ed)?|quota exceeded|usage limit)")
-
-
-def _codex_standing() -> Standing:
-    """Codex says nothing structured, so this looks for a refusal in the last hour of sessions."""
-    cutoff = time.time() - 3600
-    for path in _recent_files(CODEX_SESSIONS):
-        if os.path.getmtime(path) < cutoff:
-            continue
-        try:
-            with open(path, errors="ignore") as f:
-                tail = f.read()[-20000:]
-        except OSError:
-            continue
-        if _CODEX_REFUSAL.search(tail):
-            return Standing(False, 0.0, "refused recently")
-    return Standing(True)
+# Codex used to be guessed at by searching its recent sessions for the words "rate limit" or
+# "429". That was wrong in the way heuristics usually are: it fired on a session that merely
+# *discussed* rate limiting — including this project's own — and marked a perfectly healthy agent
+# as refusing. Codex is asked directly now (see usage.ask_in_terminal), and when it cannot be
+# asked it is treated as available rather than convicted on the presence of a phrase.
 
 
 def standing(provider: str) -> Standing:
@@ -102,8 +90,6 @@ def standing(provider: str) -> Standing:
     try:
         if provider == "claude":
             return _claude_standing()
-        if provider == "codex":
-            return _codex_standing()
     except Exception:  # noqa: BLE001 — never let a quota guess stop the work
         return Standing(True)
     # Antigravity publishes nothing at all, and guessing it is empty would take away the last
