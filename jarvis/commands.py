@@ -102,6 +102,14 @@ def deterministic_handlers():
         from .selfimprove.command import handle as f
         return await f(text, config)
 
+    async def coding_agent(text, config):
+        # "Ok, but now we need to add X" at the editor. Before the task runner, which would try
+        # to plan it as browser steps, and before open_command, which would see "open a terminal".
+        # It only takes the turn when an agent is already in conversation, one was named, or the
+        # editor is the window in front of you.
+        from .coding_command import handle as f
+        return await f(text, config)
+
     async def run_task(text, config):
         # Requests that are several actions in a row — "play the latest X video on YouTube" — are
         # planned and executed step by step, each one checked, rather than handed to the model as
@@ -129,6 +137,7 @@ def deterministic_handlers():
         ("imagine", make_a_picture),
         ("draw", draw_something),
         ("self_improve", self_improve),
+        ("coding", coding_agent),
         ("task", run_task),
         ("open", open_something),
     ]
