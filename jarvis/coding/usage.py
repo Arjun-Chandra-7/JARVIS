@@ -91,3 +91,50 @@ def _first_window(text: str) -> str:
     """The line worth repeating out loud, if there is one."""
     found = _WINDOW.findall(text or "")
     return found[0].strip() if found else ""
+
+
+def ask_in_terminal(agent: str, settle_s: float = 4.0) -> Left:
+    """Type the agent's own status command into its live terminal and read the answer back.
+
+    The only way to get a number out of Codex, and a way to get a fresh one out of any of them
+    mid-conversation without leaving the session. The question and its answer both appear on
+    screen, which is the point — nothing is being consulted behind your back.
+    """
+    from . import terminal, vscode
+
+    question = ASK.get(agent)
+    if not question:
+        return Left(None, f"{agent} has nothing to ask")
+
+    ready, _switching = vscode.ensure_front()
+    if not ready:
+        return Left(None, "the editor was not reachable")
+    if not vscode.type_line(question):
+        return Left(None, "could not type the question")
+
+    import time
+
+    time.sleep(settle_s)
+    said = terminal.tail(60)
+    if not said:
+        return Left(None, "nothing came back from the terminal")
+    percent = read_percent(said)
+    if percent is None:
+        return Left(None, f"{agent} did not report a percentage")
+    return Left(percent, said.splitlines()[-1][:120])
+
+
+def left_for(agent: str, in_session: bool = False) -> Left:
+    """What this agent has left, by whichever route it will actually answer on.
+
+    `in_session` says there is a live terminal to ask in. Without one, only Claude can be asked,
+    and the others are treated as available rather than assumed empty — refusing to start the one
+    agent that might work, on a guess, is worse than starting it and finding out.
+    """
+    if agent == "claude":
+        outside = claude_from_outside()
+        if outside.known or not in_session:
+            return outside
+    if in_session:
+        return ask_in_terminal(agent)
+    return Left(None, "not asked")
