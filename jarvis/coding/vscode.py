@@ -81,11 +81,14 @@ def blocked_by() -> Optional[str]:
     wid, active = window(), active_window()
     if not wid or not active or active == wid:
         return None
+    # Something else has the keyboard. If it cannot be named, say so rather than returning None
+    # — None reads as "nothing is in the way", which is the one thing that is certainly untrue.
     try:
-        return subprocess.run(["xdotool", "getwindowname", active],
-                              capture_output=True, text=True, timeout=4).stdout.strip() or None
+        name = subprocess.run(["xdotool", "getwindowname", active],
+                              capture_output=True, text=True, timeout=4).stdout.strip()
     except Exception:  # noqa: BLE001
-        return None
+        name = ""
+    return name or "another window"
 
 
 def palette(command: str) -> bool:
