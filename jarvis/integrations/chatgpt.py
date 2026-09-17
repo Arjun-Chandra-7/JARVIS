@@ -198,6 +198,29 @@ class ChatGPTSession:
                 except Exception:  # noqa: BLE001
                     pass
 
+    async def ask_fresh(self, prompt: str, timeout_s: int = 90) -> str:
+        """Ask one question in a throwaway temporary tab and return the answer verbatim.
+
+        Unlike ask(), nothing is added to Jarvis's own conversation, so a question asked on the
+        side does not end up as context for the next thing the brain is asked. Unlike
+        ask_isolated(), the prompt is passed through exactly as given — no framing, no rules about
+        replying as a message — because the caller's wording is the whole point and the account's
+        own custom instructions are what should shape the answer.
+        """
+        if self.ctx is None:
+            return ""
+        async with self._ask_lock:
+            page = await self.ctx.new_page()
+            try:
+                await page.goto(URL + "?temporary-chat=true", timeout=60000)
+                await page.wait_for_timeout(400)
+                return await self._ask_page(page, prompt, timeout_s)
+            finally:
+                try:
+                    await page.close()
+                except Exception:  # noqa: BLE001
+                    pass
+
     async def new_chat(self) -> None:
         async with self._ask_lock:
             try:
