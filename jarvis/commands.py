@@ -48,6 +48,13 @@ def deterministic_handlers():
         from .chain_command import handle as run_chain
         return await run_chain(text, config)
 
+    async def modes(text, config):
+        # "Study mode" and "Iron Man mode" change what the whole machine is for, so they are
+        # recognised before anything that might read "close everything" as a request to close
+        # one thing.
+        from .mode_command import handle as f
+        return await f(text, config)
+
     async def system(text, config):
         # Volume, brightness and mute: one meaning, one number, no ambiguity. Offered the
         # registered set_brightness tool at the top of its shortlist, the local 3B brain answered
@@ -128,6 +135,7 @@ def deterministic_handlers():
 
     return [
         ("chain", chain),
+        ("modes", modes),
         ("system", system),
         ("screen_click", screen_click),
         ("browser_control", take_browser_control),

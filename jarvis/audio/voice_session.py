@@ -693,6 +693,27 @@ class VoiceSession:
                                 f"returned on {where} with: {job.get('summary') or 'no notable output'}")
             first_pass = False
 
+    async def _keep_study_mode(self) -> None:
+        """Keep the distractions shut for as long as study mode is on.
+
+        Closing Discord once achieves nothing — it is open again within a minute, because the
+        hand that opens it is not really asking a question. So it is closed again, quietly, and
+        only mentioned when something actually came back.
+        """
+        from ..modes import study
+
+        while True:
+            await asyncio.sleep(20.0)
+            if not study.on():
+                continue
+            try:
+                apps, tabs = await study.enforce()
+            except Exception:  # noqa: BLE001 — a failed sweep must not end the watcher
+                continue
+            if apps or tabs:
+                came_back = ", ".join(list(dict.fromkeys(apps + tabs))[:3])
+                self.on_event("study", f"closed again: {came_back}")
+
     async def _watch_coding_terminal(self) -> None:
         """Say what the agent in the editor concluded, once it has stopped writing.
 
@@ -819,6 +840,7 @@ class VoiceSession:
         asyncio.create_task(self._watch_meet())  # announce when a joined Meet ends, with summary
         asyncio.create_task(self._watch_power())  # "laptop charging, battery N%" on plug/unplug
         asyncio.create_task(self._watch_coding_terminal())  # speak what the editor's agent concluded
+        asyncio.create_task(self._keep_study_mode())  # re-close distractions while studying
 
         if self.config.screen_always:  # keep screen vision on from the start
             from ..vision import live
