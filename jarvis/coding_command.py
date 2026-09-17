@@ -18,7 +18,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from .coding import quota, roster, session, vscode
+from .coding import handover, prompts, quota, roster, session, vscode
 
 # How the next piece of work gets asked for, once you are already working.
 _ASK = re.compile(
@@ -139,11 +139,35 @@ async def run(work: str, text: str) -> str:
         await asyncio.sleep(4.0)          # the agent has to come up before it will take a prompt
         live = session.begin(agent, model, effort, where)
         opening = f"{switching + ' ' if switching else ''}Started {agent.spoken} on {model} at {effort} effort. "
+
+        work, source = await prompts.rewrite(work, agent.name, model, effort, where)
+        if source != "written by ChatGPT":
+            opening += f"({source}.) "
     else:
         ready, switching = await asyncio.to_thread(vscode.ensure_front)
         if not ready:
             return "I can't get to the editor, sir."
         opening = f"{switching + ' ' if switching else ''}Passed it to {live.spoken}. "
+
+        # Before handing it more work, see whether it has enough left to finish any of it.
+        remaining = await asyncio.to_thread(handover.nearly_out, live.agent)
+        if remaining is not None:
+            moved = await handover.carry_on(work, live)
+            if moved is not None:
+                agent = roster.BY_NAME[moved.to_agent]
+                command = session.launch_command(moved.to_agent, moved.to_model,
+                                                 moved.to_effort, live.workspace)
+                if not await asyncio.to_thread(vscode.type_line, command):
+                    return (f"{live.spoken} is down to {remaining:.0f}% and I couldn't start "
+                            f"{agent.spoken} to take over, sir.")
+                await asyncio.sleep(4.0)
+                live = session.begin(agent, moved.to_model, moved.to_effort, live.workspace)
+                work = moved.prompt
+                opening = (f"{roster.BY_NAME[moved.from_agent].spoken} was down to "
+                           f"{remaining:.0f}%, so I took its handover notes and started "
+                           f"{agent.spoken} on {moved.to_model}. ")
+            else:
+                opening += f"It's down to {remaining:.0f}% and there's nobody free to take over. "
 
     if not await asyncio.to_thread(vscode.send_prompt, work):
         return opening + "But I couldn't type the prompt."
