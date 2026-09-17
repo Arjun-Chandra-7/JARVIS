@@ -98,6 +98,12 @@ def _just_the_prompt(answer: str) -> Optional[str]:
     fenced = re.search(r"```(?:[a-zA-Z]*\n)?(?P<body>.+?)```", text, re.S)
     if fenced:
         text = fenced.group("body").strip()
-    text = re.sub(r"(?i)^(?:prompt|here'?s the prompt|use this)\s*[:\-]\s*", "", text).strip()
+    # The label a chat model puts in front of an answer, in the several shapes it uses. Left in,
+    # it becomes the first line the coding agent reads and is taken as part of the instruction.
+    text = re.sub(
+        r"(?i)^(?:"
+        r"(?:here(?:'?s| is)\s+)?(?:the\s+|your\s+)?(?:rewritten\s+|final\s+)?prompt"
+        r"|use\s+this|try\s+this"
+        r")\s*[:\-\u2014]\s*", "", text).strip()
     # Typed into a terminal as one line; a newline would submit half of it.
     return " ".join(text.split()) or None
