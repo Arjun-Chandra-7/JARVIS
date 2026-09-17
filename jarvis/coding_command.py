@@ -121,7 +121,8 @@ async def run(work: str, text: str) -> str:
                    ", ".join(s for s in skipped if s) + "."
         agent, model, effort = chosen
 
-        if not await asyncio.to_thread(vscode.focus):
+        ready, switching = await asyncio.to_thread(vscode.ensure_front)
+        if not ready:
             blocking = await asyncio.to_thread(vscode.blocked_by)
             if blocking:
                 return (f"I can't get to the editor, sir — {blocking} is in front of it. "
@@ -137,11 +138,12 @@ async def run(work: str, text: str) -> str:
             return "I couldn't type into the editor's terminal, sir."
         await asyncio.sleep(4.0)          # the agent has to come up before it will take a prompt
         live = session.begin(agent, model, effort, where)
-        opening = f"Started {agent.spoken} on {model} at {effort} effort. "
+        opening = f"{switching + ' ' if switching else ''}Started {agent.spoken} on {model} at {effort} effort. "
     else:
-        if not await asyncio.to_thread(vscode.focus):
+        ready, switching = await asyncio.to_thread(vscode.ensure_front)
+        if not ready:
             return "I can't get to the editor, sir."
-        opening = f"Passed it to {live.spoken}. "
+        opening = f"{switching + ' ' if switching else ''}Passed it to {live.spoken}. "
 
     if not await asyncio.to_thread(vscode.send_prompt, work):
         return opening + "But I couldn't type the prompt."

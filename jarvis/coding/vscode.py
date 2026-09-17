@@ -91,6 +91,23 @@ def blocked_by() -> Optional[str]:
     return name or "another window"
 
 
+def ensure_front() -> tuple[bool, str]:
+    """Get the editor in front, and say so when that means moving something out of the way.
+
+    Returns (ready, what to say first). Switching windows under someone without warning is
+    startling — the screen changes and they did not touch anything — so when the editor has to be
+    brought forward, that is announced before it happens rather than explained afterwards.
+    """
+    wid = window()
+    if not wid:
+        return False, ""
+    if active_window() == wid:
+        return True, ""                    # already there; nothing worth saying
+    if focus():
+        return True, "Switching to VS Code, sir."
+    return False, ""
+
+
 def palette(command: str) -> bool:
     """Run an editor command by name, as if typed into the Command Palette."""
     if not input_.press_keys("ctrl+shift+p"):
