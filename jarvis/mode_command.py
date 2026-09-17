@@ -48,11 +48,13 @@ async def handle(text: str, config=None) -> Optional[str]:
 
     # ---- Iron Man mode
     if ironman.asked_to_stop(said):
-        if not ironman.on():
-            return None              # "normal mode" said cold means nothing; let the model have it
         done = ironman.deactivate()
         await _tell_the_overlay("pill")
-        return f"{ironman.STOOD_DOWN} That was {done['minutes']} minutes in the workshop."
+        if done["was_on"]:
+            return f"{ironman.STOOD_DOWN} That was {done['minutes']} minutes in the workshop."
+        # The overlay and backend are separate processes. If one restarted, the in-memory flag
+        # cannot tell us what is actually on screen, so "normal mode" is always a rescue command.
+        return ironman.STOOD_DOWN
 
     if ironman.asked_to_start(said):
         if ironman.on():

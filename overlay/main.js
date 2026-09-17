@@ -68,6 +68,11 @@ function loadState() {
   } catch {
     /* first run */
   }
+  // Iron Man is a mode, not a window preference. The backend deliberately keeps its mode state
+  // in memory, so restoring this full-screen form after a restart can strand the desktop behind
+  // a frame that the backend believes is already off. Every process start therefore comes back
+  // as the pill; entering Iron Man mode must always be an explicit command.
+  state.form = "pill";
   state.shortcuts = { ...DEFAULT_SHORTCUTS, ...(state.shortcuts || {}) };
 }
 
