@@ -59,6 +59,47 @@ Loaded, the model holds 5.4 GB of memory, so it is released five minutes after t
 reloading it and making another costs under seven seconds. Generation takes six of eight cores,
 leaving two for Whisper to keep hearing you — measured, that costs the picture nothing.
 
+## Coding, in the editor where you can watch it
+
+Say "ok, but now we need to add a dark mode toggle" with VS Code in front of you. Jarvis says
+"switching to VS Code" if it has to move it, opens a terminal, starts a coding agent in it, and
+types the prompt — visibly, so you can see which agent it picked, what it was asked, and take the
+keyboard back whenever you like.
+
+Claude, then Codex, then Antigravity, skipping any that is under 15%. The models come from the
+efforts, because each agent only offers certain models at certain ones:
+
+    claude   low, medium -> opus 5       high -> sonnet
+    codex    low, medium -> gpt-5.6-sol  high -> gpt-5.6-terra
+    agy      high only   -> gemini 3.8
+
+How hard to think is read from the request — "fix a typo" is not "why is the websocket dropping
+under load" — and is then fixed for the conversation. Follow-ups go to the same terminal, so the
+second request still knows what the first one learned.
+
+**Balances are real numbers.** `claude --print "/usage"` answers from outside a session:
+
+    Current session: 44% used · resets Sep 18, 2am
+    Current week (all models): 46% used · resets Sep 22, 2:29pm
+
+The fuller window decides, so that is 54% left. Codex will not answer from outside — `codex exec
+"/status"` reads the slash command as a prompt and summarises the repository instead — so its
+`/status` is typed into the live terminal and read back off the screen, through the clipboard
+rather than by OCR, because a terminal is exactly where OCR is worst.
+
+**At 5% the agent is retired rather than cut off.** It is asked what it changed and what is left,
+those notes go to the next agent as a handover, and the reply names both: "Claude was down to 4%,
+so I took its handover notes and started Codex on gpt-5.6-terra."
+
+**ChatGPT writes the prompt.** Spoken requests leave out the repository, the framework and every
+constraint you had in mind and did not say. Jarvis sends only facts — the agent, the model, the
+effort, the workspace, and your words — and your ChatGPT custom instructions decide how the prompt
+is written, so that lives somewhere you can edit without touching this code. If ChatGPT is
+unreachable your words go through unchanged and the reply says so.
+
+**You get told what happened.** When the agent stops writing, what it concluded is read out, and
+a dev-server or deployment link it printed is opened.
+
 ## Fifteen specialists, one model
 
 A request is scored against fifteen specialists — desk, scribe, coder, researcher, scheduler,
