@@ -1,0 +1,97 @@
+<div class="hud" id="im-hud">
+  <!-- ================= top ================= -->
+  <header class="frame top">
+    <div class="brand"><b>JARVIS</b><span id="im-brandState">ONLINE</span></div>
+    <svg class="pulse-line" viewBox="0 0 200 40" preserveAspectRatio="none" aria-hidden="true">
+      <polyline id="im-pulse" fill="none" stroke="var(--gold)" stroke-width="1.5" points=""/>
+    </svg>
+    <nav class="stages" id="im-stages">
+      <span class="now">THINK</span><i>&gt;</i><span>PLAN</span><i>&gt;</i><span>EXECUTE</span>
+    </nav>
+    <div class="clock">
+      <div class="date" id="im-date">—</div>
+      <div class="time" id="im-time">—</div>
+      <div class="tag">"A MORE CAPABLE YOU"</div>
+    </div>
+  </header>
+
+  <!-- ================= left ================= -->
+  <aside class="frame left cut-tl">
+    <div class="head">PROJECTS</div>
+    <div class="list" id="im-projects"></div>
+
+    <div class="head">SYSTEM</div>
+    <div class="gauges" id="im-gauges"></div>
+
+    <section class="playing" id="im-playing" hidden>
+      <div class="head">NOW PLAYING</div>
+      <svg class="wave" viewBox="0 0 120 30" preserveAspectRatio="none" aria-hidden="true">
+        <polyline id="im-songWave" fill="none" stroke="var(--gold)" stroke-width="1.2" points=""/>
+      </svg>
+      <div class="title" id="im-songTitle">—</div>
+      <div class="artist" id="im-songArtist">—</div>
+      <div class="controls">
+        <button id="im-prev" title="Previous">|◀</button>
+        <button id="im-play" title="Play / pause">❚❚</button>
+        <button id="im-next" title="Next">▶|</button>
+      </div>
+    </section>
+
+    <div class="quote"><b>"DISCIPLINE</b><b>CREATES</b><b>FREEDOM"</b></div>
+  </aside>
+
+  <!-- ================= right ================= -->
+  <aside class="frame right cut-tr">
+    <div class="head">QUICK ACCESS</div>
+    <div class="list" id="im-quick"></div>
+
+    <div class="head">AGENTS</div>
+    <div class="list" id="im-agents"></div>
+
+    <div class="globe">
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        <circle cx="50" cy="50" r="34"/>
+        <ellipse cx="50" cy="50" rx="34" ry="12"/>
+        <ellipse cx="50" cy="50" rx="34" ry="24"/>
+        <ellipse cx="50" cy="50" rx="12" ry="34"/>
+        <ellipse cx="50" cy="50" rx="24" ry="34"/>
+        <circle cx="50" cy="50" r="44" stroke-dasharray="2 6"/>
+      </svg>
+      <div class="status"><b id="im-netState">CONNECTED</b>ALL SYSTEMS NOMINAL</div>
+    </div>
+
+    <div class="quote"><b>GOOD</b><b>IDEAS</b><b>TAKE TIME</b></div>
+  </aside>
+
+  <!-- ================= centre ================= -->
+  <svg class="reactor" viewBox="0 0 120 120" aria-hidden="true">
+    <circle class="faint" cx="60" cy="60" r="56"/>
+    <circle class="faint" cx="60" cy="60" r="46" stroke-dasharray="3 7"/>
+    <g class="sweep">
+      <path d="M60 8 A52 52 0 0 1 104 38" stroke-width="2"/>
+      <path d="M60 112 A52 52 0 0 1 16 82" stroke-width="2"/>
+    </g>
+    <circle cx="60" cy="60" r="30"/>
+    <circle class="faint" cx="60" cy="60" r="22" stroke-dasharray="2 4"/>
+    <polygon class="core" points="60,44 74,68 46,68"/>
+  </svg>
+
+  <!-- ================= bottom ================= -->
+  <footer class="frame bottom cut-bl">
+    <div class="modes" id="im-modes">
+      <button class="on" data-mode="focus">FOCUS</button>
+      <button data-mode="build">BUILD</button>
+      <button data-mode="learn">LEARN</button>
+      <button data-mode="improve">IMPROVE</button>
+    </div>
+    <div class="wordmark">
+      <b>J.A.R.V.I.S.</b><span>JUST A RATHER VERY INTELLIGENT SYSTEM</span>
+    </div>
+    <div class="tray">
+      <span class="bat">BAT <b id="im-batPct">—</b><span class="bar"><i id="im-batBar"></i></span></span>
+      <span id="im-wifi" title="Network">≋</span>
+      <span id="im-vol" title="Volume">◂))</span>
+      <span id="im-region">IND</span>
+    </div>
+  </footer>
+</div>

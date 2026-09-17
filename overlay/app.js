@@ -540,8 +540,10 @@ function setForm(name, { fromMain = false } = {}) {
   state.form = name;
   body.dataset.form = name;
   if (!fromMain) window.jarvis.setForm(name);
-  if (name !== "pill") {
-    // Focus the input only when the user opened the panel themselves.
+  if (name !== "pill" && name !== "ironman") {
+    // Focus the input only when the user opened the panel themselves. Iron Man mode has no
+    // input of its own and stealing focus there would take the keyboard off the editor, which
+    // is the one window the whole mode exists to put in front of you.
     requestAnimationFrame(() => els.input.focus({ preventScroll: true }));
   }
   syncLoops();
@@ -1030,6 +1032,11 @@ function handleEvent(kind, text) {
   if (els.eventDump) els.eventDump.textContent = recentEvents.slice(-40).join("\n");
 
   switch (kind) {
+    // Iron Man mode is decided by the voice, which reaches the backend, which reaches here. The
+    // overlay changes shape rather than a second window appearing over the first.
+    case "mode":
+      setForm(text === "ironman" ? "ironman" : "pill");
+      break;
     case "ready":
       setActivity("idle");
       break;

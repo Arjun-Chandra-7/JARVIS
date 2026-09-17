@@ -6,6 +6,7 @@
     <!-- No webfont fetch: the overlay must render instantly and work offline. -->
     <link rel="stylesheet" href="tokens.css" />
     <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="ironman.css" />
     <title>JARVIS</title>
   </head>
   <body data-form="pill" data-state="idle">
@@ -191,6 +192,11 @@
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+    <!-- Iron Man mode's frame is loaded from ironman.html at first use. Kept in one file
+         rather than pasted here: a copy in this page drifts the moment the other is edited,
+         which it did — the ids were renamed in one and the page kept running the other. -->
+    <div id="ironmanHud" hidden></div>
     <script src="app.js"></script>
+    <script src="ironman.js"></script>
   </body>
 </html>

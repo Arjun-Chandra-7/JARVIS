@@ -34,6 +34,10 @@ const FORMS = {
   pill: { w: 280, h: 60, minW: 200, minH: 52, resizable: false },
   conversation: { w: 660, h: 440, minW: 460, minH: 300, resizable: true },
   workspace: { w: 1000, h: 680, minW: 680, minH: 420, resizable: true },
+  // Iron Man mode is the whole screen, and mostly a hole: the frame is drawn round the edges and
+  // the middle is click-through, so the editor and the terminal underneath take the pointer as if
+  // nothing were over them.
+  ironman: { w: 0, h: 0, minW: 0, minH: 0, resizable: false, coversTheScreen: true },
 };
 
 const DEFAULT_SHORTCUTS = {
@@ -113,6 +117,11 @@ function clampToDisplay(bounds) {
 function defaultBounds(name) {
   const spec = FORMS[name];
   const area = activeDisplay().workArea;
+  // The full-screen forms take the whole display rather than a size of their own.
+  if (spec.coversTheScreen) {
+    const whole = activeDisplay().bounds;
+    return { width: whole.width, height: whole.height, x: whole.x, y: whole.y };
+  }
   return {
     width: spec.w,
     height: spec.h,
@@ -141,6 +150,14 @@ function applyForm(name, { animate = true } = {}) {
   target.width = Math.max(target.width, spec.minW);
   target.height = Math.max(target.height, spec.minH);
   target = clampToDisplay(target);
+
+  if (spec.coversTheScreen) {
+    const whole = activeDisplay().bounds;
+    target = { width: whole.width, height: whole.height, x: whole.x, y: whole.y };
+  }
+  // Click-through belongs to the full-screen frame and nothing else. The renderer turns it off
+  // again for as long as the pointer is over something you can actually press.
+  win.setIgnoreMouseEvents(Boolean(spec.coversTheScreen), { forward: true });
 
   win.setMinimumSize(spec.minW, spec.minH);
   win.setResizable(spec.resizable);
@@ -278,7 +295,12 @@ function show({ focus = false, to = null } = {}) {
   } else {
     win.showInactive();
   }
-  win.webContents.send("visibility", true);
+  // The window can be on its way out while something still asks to show it — a second launch
+  // arriving as the first is closing does exactly that, and the send throws "Render frame was
+  // disposed" from inside an event handler, which takes the process with it.
+  if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+    win.webContents.send("visibility", true);
+  }
 }
 
 function hide() {
@@ -313,6 +335,13 @@ ipcMain.on("grow-pill", (_e, extra) => {
   pillRestore = base;
   const height = base.height + px;
   win.setBounds(clampToDisplay({ ...base, height, y: base.y + base.height - height }));
+});
+
+// The renderer decides, frame by frame, whether the pointer is over a panel or over the desktop
+// showing through the middle. Main just does as it is told, clamped to a boolean.
+ipcMain.on("click-through", (_e, through) => {
+  if (!win || win.isDestroyed() || form !== "ironman") return;
+  win.setIgnoreMouseEvents(Boolean(through), { forward: true });
 });
 
 ipcMain.on("hide", hide);

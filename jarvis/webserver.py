@@ -309,6 +309,78 @@ async def spotify_control(c: Chat):
             pass
     return {"ok": True}
 
+@app.get("/projects")
+async def projects():
+    """The folders you actually work in, newest first.
+
+    Read from disk rather than kept in a list somewhere, so a project started this morning is on
+    the HUD this morning without anybody registering it.
+    """
+    from pathlib import Path
+
+    roots = [Path.home() / "Madara" / "Dev", Path.home() / "Dev", Path.home() / "Projects"]
+    found = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for child in root.iterdir():
+            if not child.is_dir() or child.name.startswith("."):
+                continue
+            try:
+                touched = child.stat().st_mtime
+            except OSError:
+                continue
+            found.append({"name": child.name, "path": str(child), "touched": touched})
+    found.sort(key=lambda p: p["touched"], reverse=True)
+    return {"projects": found}
+
+
+class OpenProject(BaseModel):
+    path: str = Field(max_length=500)
+
+
+@app.post("/project/open")
+async def project_open(req: OpenProject):
+    """Open a folder in the editor, and take the terminal there too.
+
+    Doing only the first leaves you in the right code with a shell in the wrong directory, which
+    is worse than doing neither — you notice the editor moved and assume everything did.
+    """
+    import asyncio as _asyncio
+    import subprocess
+    from pathlib import Path
+
+    folder = Path(req.path).expanduser()
+    # Only somewhere that exists, and only a directory. The path arrives from a click, but it
+    # arrives over HTTP, and this opens an editor and types into a shell.
+    if not folder.is_dir():
+        return {"ok": False, "error": "not a folder"}
+    allowed = (Path.home() / "Madara" / "Dev", Path.home() / "Dev", Path.home() / "Projects")
+    real = folder.resolve()
+    if not any(str(real).startswith(str(root.resolve())) for root in allowed if root.exists()):
+        return {"ok": False, "error": "outside your project folders"}
+
+    try:
+        subprocess.Popen(["code", str(real)], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"could not start the editor: {exc}"}
+
+    # Give the window a moment to come up before typing into its terminal.
+    await _asyncio.sleep(2.5)
+    moved = False
+    try:
+        from .coding import vscode
+        import shlex
+
+        ready, _ = await _asyncio.to_thread(vscode.ensure_front)
+        if ready and await _asyncio.to_thread(vscode.new_terminal):
+            moved = await _asyncio.to_thread(vscode.type_line, f"cd {shlex.quote(str(real))}")
+    except Exception:  # noqa: BLE001 — the editor still opened; say so honestly
+        moved = False
+    return {"ok": True, "opened": str(real), "terminal_followed": moved}
+
+
 @app.get("/health")
 async def health():
     try:

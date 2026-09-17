@@ -8,6 +8,18 @@ from typing import Optional
 from .modes import ironman, study
 
 
+async def _tell_the_overlay(shape: str) -> None:
+    """Ask the overlay to change shape. Best effort: the mode works without it."""
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=3) as client:
+            await client.post("http://127.0.0.1:8770/emit",
+                              json={"kind": "mode", "text": shape})
+    except Exception:  # noqa: BLE001
+        pass
+
+
 async def handle(text: str, config=None) -> Optional[str]:
     said = (text or "").strip()
     if not said:
@@ -39,12 +51,14 @@ async def handle(text: str, config=None) -> Optional[str]:
         if not ironman.on():
             return None              # "normal mode" said cold means nothing; let the model have it
         done = ironman.deactivate()
+        await _tell_the_overlay("pill")
         return f"{ironman.STOOD_DOWN} That was {done['minutes']} minutes in the workshop."
 
     if ironman.asked_to_start(said):
         if ironman.on():
             return "Already in Iron Man mode, sir."
         result = await asyncio.to_thread(ironman.activate)
+        await _tell_the_overlay("ironman")
         placed = [k for k, ok in result["placed"].items() if ok]
         missing = [k for k, ok in result["placed"].items() if not ok]
         detail = f"Laid out {', '.join(placed)}." if placed else ""

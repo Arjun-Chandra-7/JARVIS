@@ -3,7 +3,7 @@
 // arbitrary channel, so a bug (or injected text) in the page cannot reach the shell.
 const { contextBridge, ipcRenderer } = require("electron");
 
-const FORMS = ["pill", "conversation", "workspace"];
+const FORMS = ["pill", "conversation", "workspace", "ironman"];
 const SHORTCUTS = ["toggle", "workspace", "hide"];
 
 contextBridge.exposeInMainWorld("jarvis", {
@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld("jarvis", {
     const px = Number(extra);
     if (Number.isFinite(px) && px >= 0 && px <= 160) ipcRenderer.send("grow-pill", Math.round(px));
   },
+  // Let the desktop underneath have the pointer, except where there is something to press.
+  setClickThrough: (through) => ipcRenderer.send("click-through", Boolean(through)),
   hide: () => ipcRenderer.send("hide"),
   focusWindow: () => ipcRenderer.send("focus-window"),
   quit: () => ipcRenderer.send("quit"),

@@ -1,0 +1,203 @@
+/* Every rule below is scoped to #ironmanHud on purpose.
+ *
+ * This stylesheet shares a document with app.css, and both reach for the obvious names — .frame,
+ * .row, .head, .list, .gauge. Unscoped, the collision goes both ways: app.css's `.frame {
+ * position: relative }` fights this file's `position: fixed`, and this file's `.row` quietly
+ * restyles every row in the conversation panel. Scoping settles both, and is why the ids are
+ * namespaced too.
+ */
+/* Iron Man mode — the frame around the work.
+ *
+ * A full-screen shell with a hole in the middle: the editor, ChatGPT and the terminal show
+ * through it, and everything Jarvis has to say lives in the margins. Gold on near-black, thin
+ * rules, hard corners cut off at 45 degrees — the workshop, not a dashboard.
+ *
+ * Every measurement here is in viewport units rather than pixels, because this has to hold its
+ * proportions on a 1920 laptop panel and on whatever is plugged into it.
+ */
+
+:root {
+  --ink: #07080b;
+  --ink-2: #0c0e13;
+  --gold: #ff8a1e;
+  --gold-bright: #ffb454;
+  --gold-dim: #a8560f;
+  --gold-line: rgba(255, 138, 30, 0.35);
+  --gold-faint: rgba(255, 138, 30, 0.14);
+  --text: #f4e8dc;
+  --text-dim: #9a8crossed;
+  --text-dim: #9a8574;
+  --rail: 12.6vw;          /* the side columns */
+  --bar: 4.6vh;            /* top and bottom */
+  --font: "Rajdhani", "Titillium Web", ui-sans-serif, system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+}
+
+* { box-sizing: border-box; }
+
+body.ironman {
+  margin: 0;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background: transparent;           /* the apps show through the middle */
+  color: var(--text);
+  font-family: var(--font);
+  letter-spacing: 0.06em;
+  /* The frame catches the pointer; the hole in the middle does not. Set per-region below. */
+  pointer-events: none;
+}
+
+#ironmanHud .hud { position: fixed; inset: 0; }
+#ironmanHud .hud > * { pointer-events: auto; }
+
+/* --- the panels themselves ------------------------------------------------ */
+#ironmanHud .frame {
+  position: fixed;
+  background: linear-gradient(180deg, rgba(7, 8, 11, 0.97), rgba(10, 12, 17, 0.99));
+  border: 1px solid var(--gold-line);
+}
+
+/* A corner cut, which is what makes it read as a HUD rather than a sidebar. */
+#ironmanHud .cut-tl { clip-path: polygon(1.1vw 0, 100% 0, 100% 100%, 0 100%, 0 1.1vw); }
+#ironmanHud .cut-tr { clip-path: polygon(0 0, calc(100% - 1.1vw) 0, 100% 1.1vw, 100% 100%, 0 100%); }
+#ironmanHud .cut-bl { clip-path: polygon(0 0, 100% 0, 100% 100%, 1.1vw 100%, 0 calc(100% - 1.1vw)); }
+
+#ironmanHud .top { top: 0; left: 0; right: 0; height: var(--bar); display: flex; align-items: center; }
+#ironmanHud .bottom { bottom: 0; left: 0; right: 0; height: var(--bar);
+                      display: flex; align-items: center; flex-wrap: nowrap;
+                      justify-content: flex-start; gap: 0; }
+#ironmanHud .left { top: var(--bar); bottom: var(--bar); left: 0; width: var(--rail); }
+#ironmanHud .right { top: var(--bar); bottom: var(--bar); right: 0; width: var(--rail); }
+
+#ironmanHud .left, #ironmanHud .right { display: flex; flex-direction: column; padding: 1.1vh 0.7vw; gap: 1.2vh; overflow: hidden; }
+
+/* --- top bar -------------------------------------------------------------- */
+#ironmanHud .brand { display: flex; flex-direction: column; padding-left: 1vw; min-width: 10vw; }
+#ironmanHud .brand b { font-size: 1.55vh; letter-spacing: 0.4em; color: var(--gold-bright); font-weight: 700; }
+#ironmanHud .brand span { font-size: 0.95vh; letter-spacing: 0.34em; color: var(--gold-dim); }
+
+#ironmanHud .pulse-line { flex: 0 0 5vw; height: 2.2vh; }
+
+#ironmanHud .stages { display: flex; gap: 0.9vw; margin-left: auto; margin-right: auto;
+          font-size: 1.05vh; letter-spacing: 0.3em; color: var(--gold-dim); }
+#ironmanHud .stages .now { color: var(--gold-bright); }
+#ironmanHud .stages i { color: var(--gold-dim); font-style: normal; opacity: 0.6; }
+
+#ironmanHud .clock { margin-left: auto; padding-right: 1vw; text-align: right; }
+#ironmanHud .clock .date { font-size: 1.05vh; letter-spacing: 0.26em; color: var(--text-dim); }
+#ironmanHud .clock .time { font-size: 1.9vh; letter-spacing: 0.16em; color: var(--gold-bright); font-weight: 700; }
+#ironmanHud .clock .tag { font-size: 0.85vh; letter-spacing: 0.18em; color: var(--gold-dim); font-style: italic; }
+
+/* --- section headings ----------------------------------------------------- */
+#ironmanHud .head {
+  display: flex; align-items: center; gap: 0.4vw;
+  font-size: 1vh; letter-spacing: 0.32em; color: var(--gold);
+  padding-bottom: 0.5vh; border-bottom: 1px solid var(--gold-faint);
+}
+#ironmanHud .head::before { content: ""; width: 0.45vw; height: 0.45vw; background: var(--gold); transform: rotate(45deg); }
+
+/* --- lists (projects, quick access, agents) -------------------------------- */
+#ironmanHud .list { display: flex; flex-direction: column; gap: 0.25vh; overflow-y: auto; scrollbar-width: none; }
+#ironmanHud .list::-webkit-scrollbar { display: none; }
+
+#ironmanHud .row {
+  display: flex; align-items: center; gap: 0.5vw;
+  padding: 0.42vh 0.3vw;
+  font-size: 1.12vh; color: var(--text);
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#ironmanHud .row .dot { width: 1.05vh; height: 1.05vh; flex: 0 0 auto; opacity: 0.85; }
+#ironmanHud .row:hover { color: var(--gold-bright); border-color: var(--gold-faint); background: rgba(255, 138, 30, 0.06); }
+#ironmanHud .row.muted { color: var(--text-dim); font-size: 0.95vh; }
+#ironmanHud .row small { color: var(--gold-dim); font-size: 0.85vh; margin-left: auto; }
+
+/* --- system gauges -------------------------------------------------------- */
+#ironmanHud .gauges { display: flex; flex-direction: column; gap: 0.75vh; }
+#ironmanHud .gauge { display: flex; align-items: center; gap: 0.55vw; }
+#ironmanHud .gauge svg { width: 3.5vh; height: 3.5vh; flex: 0 0 auto; }
+#ironmanHud .gauge .meta b { display: block; font-size: 0.85vh; letter-spacing: 0.26em; color: var(--gold-dim); }
+#ironmanHud .gauge .meta span { font-size: 1.35vh; font-weight: 700; color: var(--text); }
+#ironmanHud .ring-bg { fill: none; stroke: rgba(255, 138, 30, 0.16); stroke-width: 3; }
+#ironmanHud .ring-fg { fill: none; stroke: var(--gold); stroke-width: 3; stroke-linecap: round;
+           transform: rotate(-90deg); transform-origin: 50% 50%;
+           transition: stroke-dasharray 600ms cubic-bezier(.22,.85,.24,1); }
+#ironmanHud .ring-label { fill: var(--gold-bright); font-size: 9px; font-family: var(--mono); text-anchor: middle; }
+
+/* --- now playing ---------------------------------------------------------- */
+#ironmanHud .playing { border: 1px solid var(--gold-line); padding: 0.6vh 0.5vw; margin-top: auto; }
+#ironmanHud .playing .head { border: 0; padding-bottom: 0.3vh; }
+#ironmanHud .playing .title { font-size: 1.1vh; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#ironmanHud .playing .artist { font-size: 0.9vh; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#ironmanHud .playing .wave { height: 2.4vh; width: 100%; }
+#ironmanHud .playing .controls { display: flex; justify-content: space-between; padding-top: 0.45vh;
+                     border-top: 1px solid var(--gold-faint); margin-top: 0.4vh; }
+#ironmanHud .playing .controls button {
+  background: none; border: 0; color: var(--gold); cursor: pointer;
+  font-size: 1.15vh; padding: 0 0.3vw; font-family: var(--font);
+}
+#ironmanHud .playing .controls button:hover { color: var(--gold-bright); }
+
+#ironmanHud .quote { font-size: 1.05vh; line-height: 1.5; letter-spacing: 0.2em; color: var(--text-dim); padding-top: 0.8vh; }
+#ironmanHud .quote b { color: var(--gold-dim); display: block; font-weight: 400; }
+
+/* --- globe ---------------------------------------------------------------- */
+#ironmanHud .globe { margin-top: auto; text-align: center; }
+#ironmanHud .globe svg { width: 6.5vw; height: 6.5vw; }
+#ironmanHud .globe .status { font-size: 0.85vh; letter-spacing: 0.24em; color: var(--gold-dim); padding-top: 0.5vh; }
+#ironmanHud .globe .status b { display: block; color: var(--gold); font-weight: 400; }
+#ironmanHud .globe circle, #ironmanHud .globe ellipse, #ironmanHud .globe path { fill: none; stroke: var(--gold-line); stroke-width: 1; }
+
+/* --- bottom bar ----------------------------------------------------------- */
+#ironmanHud .modes { display: flex; gap: 0.35vw; padding-left: 1vw; }
+#ironmanHud .modes button {
+  font-family: var(--font); font-size: 1vh; letter-spacing: 0.26em;
+  padding: 0.5vh 0.9vw; background: none; color: var(--gold-dim);
+  border: 1px solid var(--gold-faint); cursor: pointer;
+}
+#ironmanHud .modes button.on { background: var(--gold); color: #120a02; border-color: var(--gold); font-weight: 700; }
+
+#ironmanHud .wordmark { margin: 0 auto; text-align: center; }
+#ironmanHud .wordmark b { font-size: 1.45vh; letter-spacing: 0.55em; color: var(--gold-bright); font-weight: 700; }
+#ironmanHud .wordmark span { display: block; font-size: 0.8vh; letter-spacing: 0.3em; color: var(--gold-dim); }
+
+#ironmanHud .tray { display: flex; align-items: center; gap: 0.8vw; padding-right: 1vw;
+        font-size: 1vh; letter-spacing: 0.2em; color: var(--text-dim); }
+#ironmanHud .tray .bat { display: flex; align-items: center; gap: 0.35vw; }
+#ironmanHud .tray .bar { width: 3vw; height: 0.9vh; border: 1px solid var(--gold-line); }
+#ironmanHud .tray .bar i { display: block; height: 100%; background: var(--gold); }
+
+/* --- the reactor, seen through the gap ------------------------------------ */
+#ironmanHud .reactor { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+           width: 12vw; height: 12vw; pointer-events: none; opacity: 0.9; }
+#ironmanHud .reactor circle, #ironmanHud .reactor path, #ironmanHud .reactor polygon { fill: none; stroke: var(--gold); }
+#ironmanHud .reactor .faint { stroke: var(--gold-line); }
+#ironmanHud .reactor .core { fill: var(--gold); }
+
+/* The one thing that moves. A slow sweep, because the lesson from the pill is that anything
+ * animating for ever costs a quarter of a core — so this runs only while the mode is armed and
+ * stops the moment it is not. */
+@keyframes sweep { to { transform: rotate(360deg); } }
+body.ironman[data-armed] .reactor .sweep {
+  animation: sweep 7s linear infinite; transform-origin: 50% 50%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.ironman[data-armed] .reactor .sweep { animation: none; }
+}
+
+/* A project being opened, so a click that takes a second to show anything still feels answered. */
+#ironmanHud .row.opening { color: var(--gold-bright); border-color: var(--gold-line); }
+#ironmanHud .row.opening::after { content: "…"; margin-left: auto; color: var(--gold); }
+
+/* The HUD lives in the same page as the pill; it must claim nothing until the mode is on. */
+#ironmanHud[hidden] { display: none !important; }
+
+/* Iron Man mode replaces the pill and the panel; it does not sit on top of them. Without this the
+ * shell stretches to the full-screen window and covers the desktop the frame exists to reveal. */
+body[data-form="ironman"] .shell { display: none !important; }
+
+/* And the frame itself only exists in this mode. */
+body:not([data-form="ironman"]) #ironmanHud { display: none !important; }
