@@ -54,14 +54,52 @@ def test_an_agent_that_stopped_without_a_question_is_green(monkeypatch):
 
 @pytest.mark.parametrize("screen", [
     "Do you want to proceed?",
-    "Allow Claude to edit this file?",
-    "(y/n)",
-    "[y/N]",
+    "Continue? (y/n)",
+    "Overwrite file? [y/N]",
     "❯ 1. Yes",
+    "  2. No, and tell Claude what to do differently",
     "Press Enter to continue",
+    "Shall I apply the patch?",
 ])
 def test_these_read_as_a_question(screen):
     assert presence.classify_words(screen) == "asking"
+
+
+@pytest.mark.parametrize("screen", [
+    "The warnings name the symptom, not the binary, and ask permission first",
+    "I need to confirm the fix works before committing",
+    "red when one is waiting on you, and allow the agent to continue",
+    "Do you want to proceed with this refactor is a question I considered at length",
+    "Added a permission prompt to the installer and approved the change",
+])
+def test_prose_about_permission_is_not_a_permission_prompt(screen):
+    """The first version matched vocabulary — allow, approve, permission, confirm — and went red
+    at the mere mention of them. Terminals are full of prose about permissions: commit messages,
+    diffs, this project's own source. The dot sat red while nothing was being asked."""
+    assert presence.classify_words(screen) != "asking"
+
+
+def test_only_the_bottom_of_the_screen_counts():
+    """A prompt answered five minutes ago is still in the scrollback. Only the live one matters."""
+    old_prompt = "Do you want to proceed?\n" + "\n".join(f"line {i}" for i in range(20))
+    assert presence.classify_words(old_prompt) != "asking"
+
+
+def test_a_prompt_at_the_bottom_is_caught_under_real_output():
+    screen = "\n".join([
+        "Reading files...",
+        "Applying the patch to jarvis/modes/ironman.py",
+        "",
+        "Do you want to proceed?",
+        "❯ 1. Yes",
+        "  2. No",
+    ])
+    assert presence.classify_words(screen) == "asking"
+
+
+def test_a_long_line_is_a_paragraph_not_a_prompt():
+    long_one = "Shall I " + "x" * 120 + "?"
+    assert presence.classify_words(long_one) != "asking"
 
 
 @pytest.mark.parametrize("screen", [

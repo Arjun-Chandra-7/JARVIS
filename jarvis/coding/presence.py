@@ -111,31 +111,63 @@ def _busy(pid: int) -> float:
     return ((jiffies - before[1]) / gap) if gap > 0.5 else 0.0
 
 
-# What an agent looks like when it is waiting on a person rather than on a model.
-_ASKING = re.compile(
-    r"""(?ix)
-    (?: do\s+you\s+want\s+to | would\s+you\s+like\s+to | shall\s+i |
-        allow | approve | permission | confirm |
-        \(\s*y\s*/\s*n\s*\) | \[\s*y\s*/\s*n\s*\] |
-        press\s+enter\s+to | ❯\s*\d\.\s | \b1\.\s*yes\b )
-    """)
+# What an agent waiting on a person actually looks like on screen.
+#
+# The first version of this matched vocabulary — allow, approve, permission, confirm — and went
+# red at the mere mention of them. Terminals are full of prose about permissions: commit
+# messages, diffs, this project's own source. The dot sat red while nothing was being asked.
+#
+# A prompt has a shape, and the shape is what is matched now: an affordance for answering, on one
+# of the last few lines, on a line short enough to be a prompt rather than a paragraph.
+_YES_NO = re.compile(r"(?i)[\(\[]\s*y\s*(?:es)?\s*/\s*n\s*(?:o)?\s*[\)\]]")
 
-# And what it looks like when it has finished and handed the terminal back.
+# "❯ 1. Yes" / "  2. No, and tell Claude what to do differently" — the numbered choice these
+# agents offer. One numbered line is a list; a numbered line offering yes or no is a question.
+_NUMBERED_CHOICE = re.compile(r"(?i)^\s*[❯>*→]?\s*\d+\s*[.)]\s*(?:yes|no)\b")
+
+# A direct question, but only when it reads like a prompt rather than a sentence about one.
+_DIRECT_QUESTION = re.compile(
+    r"(?i)\b(?:do\s+you\s+want|would\s+you\s+like|shall\s+i|may\s+i|proceed|continue)\b"
+    r"[^?]{0,60}\?\s*$")
+
+_WAITING_KEYPRESS = re.compile(r"(?i)^\s*press\s+(?:enter|any\s+key|y)\b")
+
+# Past this, a line is prose that happens to contain the words, not something to answer.
+PROMPT_LINE_MAX = 90
+
+# Only the live prompt matters, and that is at the bottom.
+PROMPT_WITHIN_LINES = 6
+
+
+# And what it looks like when it has finished and handed the terminal back. Deliberately looser
+# than the question patterns: a wrong "done" shows a green dot for ninety seconds, while a wrong
+# "asking" claims you are being waited on when you are not.
 _FINISHED = re.compile(
     r"""(?ix)
-    (?: \btokens?\s+used\b | \bdone\b\s*[.!]? \s*$ | \bcompleted\b |
-        ^\s*[\w.-]+@[\w.-]+:.*[$#]\s*$ )      # a shell prompt is back
-    """, re.M)
+    (?: \btokens?\s+used\b | ^\s*done\b\s*[.!]?\s*$ | \bcompleted\b |
+        ^\s*[\w.-]+@[\w.-]+:.*[$\#]\s*$ )      # a shell prompt is back
+    """, re.M | re.X)
 
 
 def classify_words(screen: str) -> str:
     """"asking", "done", or "" from what the terminal is showing."""
     if not screen:
         return ""
-    tail = "\n".join(screen.splitlines()[-25:])
-    if _ASKING.search(tail):
-        return "asking"
-    if _FINISHED.search(tail):
+    lines = [line.rstrip() for line in screen.splitlines() if line.strip()]
+    if not lines:
+        return ""
+
+    for line in lines[-PROMPT_WITHIN_LINES:]:
+        stripped = line.strip()
+        if len(stripped) > PROMPT_LINE_MAX:
+            continue                    # a paragraph, not a prompt
+        if (_YES_NO.search(stripped)
+                or _NUMBERED_CHOICE.match(stripped)
+                or _DIRECT_QUESTION.search(stripped)
+                or _WAITING_KEYPRESS.match(stripped)):
+            return "asking"
+
+    if _FINISHED.search("\n".join(lines[-25:])):
         return "done"
     return ""
 
