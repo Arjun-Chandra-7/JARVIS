@@ -751,7 +751,11 @@ function renderTasks(jobs) {
   const running = jobs.filter((t) => (t.status || "").match(/running|queued|pending/i)).length;
   els.taskBadge.hidden = running === 0;
   els.taskBadge.textContent = String(running);
-  els.workDot.hidden = running === 0;
+  // Only when no coding agent has claimed the dot: an agent working is more interesting than
+  // a background job, and two things driving one element flicker between them.
+  if (!els.workDot.dataset.agent || els.workDot.dataset.agent === "idle") {
+    els.workDot.hidden = running === 0;
+  }
   els.cancelAllBtn.hidden = running === 0;
 
   // Everything that ever ran was being listed together, so the tab opened on eight identical
@@ -1037,6 +1041,18 @@ function handleEvent(kind, text) {
     case "mode":
       setForm(text === "ironman" ? "ironman" : "pill");
       break;
+    // The coding agents, watched whether Jarvis started them or you opened them yourself.
+    case "agent": {
+      const [kind, who] = String(text || "idle").split(":");
+      els.workDot.dataset.agent = kind;
+      els.workDot.hidden = kind === "idle";
+      els.workDot.title = {
+        running: `${who || "An agent"} is working`,
+        asking: `${who || "An agent"} is waiting for your answer`,
+        done: `${who || "An agent"} has finished`,
+      }[kind] || "";
+      break;
+    }
     case "ready":
       setActivity("idle");
       break;

@@ -261,6 +261,38 @@ body:not([data-form="pill"]) .pill-reply { display: none; }
   50%      { opacity: 1;    box-shadow: 0 0 0 5px var(--accent-glow); }
 }
 @media (prefers-reduced-motion: reduce) { .work-dot { animation: none; opacity: 1; } }
+
+/* The coding agents, at a glance. Orange while one is working, red when it wants an answer,
+ * green when it has just finished, and nothing at all when none is open — which is why the dot
+ * hides on blue rather than showing a colour that means "no news".
+ *
+ * Red does not pulse. A blinking red dot reads as an alarm you are supposed to watch; this one
+ * is a question waiting to be answered, and it stays still so it is noticed once rather than
+ * nagging. The others breathe on the same slow beat as everything else in the pill. */
+.work-dot[data-agent="running"] {
+  background: #ff8a1e;
+  box-shadow: 0 0 0 3px rgba(255, 138, 30, 0.22);
+  animation: agent-pulse 1.8s var(--ease-out) infinite;
+}
+.work-dot[data-agent="asking"] {
+  background: var(--error);
+  box-shadow: 0 0 0 4px var(--error-dim);
+  animation: none;
+}
+.work-dot[data-agent="done"] {
+  background: var(--success);
+  box-shadow: 0 0 0 3px var(--success-dim);
+  animation: agent-pulse 2.6s var(--ease-out) infinite;
+}
+.work-dot[data-agent="idle"] { display: none; }
+
+@keyframes agent-pulse {
+  0%, 100% { opacity: 0.5; }
+  50%      { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .work-dot[data-agent] { animation: none; opacity: 1; }
+}
 @keyframes breathe { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
   .work-dot { animation: none; opacity: 0.9; }
