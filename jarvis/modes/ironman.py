@@ -474,23 +474,19 @@ def _clear_recovery() -> None:
 
 
 def _rescue_editor_without_snapshot() -> None:
-    """Recover a pre-fix session that was left maximized by an older Iron Man build."""
-    editor = _find_window(("visual studio code",))
-    if not editor:
-        return
-    wid = editor[0]
-    subprocess.run(["wmctrl", "-i", "-r", wid, "-b", "remove,maximized_vert,maximized_horz"],
-                   timeout=4, check=False)
-    time.sleep(0.15)
-    width, height = _screen()
-    rect = _window_geometry(wid)
-    if rect and rect[2] < round(width * 0.94) and rect[3] < round(height * 0.94):
-        return
-    # Leave a visible desktop margin even when the compositor has no remembered restore rect.
-    x, y = round(width * 0.06), round(height * 0.05)
-    w, h = round(width * 0.88), round(height * 0.88)
-    subprocess.run(["wmctrl", "-i", "-r", wid, "-e", f"0,{x},{y},{w},{h}"],
-                   timeout=4, check=False)
+    """With no record of how the desktop was, do nothing to it.
+
+    This used to un-maximise the editor and resize it to 88% of the screen with a margin, on the
+    theory that a maximised editor after the mode was leftover damage from an older build. It is
+    the reason a full-screen editor came back as a 1655x937 window on a 1920x1080 screen: 88% of
+    1920 is 1689, and 6% of 1920 is 115, which is exactly where it was found.
+
+    Guessing is worse than leaving it. Without a snapshot there is no way to know whether the
+    window was full-screen, maximised, or deliberately sized by hand, and a mode that ends by
+    rearranging windows it never recorded is doing damage in the name of tidying up. The caller
+    says plainly that it could not restore instead.
+    """
+    return
 
 
 # --------------------------------------------------------------------------- the sting
@@ -565,10 +561,12 @@ def deactivate() -> dict:
     global _on
     was, _on = _on, None
     recovery = (was.surfaces, was.created) if was else _load_recovery()
-    if recovery[0] or recovery[1]:
+    restored = bool(recovery[0] or recovery[1])
+    if restored:
         _restore_surfaces(*recovery)
         _clear_recovery()
     else:
         _rescue_editor_without_snapshot()
     return {"was_on": was is not None,
+            "restored": restored,
             "minutes": int((time.time() - was.started) / 60) if was else 0}

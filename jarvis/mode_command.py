@@ -51,7 +51,12 @@ async def handle(text: str, config=None) -> Optional[str]:
         done = ironman.deactivate()
         await _tell_the_overlay("pill")
         if done["was_on"]:
-            return f"{ironman.STOOD_DOWN} That was {done['minutes']} minutes in the workshop."
+            said = f"{ironman.STOOD_DOWN} That was {done['minutes']} minutes in the workshop."
+            if not done.get("restored", True):
+                # Never imply the desktop was put back when there was no record of how it was.
+                said += (" I had no record of how your windows were arranged, so I've left them "
+                         "as they are.")
+            return said
         # The overlay and backend are separate processes. If one restarted, the in-memory flag
         # cannot tell us what is actually on screen, so "normal mode" is always a rescue command.
         return ironman.STOOD_DOWN
