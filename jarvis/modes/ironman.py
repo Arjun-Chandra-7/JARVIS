@@ -525,7 +525,7 @@ def _restore_surfaces(snapshot: tuple, created: tuple) -> None:
         state = how if isinstance(how, str) else ("maximized" if how else "")
         # Anything the mode put out of the way comes back first, or it is restored to the right
         # geometry while still minimised and looks lost.
-        subprocess.run(["wmctrl", "-i", "-r", wid, "-b", "remove,hidden"], timeout=4, check=False)
+        subprocess.run(["wmctrl", "-i", "-a", wid], timeout=4, check=False)
         _place_window(wid, *rect)
         _set_window_state(wid, state)
 
@@ -645,8 +645,12 @@ def deactivate() -> dict:
     # Anything minimised out of the way comes back whether or not it was in the snapshot. The
     # snapshot only covers the three work surfaces, so Spotify — put aside precisely because it
     # is kept rather than closed — was being left minimised with nothing to bring it back.
+    # Activated rather than un-hinted. `add,hidden` minimises on this desktop but
+    # `remove,hidden` does not undo it — the state simply stays, and the window is left minimised
+    # with the code reporting that it put everything back. Activating is what actually restores
+    # it, which is also what clicking the dock icon does.
     for wid in (was.aside if was else ()):
-        subprocess.run(["wmctrl", "-i", "-r", wid, "-b", "remove,hidden"], timeout=4, check=False)
+        subprocess.run(["wmctrl", "-i", "-a", wid], timeout=4, check=False)
 
     restored = bool(recovery[0] or recovery[1])
     if restored:

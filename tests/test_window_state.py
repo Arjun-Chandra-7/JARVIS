@@ -205,4 +205,6 @@ def test_what_was_put_aside_comes_back_even_though_it_is_not_in_the_snapshot(mon
     ironman._on = ironman.State(started=_t.time(), closed=(), surfaces=(), created=(),
                                 aside=("0x9",))
     ironman.deactivate()
-    assert any("0x9" in c and "remove,hidden" in c for c in calls)
+    # Activated, not un-hinted: `remove,hidden` does not undo `add,hidden` on this desktop, so a
+    # window "restored" that way stays minimised while the code reports success.
+    assert any("0x9" in c and " -a " in f" {c} " for c in calls)
