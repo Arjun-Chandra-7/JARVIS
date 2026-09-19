@@ -135,6 +135,26 @@ function defaultBounds(name) {
   };
 }
 
+function releaseFullScreen() {
+  if (!win || win.isDestroyed()) return;
+  // Electron is asked first, and usually declines: it never set fullscreen, so isFullScreen() is
+  // false and setFullScreen(false) is a no-op. The state was put there by Mutter, so it has to
+  // be taken off the same way — through the window manager, by id.
+  try {
+    if (win.isFullScreen()) win.setFullScreen(false);
+  } catch { /* not fatal */ }
+  if (process.platform !== "linux") return;
+  try {
+    const handle = win.getNativeWindowHandle();
+    // The X11 window id is the first 4 bytes of the handle, little-endian on every platform
+    // this runs on.
+    const id = handle.length >= 4 ? handle.readUInt32LE(0) : 0;
+    if (!id) return;
+    spawn("wmctrl", ["-i", "-r", `0x${id.toString(16)}`, "-b", "remove,fullscreen"],
+          { detached: true, stdio: "ignore" }).unref();
+  } catch { /* wmctrl absent is survivable; the frame simply stays on top */ }
+}
+
 function applyForm(name, { animate = true } = {}) {
   if (!win || !FORMS[name] || win.isDestroyed()) return;
   // Drop any temporary growth before measuring, so an answer showing at the moment someone
@@ -163,6 +183,16 @@ function applyForm(name, { animate = true } = {}) {
   // Click-through belongs to the full-screen frame and nothing else. The renderer turns it off
   // again for as long as the pointer is over something you can actually press.
   win.setIgnoreMouseEvents(Boolean(spec.coversTheScreen), { forward: true });
+
+  // Nothing here ever asks for fullscreen — `fullscreenable` is even false — but a borderless,
+  // always-on-top window whose bounds exactly cover the monitor is what a fullscreen app looks
+  // like to Mutter, so it promotes it and hides the top bar and the dock to get out of its way.
+  //
+  // That is fine while the frame is up and ruinous afterwards: shrinking back to the pill does
+  // not clear the state, so the shell stays hidden and the desktop looks broken with no window
+  // on screen to blame. It happened, and took a while to find, because every process involved
+  // was healthy and the work area still reserved the space the bars were no longer drawing in.
+  if (!spec.coversTheScreen) releaseFullScreen();
 
   win.setMinimumSize(spec.minW, spec.minH);
   win.setResizable(spec.resizable);
@@ -480,7 +510,6 @@ if (!app.requestSingleInstanceLock()) {
 
 app.whenReady().then(() => {
   loadState();
-
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
     callback(["media", "mediaKeySystem", "display-capture"].includes(permission));
   });
@@ -488,6 +517,10 @@ app.whenReady().then(() => {
     ["media", "mediaKeySystem", "display-capture"].includes(permission));
 
   createWindow();
+  // A previous run that ended inside the frame can leave the window fullscreen, and Mutter keeps
+  // the top bar and dock hidden for as long as one exists. Cleared here, where there is actually
+  // a window to clear — the same check placed before createWindow() silently did nothing.
+  releaseFullScreen();
   ensureBackend();
   registerShortcuts();
   watchScreencast();

@@ -156,3 +156,53 @@ def test_a_real_restore_does_not_apologise(monkeypatch):
 
     said = asyncio.run(mode_command.handle("jarvis normal mode"))
     assert "left them as they are" not in said and "3 minutes" in said
+
+
+# ------------------------------------------------------- kept windows get out of the way, not closed
+def test_spotify_is_recognised_by_class_not_by_the_track_it_is_playing(monkeypatch):
+    """Its title is the song — "MC SQUARE - MAATI" — so a title-only keep-list closes the music
+    the mode was explicitly told to leave alone."""
+    monkeypatch.setattr(ironman, "_window_class", lambda _wid: '"spotify", "spotify"')
+    assert ironman._worth_keeping("MC SQUARE - MAATI", "0x1") is True
+    assert ironman._worth_keeping("MC SQUARE - MAATI") is False   # title alone cannot know
+
+
+def test_a_kept_window_is_minimised_rather_than_left_covering_the_frame(monkeypatch):
+    """"Not closed" was being implemented as "left maximised over the three panes"."""
+    calls = []
+    monkeypatch.setattr(ironman, "_windows", lambda: [("0x1", "Editor"), ("0x9", "MC SQUARE")])
+    monkeypatch.setattr(ironman, "_window_class",
+                        lambda wid: '"spotify", "spotify"' if wid == "0x9" else '"code", "code"')
+    monkeypatch.setattr(ironman.subprocess, "run",
+                        lambda a, **k: calls.append(" ".join(a)) or type("R", (), {"returncode": 0})())
+    aside = ironman._stand_aside({"0x1"})
+    assert aside == ["0x9"]
+    assert any("0x9" in c and "add,hidden" in c for c in calls)
+    assert not any("0x1" in c for c in calls), "minimised a window it had just placed"
+
+
+def test_minimising_uses_the_hint_the_desktop_actually_honours(monkeypatch):
+    """`xdotool windowminimize` returns success here and does nothing at all."""
+    calls = []
+    monkeypatch.setattr(ironman, "_windows", lambda: [("0x9", "Anything")])
+    monkeypatch.setattr(ironman, "_window_class", lambda _w: '"spotify", "spotify"')
+    monkeypatch.setattr(ironman.subprocess, "run",
+                        lambda a, **k: calls.append(" ".join(a)) or type("R", (), {"returncode": 0})())
+    ironman._stand_aside(set())
+    assert not any("windowminimize" in c for c in calls)
+    assert any("add,hidden" in c for c in calls)
+
+
+def test_what_was_put_aside_comes_back_even_though_it_is_not_in_the_snapshot(monkeypatch):
+    """The snapshot only covers the three work surfaces. Spotify is put aside precisely because
+    it is kept rather than closed, so nothing in the snapshot would ever bring it back."""
+    calls = []
+    monkeypatch.setattr(ironman, "_windows", lambda: [])
+    monkeypatch.setattr(ironman, "_load_recovery", lambda: ((), ()))
+    monkeypatch.setattr(ironman.subprocess, "run",
+                        lambda a, **k: calls.append(" ".join(a)) or type("R", (), {"returncode": 0})())
+    import time as _t
+    ironman._on = ironman.State(started=_t.time(), closed=(), surfaces=(), created=(),
+                                aside=("0x9",))
+    ironman.deactivate()
+    assert any("0x9" in c and "remove,hidden" in c for c in calls)

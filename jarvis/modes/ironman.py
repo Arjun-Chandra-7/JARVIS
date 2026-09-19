@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import json
 import re
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass
@@ -47,6 +48,14 @@ CHATGPT_RETRY_COMMAND = ("google-chrome", *CHATGPT_FLAGS, "--new-window",
 # return success to a stale resident process without opening anything. A standalone instance is a
 # real, independently titled window and still goes through the system's x-terminal-emulator.
 TERMINAL_COMMAND = ("x-terminal-emulator", "--standalone")
+# Ptyxis keeps a resident agent, and a launch that goes through it sometimes returns success
+# having produced no window at all — seen twice in a row on an otherwise healthy desktop. These
+# are tried in turn until a window actually appears, rather than trusting the first exit code.
+TERMINAL_FALLBACKS = (
+    ("ptyxis", "--new-window"),
+    ("gnome-terminal", "--window"),
+    ("xterm",),
+)
 TERMINAL_TITLE_MARKERS = ("terminal", "konsole", "alacritty", "kitty", "xterm")
 
 # These are the same viewport fractions as --rail and --bar in overlay/ironman.css. Keep them
@@ -56,6 +65,7 @@ BAR_FRACTION = 0.046
 EDITOR_FRACTION = 0.60
 CHATGPT_FRACTION = 0.62
 PANE_GAP = 10
+LAUNCH_WAIT_S = 20.0   # a terminal or browser started cold, right after a window sweep, on a busy machine
 WINDOW_WAIT_S = 12.0
 
 # A short rising sting, synthesised rather than sampled — a few seconds of the real thing would be
@@ -70,9 +80,12 @@ class State:
     closed: tuple
     surfaces: tuple = ()
     created: tuple = ()
+    aside: tuple = ()          # windows minimised out of the way, to be brought back on exit
 
 
 _on: Optional[State] = None
+# Windows the last layout minimised out of the way, so leaving the mode can bring them back.
+_aside_ids: tuple = ()
 
 
 def on() -> bool:
@@ -116,10 +129,33 @@ def _windows() -> list[tuple[str, str]]:
     return found
 
 
-def _worth_keeping(title: str) -> bool:
+def _window_class(wid: str) -> str:
+    """What the window *is*, as opposed to what it is currently showing.
+
+    Spotify is the reason this exists. Its title is the track — "MC SQUARE - MAATI" — so a
+    keep-list matched against titles does not recognise it and the mode closes the music it was
+    explicitly told to leave alone. WM_CLASS stays "spotify" whatever is playing.
+    """
+    try:
+        out = subprocess.run(["xprop", "-id", wid, "WM_CLASS"], capture_output=True,
+                             text=True, timeout=4).stdout
+    except Exception:  # noqa: BLE001
+        return ""
+    return out.split("=", 1)[-1].strip().lower() if "=" in out else ""
+
+
+def _worth_keeping(title: str, wid: str = "") -> bool:
     low = title.lower()
-    return (any(keep in low for keep in KEEP)
-            or bool(re.search(r"\b[^\s@]+@[^\s:]+:", title)))
+    if any(keep in low for keep in KEEP):
+        return True
+    # A shell prompt in the title — "user@host:" — is a terminal whatever it calls itself.
+    if re.search(r"\b[^\s@]+@[^\s:]+:", title):
+        return True
+    if wid:
+        klass = _window_class(wid)
+        if any(keep in klass for keep in KEEP):
+            return True
+    return False
 
 
 def show_the_overview() -> None:
@@ -134,7 +170,7 @@ def clear_the_desk() -> list[str]:
     """Ask everything that is not the work to close. Returns what was asked."""
     asked = []
     for wid, title in _windows():
-        if _worth_keeping(title):
+        if _worth_keeping(title, wid):
             continue
         try:
             subprocess.run(["wmctrl", "-i", "-c", wid], timeout=4, check=False)
@@ -371,6 +407,11 @@ def _wait_for_window(markers: tuple[str, ...] = (), *, new_since: set[str] | Non
         if lowered:
             match = next(((wid, title) for wid, title in windows
                           if any(marker in title.lower() for marker in lowered)), None)
+            # Titles lie about what a window is. Ptyxis calls itself "user@host: ~" and Spotify
+            # calls itself whatever is playing, so the class is consulted when the title misses.
+            if match is None:
+                match = next(((wid, title) for wid, title in windows
+                              if any(marker in _window_class(wid) for marker in lowered)), None)
             if match:
                 return match
         if new_since is not None:
@@ -405,6 +446,28 @@ def _inner_layout(width: int, height: int) -> dict[str, tuple[int, int, int, int
     }
 
 
+def _stand_aside(placed_ids: set) -> list[str]:
+    """Minimise the windows that are kept but are not part of the layout.
+
+    Spotify is the case that matters. It is on the keep list deliberately — the frame shows what
+    is playing and a mode that kills the music to display the music is silly — but "not closed"
+    was being implemented as "left maximised across the whole screen", where it covered the three
+    panes the mode had just arranged. Minimised is what was meant: still playing, out of the way,
+    one click back.
+    """
+    aside = []
+    for wid, title in _windows():
+        if wid in placed_ids or "jarvis" in _window_class(wid):
+            continue
+        if not _worth_keeping(title, wid):
+            continue          # already closed by the sweep
+        # `xdotool windowminimize` returns success here and does nothing at all — GNOME's
+        # XWayland does not honour it. The window-manager hint does, and was checked by hand.
+        subprocess.run(["wmctrl", "-i", "-r", wid, "-b", "add,hidden"], timeout=4, check=False)
+        aside.append(wid)
+    return aside
+
+
 def lay_it_out() -> dict:
     """Launch missing work surfaces, then tile all three inside the overlay frame."""
     editor = _find_window(("visual studio code",))
@@ -412,24 +475,38 @@ def lay_it_out() -> dict:
     chatgpt = _find_window(("chatgpt",))
 
     if terminal is None:
-        before = {wid for wid, _title in _windows()}
-        if _launch(TERMINAL_COMMAND):
+        # Each candidate is judged by whether a window appeared, not by whether the command
+        # exited cleanly. A terminal that starts and shows nothing is the common failure here.
+        for command in (TERMINAL_COMMAND, *TERMINAL_FALLBACKS):
+            if not shutil.which(command[0]):
+                continue
+            before = {wid for wid, _title in _windows()}
+            if not _launch(command):
+                continue
             # Default terminal titles often name the shell or working directory, not "Terminal".
             # The new window ID lets us read and retain the title wmctrl actually reports.
-            terminal = _wait_for_window(new_since=before)
+            terminal = _wait_for_window(new_since=before, timeout=LAUNCH_WAIT_S)
+            if terminal is not None:
+                break
 
     if chatgpt is None and _launch(CHATGPT_COMMAND):
-        chatgpt = _wait_for_window(("chatgpt",))
+        chatgpt = _wait_for_window(("chatgpt",), timeout=LAUNCH_WAIT_S)
         # A resident Chrome process can swallow a plain app request without producing a window.
         # Ask explicitly for a new window once before reporting the surface as missing.
         if chatgpt is None and _launch(CHATGPT_RETRY_COMMAND):
-            chatgpt = _wait_for_window(("chatgpt",))
+            chatgpt = _wait_for_window(("chatgpt",), timeout=LAUNCH_WAIT_S)
 
     width, height = _screen()
     rects = _inner_layout(width, height)
     windows = {"editor": editor, "chatgpt": chatgpt, "terminal": terminal}
-    return {name: bool(window and _place_window(window[0], *rects[name]))
-            for name, window in windows.items()}
+    placed = {name: bool(window and _place_window(window[0], *rects[name]))
+              for name, window in windows.items()}
+    # Kept out of the return value on purpose: that dict says which surfaces were placed and is
+    # read as such by the caller and the tests. What was minimised is a side effect, recorded
+    # where activate() can pick it up.
+    global _aside_ids
+    _aside_ids = tuple(_stand_aside({w[0] for w in windows.values() if w}))
+    return placed
 
 
 def _restore_surfaces(snapshot: tuple, created: tuple) -> None:
@@ -446,6 +523,9 @@ def _restore_surfaces(snapshot: tuple, created: tuple) -> None:
         # Older recovery files stored a bool; read both shapes so a session interrupted by an
         # upgrade still gets its windows back.
         state = how if isinstance(how, str) else ("maximized" if how else "")
+        # Anything the mode put out of the way comes back first, or it is restored to the right
+        # geometry while still minimised and looks lost.
+        subprocess.run(["wmctrl", "-i", "-r", wid, "-b", "remove,hidden"], timeout=4, check=False)
         _place_window(wid, *rect)
         _set_window_state(wid, state)
 
@@ -553,7 +633,8 @@ def activate() -> dict:
     after_ids = {wid for wid, _title in _windows()}
     created = tuple(after_ids - before_ids)
     _save_recovery(surfaces, created)
-    _on = State(started=time.time(), closed=tuple(closed), surfaces=surfaces, created=created)
+    _on = State(started=time.time(), closed=tuple(closed), surfaces=surfaces,
+                created=created, aside=_aside_ids)
     return {"closed": closed, "placed": placed, "sting": sting}
 
 
@@ -561,6 +642,12 @@ def deactivate() -> dict:
     global _on
     was, _on = _on, None
     recovery = (was.surfaces, was.created) if was else _load_recovery()
+    # Anything minimised out of the way comes back whether or not it was in the snapshot. The
+    # snapshot only covers the three work surfaces, so Spotify — put aside precisely because it
+    # is kept rather than closed — was being left minimised with nothing to bring it back.
+    for wid in (was.aside if was else ()):
+        subprocess.run(["wmctrl", "-i", "-r", wid, "-b", "remove,hidden"], timeout=4, check=False)
+
     restored = bool(recovery[0] or recovery[1])
     if restored:
         _restore_surfaces(*recovery)
