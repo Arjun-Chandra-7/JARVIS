@@ -26,9 +26,14 @@ _START = re.compile(
 _STOP = re.compile(
     r"^(?:jarvis[,.\s]*)?(?:"
     r"stop\s+(?:dictation|dictating|typing)|end\s+dictation|done\s+dictating|"
-    r"that'?s\s+enough|stop\s+taking\s+(?:this\s+)?down|"
-    r"bas\s+karo|likhna\s+band\s+karo"
-    r")\s*[.!?]?$",
+    r"that'?s\s+enough|that\s+is\s+enough|stop\s+taking\s+(?:this\s+)?down|"
+    # "Terminate" and a bare "stop" are what people actually reach for when a mode will not end,
+    # and neither was recognised — so the word meant to stop the typing was typed instead.
+    r"terminate|terminate\s+dictation|exit\s+dictation|"
+    r"(?:jarvis[,.\s]*)?(?:stop|halt|cancel|abort|quit)|"
+    r"dictation\s+(?:off|over|end)|"
+    r"bas\s+karo|likhna\s+band\s+karo|ruko"
+    r")\s*[.!?]*$",
     re.IGNORECASE,
 )
 
@@ -50,6 +55,22 @@ _SPOKEN_MARKS = [
 
 def wants_to_start(text: str) -> bool:
     return bool(_START.match((text or "").strip().rstrip(".!?")))
+
+
+def is_the_trigger(text: str) -> bool:
+    """Whether this is the phrase that starts dictation, said again.
+
+    It arrives a second time more often than it should: the tail of the same sentence lands in
+    the next capture, or the phrase is repeated because nothing visibly happened the first time.
+    Typed out, "jarvis dictate mode" appears in the document — the one thing the user was
+    certainly not dictating.
+    """
+    said = (text or "").strip().rstrip(".!?")
+    if _START.match(said):
+        return True
+    # Also catch it with words either side, since a repeat often carries a stray "ok" or a name.
+    return bool(re.search(r"(?i)\b(?:start\s+)?dictat(?:e|ion|ing)(?:\s+mode)?\b", said)
+                and len(said.split()) <= 5)
 
 
 def wants_to_stop(text: str) -> bool:

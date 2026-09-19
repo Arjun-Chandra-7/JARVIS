@@ -714,6 +714,44 @@ class VoiceSession:
                 came_back = ", ".join(list(dict.fromkeys(apps + tabs))[:3])
                 self.on_event("study", f"closed again: {came_back}")
 
+    async def _watch_coding_agents(self) -> None:
+        """Watch Claude, Codex and Antigravity, however they were started.
+
+        The dot on the pill follows them — orange working, red waiting on you, green just
+        finished, nothing when none is open — and the two states worth interrupting for are said
+        out loud. Nothing is announced on the first look, or every restart would greet you with
+        the state of a session you have been watching for an hour.
+        """
+        from ..coding import presence, terminal, vscode
+
+        def read_if_already_there():
+            # Only when the editor already has the keyboard. Reading the terminal focuses a
+            # window and borrows the clipboard, and doing that to someone working in another
+            # application, to colour a dot, is not a trade worth making.
+            try:
+                if vscode.active_window() != vscode.window():
+                    return ""
+                return terminal.tail(30) or ""
+            except Exception:  # noqa: BLE001
+                return ""
+
+        was = None
+        while True:
+            await asyncio.sleep(4.0)
+            try:
+                now = await asyncio.to_thread(presence.look, read_if_already_there)
+            except Exception:  # noqa: BLE001 — a failed look must not end the watcher
+                continue
+
+            if was is not None and now.kind != was:
+                who = now.agent.title() if now.agent else "The agent"
+                if now.kind == "asking":
+                    self._speak(f"{who} is waiting on you, sir.")
+                elif now.kind == "done":
+                    self._speak(f"{who} has finished, sir.")
+            self.on_event("agent", f"{now.kind}:{now.agent}")
+            was = now.kind
+
     async def _watch_coding_terminal(self) -> None:
         """Say what the agent in the editor concluded, once it has stopped writing.
 
@@ -841,6 +879,7 @@ class VoiceSession:
         asyncio.create_task(self._watch_power())  # "laptop charging, battery N%" on plug/unplug
         asyncio.create_task(self._watch_coding_terminal())  # speak what the editor's agent concluded
         asyncio.create_task(self._keep_study_mode())  # re-close distractions while studying
+        asyncio.create_task(self._watch_coding_agents())  # colour the dot, announce done/asking
 
         if self.config.screen_always:  # keep screen vision on from the start
             from ..vision import live
@@ -929,6 +968,15 @@ class VoiceSession:
                             self._speak("Stopped dictating, sir.")
                             self.on_event("sleep")
                             break
+                        # The phrase that started this must never end up in the document. It
+                        # arrives again more often than it should — the tail of the same sentence
+                        # landing in the next capture, or the user repeating it because nothing
+                        # visibly happened — and "jarvis dictate mode" typed into your notes is
+                        # the one thing you were certainly not dictating.
+                        if _dict.is_the_trigger(_said) or _dict.is_the_trigger(transcript):
+                            transcript = self._record_transcript(
+                                wait_s=max(12, self.config.follow_up_s))
+                            continue
                         typed = _dict.type_out(transcript)
                         self.on_event("reply" if typed else "error",
                                       _dict.as_typed(transcript) if typed
