@@ -31,6 +31,11 @@
   --bar: 4.6vh;            /* top and bottom */
   --font: "Rajdhani", "Titillium Web", ui-sans-serif, system-ui, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+  --stagger-dur: 500ms;
+  --stagger-distance: 12px;
+  --stagger-stagger: 40ms;
+  --stagger-blur: 3px;
+  --stagger-ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 * { box-sizing: border-box; }
@@ -71,6 +76,20 @@ body.ironman {
 #ironmanHud .right { top: var(--bar); bottom: var(--bar); right: 0; width: var(--rail); }
 
 #ironmanHud .left, #ironmanHud .right { display: flex; flex-direction: column; padding: 1.1vh 0.7vw; gap: 1.2vh; overflow: hidden; }
+
+/* The app windows use the same 60/40 + 62/38 split. These guides occupy only the 10px gutters,
+ * so the layout reads as one workstation while every application remains fully clickable. */
+#ironmanHud .workspace-guide { position: fixed; pointer-events: none; z-index: 2; color: var(--gold-dim); }
+#ironmanHud .workspace-guide::before { content: ""; position: absolute; background: var(--gold-line); }
+#ironmanHud .workspace-guide span { position: absolute; padding: 0.2vh 0.35vw; background: #08090d;
+  border: 1px solid var(--gold-faint); font: 700 0.72vh/1 var(--mono); letter-spacing: 0.22em; }
+#ironmanHud .guide-vertical { left: calc(57.48vw + 4px); top: var(--bar); bottom: var(--bar); width: 10px; }
+#ironmanHud .guide-vertical::before { left: 4px; top: 0; bottom: 0; width: 1px; }
+#ironmanHud .guide-vertical span { left: 50%; top: 1vh; transform: translateX(-50%); writing-mode: vertical-rl; }
+#ironmanHud .guide-horizontal { left: calc(57.48vw + 14px); right: var(--rail);
+  top: calc(60.896vh + 3.8px); height: 10px; }
+#ironmanHud .guide-horizontal::before { left: 0; right: 0; top: 4px; height: 1px; }
+#ironmanHud .guide-horizontal span { right: 0.4vw; top: 50%; transform: translateY(-50%); }
 
 /* --- top bar -------------------------------------------------------------- */
 #ironmanHud .brand { display: flex; flex-direction: column; padding-left: 1vw; min-width: 10vw; }
@@ -182,6 +201,111 @@ body.ironman {
 @keyframes sweep { to { transform: rotate(360deg); } }
 body.ironman[data-armed] .reactor .sweep {
   animation: sweep 7s linear infinite; transform-origin: 50% 50%;
+}
+
+/* --- Iron Man protocol intro --------------------------------------------- */
+#ironmanHud .intro { position: fixed; inset: 0; z-index: 100; overflow: hidden;
+  display: grid; place-items: center; pointer-events: none; color: var(--gold-bright); }
+#ironmanHud .intro[hidden] { display: none !important; }
+#ironmanHud .intro-shutter { position: absolute; left: 0; width: 100%; height: 51%;
+  background: #010205; will-change: transform; }
+#ironmanHud .intro-shutter-top { top: 0; }
+#ironmanHud .intro-shutter-bottom { bottom: 0; }
+#ironmanHud .intro-grid { position: absolute; inset: 0; opacity: 0;
+  background-image:
+    linear-gradient(rgba(255,138,30,.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,138,30,.045) 1px, transparent 1px);
+  background-size: 3.2vw 3.2vw;
+  -webkit-mask-image: radial-gradient(circle at center, #000 0, transparent 68%);
+  mask-image: radial-gradient(circle at center, #000 0, transparent 68%); }
+#ironmanHud .intro-circuit { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+#ironmanHud .intro-traces path { fill: none; stroke: var(--gold-dim); stroke-width: 2;
+  vector-effect: non-scaling-stroke; stroke-dasharray: 900; stroke-dashoffset: 900; }
+#ironmanHud .intro-nodes circle { fill: var(--gold); opacity: 0; }
+#ironmanHud .intro-reactor { position: absolute; width: min(28vw, 34vh); aspect-ratio: 1;
+  opacity: 0; transform: scale(.72); filter: drop-shadow(0 0 22px rgba(255,138,30,.22)); }
+#ironmanHud .intro-orbit, #ironmanHud .intro-core-halo { fill: none; stroke: var(--gold);
+  stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+#ironmanHud .intro-orbit { transform-origin: 120px 120px; }
+#ironmanHud .orbit-a { opacity: .42; stroke-dasharray: 4 8; }
+#ironmanHud .orbit-b { opacity: .72; }
+#ironmanHud .orbit-c { stroke-width: 2; }
+#ironmanHud .intro-blades path { fill: rgba(255,138,30,.11); stroke: var(--gold); stroke-width: 1; }
+#ironmanHud .intro-core-halo { stroke-width: 6; opacity: .3; }
+#ironmanHud .intro-core { fill: #ffe1b4; stroke: #fff3df; stroke-width: 2; }
+#ironmanHud .intro-mark { fill: #08090c; stroke: var(--gold); stroke-width: 1.5; }
+#ironmanHud .intro-copy { position: absolute; left: 50%; top: calc(50% + min(18vw, 22vh));
+  transform: translateX(-50%); text-align: center; white-space: nowrap; }
+#ironmanHud .intro-kicker { font: 600 0.82vw/1 var(--mono); letter-spacing: .65em; color: var(--gold-dim); }
+#ironmanHud .intro-copy strong { margin-top: 1.2vh; font: 700 2.4vw/.95 var(--font);
+  letter-spacing: .42em; color: #fff0df; text-shadow: 0 0 26px rgba(255,138,30,.42); }
+#ironmanHud .intro-status { margin-top: 1.2vh; font: 600 0.72vw/1 var(--mono);
+  letter-spacing: .4em; color: var(--gold); }
+#ironmanHud .intro-progress { position: absolute; left: 32vw; right: 32vw; bottom: 8vh;
+  height: 1px; background: rgba(255,138,30,.14); overflow: hidden; opacity: 0; }
+#ironmanHud .intro-progress i { display: block; width: 100%; height: 100%; background: var(--gold-bright);
+  transform: translateX(-100%); box-shadow: 0 0 10px var(--gold); }
+
+/* Lines start translated down + blurred + invisible; .is-shown on the parent flips them to rest. */
+.t-stagger-line { display: block; opacity: 0; transform: translateY(var(--stagger-distance));
+  filter: blur(var(--stagger-blur)); transition:
+    opacity var(--stagger-dur) var(--stagger-ease),
+    transform var(--stagger-dur) var(--stagger-ease),
+    filter var(--stagger-dur) var(--stagger-ease); will-change: transform, opacity, filter; }
+.t-stagger-line--2 { transition-delay: var(--stagger-stagger); }
+.t-stagger-line--3 { transition-delay: calc(var(--stagger-stagger) * 2); }
+.t-stagger.is-shown .t-stagger-line { opacity: 1; transform: translateY(0); filter: blur(0); }
+.t-stagger.is-hiding .t-stagger-line { opacity: 0; transform: translateY(0); filter: blur(0);
+  transition: opacity 200ms ease, transform 0s linear, filter 0s linear; transition-delay: 0s; }
+
+#ironmanHud .intro.is-running .intro-grid { animation: im-grid-in 700ms ease-out 120ms forwards; }
+#ironmanHud .intro.is-running .intro-traces path { animation: im-trace 850ms cubic-bezier(.22,1,.36,1) forwards; }
+#ironmanHud .intro.is-running .intro-traces path:nth-child(2n) { animation-delay: 100ms; }
+#ironmanHud .intro.is-running .intro-nodes circle { animation: im-node 300ms ease-out 650ms forwards; }
+#ironmanHud .intro.is-running .intro-reactor { animation: im-reactor-in 700ms cubic-bezier(.22,1,.36,1) 260ms forwards; }
+#ironmanHud .intro.is-running .orbit-a { animation: im-spin 6s linear 500ms infinite; }
+#ironmanHud .intro.is-running .orbit-b { animation: im-spin-reverse 4.8s linear 500ms infinite; }
+#ironmanHud .intro.is-running .orbit-c { animation: im-spin 3.4s linear 500ms infinite; }
+#ironmanHud .intro.is-running .intro-blades { transform-origin: 120px 120px; animation: im-spin 8s linear infinite; }
+#ironmanHud .intro.is-running .intro-progress { animation: im-fade-in 200ms ease 800ms forwards; }
+#ironmanHud .intro.is-running .intro-progress i { animation: im-progress 1.25s cubic-bezier(.22,1,.36,1) 850ms forwards; }
+#ironmanHud .intro.is-leaving .intro-shutter-top { animation: im-curtain-top 650ms cubic-bezier(.22,1,.36,1) forwards; }
+#ironmanHud .intro.is-leaving .intro-shutter-bottom { animation: im-curtain-bottom 650ms cubic-bezier(.22,1,.36,1) forwards; }
+#ironmanHud .intro.is-leaving .intro-grid, #ironmanHud .intro.is-leaving .intro-circuit,
+#ironmanHud .intro.is-leaving .intro-reactor, #ironmanHud .intro.is-leaving .intro-progress {
+  animation: im-system-out 300ms ease forwards; }
+
+#ironmanHud.is-booting .frame, #ironmanHud.is-booting .workspace-guide { opacity: 0; }
+#ironmanHud.is-revealing .top { animation: im-frame-top 500ms cubic-bezier(.22,1,.36,1) forwards; }
+#ironmanHud.is-revealing .left { animation: im-frame-left 600ms cubic-bezier(.22,1,.36,1) 80ms forwards; }
+#ironmanHud.is-revealing .right { animation: im-frame-right 600ms cubic-bezier(.22,1,.36,1) 80ms forwards; }
+#ironmanHud.is-revealing .bottom { animation: im-frame-bottom 500ms cubic-bezier(.22,1,.36,1) 140ms forwards; }
+#ironmanHud.is-revealing .workspace-guide { animation: im-fade-in 400ms ease 350ms forwards; }
+
+@keyframes im-grid-in { to { opacity: .8; } }
+@keyframes im-trace { to { stroke-dashoffset: 0; } }
+@keyframes im-node { 50% { opacity: 1; r: 9; } to { opacity: .8; r: 5; } }
+@keyframes im-reactor-in { 55% { opacity: 1; transform: scale(1.05); }
+  to { opacity: 1; transform: scale(1); } }
+@keyframes im-spin { to { transform: rotate(360deg); } }
+@keyframes im-spin-reverse { to { transform: rotate(-360deg); } }
+@keyframes im-progress { to { transform: translateX(0); } }
+@keyframes im-fade-in { to { opacity: 1; } }
+@keyframes im-system-out { to { opacity: 0; transform: scale(1.04); } }
+@keyframes im-curtain-top { to { transform: translateY(-102%); } }
+@keyframes im-curtain-bottom { to { transform: translateY(102%); } }
+@keyframes im-frame-top { from { opacity: 0; transform: translateY(-100%); } to { opacity: 1; transform: none; } }
+@keyframes im-frame-left { from { opacity: 0; transform: translateX(-100%); } to { opacity: 1; transform: none; } }
+@keyframes im-frame-right { from { opacity: 0; transform: translateX(100%); } to { opacity: 1; transform: none; } }
+@keyframes im-frame-bottom { from { opacity: 0; transform: translateY(100%); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .t-stagger-line { transition: none !important; }
+  #ironmanHud .intro-grid, #ironmanHud .intro-circuit, #ironmanHud .intro-reactor,
+  #ironmanHud .intro-progress, #ironmanHud .intro-shutter,
+  #ironmanHud .frame, #ironmanHud .workspace-guide { animation: none !important; }
+  #ironmanHud .intro-reactor, #ironmanHud .intro-grid { opacity: 1; transform: none; }
+  #ironmanHud.is-revealing .frame, #ironmanHud.is-revealing .workspace-guide { opacity: 1; transform: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

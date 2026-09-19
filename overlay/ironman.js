@@ -243,12 +243,59 @@ function wireClickThrough() {
 /* ---------------------------------------------------------------- start */
 let running = false;
 let timers = [];
+let wired = false;
+
+function resetIntro() {
+  const host = document.getElementById("ironmanHud");
+  const intro = $("intro");
+  const copy = $("introCopy");
+  host?.classList.remove("is-booting", "is-revealing");
+  intro?.classList.remove("is-running", "is-leaving");
+  copy?.classList.remove("is-shown", "is-hiding");
+  if (intro) intro.hidden = true;
+}
+
+function playIntro() {
+  const host = document.getElementById("ironmanHud");
+  const intro = $("intro");
+  const copy = $("introCopy");
+  if (!host || !intro || !copy) return;
+
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  resetIntro();
+  intro.hidden = false;
+  host.classList.add("is-booting");
+  void intro.offsetHeight; // replay the SVG and stagger animations on every activation
+
+  requestAnimationFrame(() => {
+    intro.classList.add("is-running");
+    copy.classList.add("is-shown");
+  });
+
+  const revealAt = reduced ? 80 : 2250;
+  const finishAt = reduced ? 120 : 2980;
+  timers.push(setTimeout(() => {
+    copy.classList.add("is-hiding");
+    copy.classList.remove("is-shown");
+    intro.classList.add("is-leaving");
+    host.classList.remove("is-booting");
+    host.classList.add("is-revealing");
+  }, revealAt));
+  timers.push(setTimeout(() => {
+    intro.hidden = true;
+    intro.classList.remove("is-running", "is-leaving");
+    copy.classList.remove("is-hiding");
+    // Let the frame's delayed entrance finish before removing its animation owner.
+    timers.push(setTimeout(() => host.classList.remove("is-revealing"), reduced ? 0 : 800));
+  }, finishAt));
+}
 
 function stopHud() {
   timers.forEach(clearInterval);
   timers = [];
   running = false;
   delete document.body.dataset.armed;
+  resetIntro();
   window.jarvis?.setClickThrough?.(false);
 }
 
@@ -276,19 +323,23 @@ async function start() {
   running = true;
   document.body.classList.add("ironman");
   document.body.dataset.armed = "";
-  wireClickThrough();
+  playIntro();
+  if (!wired) {
+    wireClickThrough();
+    wireSong();
+    wireModes();
+    wired = true;
+  }
   drawPulse();
   buildRail();
-  wireSong();
-  wireModes();
   tick();
-  await Promise.all([loadProjects(), loadStats(), loadSong()]);
-  timers = [
+  Promise.all([loadProjects(), loadStats(), loadSong()]);
+  timers.push(
     setInterval(tick, 1000),
     setInterval(loadStats, 4000),
     setInterval(loadSong, 5000),
     setInterval(loadProjects, 60000),
-  ];
+  );
 }
 
 /* The HUD exists in the same page as the pill and the panel, and runs only while the mode is on:

@@ -18,6 +18,8 @@ survives, because ChatGPT lives in it and is part of the layout.
 
 from __future__ import annotations
 
+import os
+import json
 import re
 import subprocess
 import time
@@ -41,24 +43,33 @@ CHATGPT_FLAGS = ("--ozone-platform=x11", f"--user-data-dir={CHATGPT_PROFILE}",
 CHATGPT_COMMAND = ("google-chrome", *CHATGPT_FLAGS, f"--app={CHATGPT_URL}")
 CHATGPT_RETRY_COMMAND = ("google-chrome", *CHATGPT_FLAGS, "--new-window",
                          f"--app={CHATGPT_URL}")
-TERMINAL_COMMAND = ("x-terminal-emulator",)
+# Ptyxis is a single GApplication: after its last window closes, a bare/new-window launch can
+# return success to a stale resident process without opening anything. A standalone instance is a
+# real, independently titled window and still goes through the system's x-terminal-emulator.
+TERMINAL_COMMAND = ("x-terminal-emulator", "--standalone")
 TERMINAL_TITLE_MARKERS = ("terminal", "konsole", "alacritty", "kitty", "xterm")
 
 # These are the same viewport fractions as --rail and --bar in overlay/ironman.css. Keep them
 # numeric here because wmctrl accepts pixels, not CSS units.
 RAIL_FRACTION = 0.126
 BAR_FRACTION = 0.046
+EDITOR_FRACTION = 0.60
+CHATGPT_FRACTION = 0.62
+PANE_GAP = 10
 WINDOW_WAIT_S = 12.0
 
 # A short rising sting, synthesised rather than sampled — a few seconds of the real thing would be
 # somebody's recording, and this needs no permission from anyone.
 STING_S = 2.6
+RECOVERY_FILE = Path.home() / ".config/jarvis/ironman-recovery.json"
 
 
 @dataclass
 class State:
     started: float
     closed: tuple
+    surfaces: tuple = ()
+    created: tuple = ()
 
 
 _on: Optional[State] = None
@@ -107,7 +118,8 @@ def _windows() -> list[tuple[str, str]]:
 
 def _worth_keeping(title: str) -> bool:
     low = title.lower()
-    return any(keep in low for keep in KEEP)
+    return (any(keep in low for keep in KEEP)
+            or bool(re.search(r"\b[^\s@]+@[^\s:]+:", title)))
 
 
 def show_the_overview() -> None:
@@ -177,7 +189,11 @@ def _place_window(wid: str, x: int, y: int, w: int, h: int) -> bool:
             time.sleep(0.08)
             observed = _window_geometry(wid)
             if observed is None:     # wmctrl -lG unavailable: retain the old best-effort contract
-                return True
+                moved = subprocess.run(["xdotool", "windowmove", wid, str(x), str(y)],
+                                       timeout=4, check=False)
+                sized = subprocess.run(["xdotool", "windowsize", wid, str(w), str(h)],
+                                       timeout=4, check=False)
+                return moved.returncode == 0 and sized.returncode == 0
             x_history.append((candidate[0], observed[0]))
             y_history.append((candidate[1], observed[1]))
             if all(abs(got - want) <= 2 for got, want in zip(observed, requested)):
@@ -200,6 +216,17 @@ def _place_window(wid: str, x: int, y: int, w: int, h: int) -> bool:
                          _coordinate_command(y_history, y),
                          candidate[2] + w - observed[2],
                          h - top_gap if constrained_top else candidate[3] + h - observed[3]]
+        # Some GNOME/XWayland clients ignore wmctrl's final request while still accepting the
+        # lower-level X11 move/resize. Keep this fallback narrowly scoped to a failed placement.
+        moved = subprocess.run(["xdotool", "windowmove", wid, str(x), str(y)],
+                               timeout=4, check=False)
+        sized = subprocess.run(["xdotool", "windowsize", wid, str(w), str(h)],
+                               timeout=4, check=False)
+        if moved.returncode == 0 and sized.returncode == 0:
+            time.sleep(0.08)
+            observed = _window_geometry(wid)
+            return observed is None or all(abs(got - want) <= 4
+                                           for got, want in zip(observed, requested))
         return False
     except Exception:  # noqa: BLE001
         return False
@@ -234,6 +261,30 @@ def _window_geometry(wid: str) -> Optional[tuple[int, int, int, int]]:
     return None
 
 
+def _window_maximized(wid: str) -> bool:
+    """Read maximisation without assuming a particular desktop shell."""
+    try:
+        out = subprocess.run(["xprop", "-id", wid, "_NET_WM_STATE"], capture_output=True,
+                             text=True, timeout=4).stdout.lower()
+        return "maximized_vert" in out or "maximized_horz" in out
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _snapshot_surfaces() -> tuple:
+    snapshot = []
+    for wid, title in _windows():
+        low = title.lower()
+        if not any(marker in low for marker in ("visual studio code", "chatgpt", "terminal",
+                                                "konsole", "alacritty", "kitty", "xterm")) \
+                and not re.search(r"\b[^\s@]+@[^\s:]+:", title):
+            continue
+        rect = _window_geometry(wid)
+        if rect:
+            snapshot.append((wid, title, rect, _window_maximized(wid)))
+    return tuple(snapshot)
+
+
 def _find_window(markers: tuple[str, ...]) -> Optional[tuple[str, str]]:
     """Return the first window whose current title contains one of the markers."""
     lowered = tuple(marker.lower() for marker in markers)
@@ -252,8 +303,21 @@ def _find_terminal() -> Optional[tuple[str, str]]:
 
 def _launch(command: tuple[str, ...]) -> bool:
     try:
-        subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         start_new_session=True)
+        env = os.environ.copy()
+        # Jarvis is commonly started from VS Code's snap. GTK programs inherit snap library paths
+        # from it and then exit before creating a window. Restore the desktop's original paths.
+        for key in ("LD_LIBRARY_PATH", "LD_PRELOAD", "GTK_PATH", "GIO_MODULE_DIR",
+                    "GSETTINGS_SCHEMA_DIR", "LOCPATH"):
+            original = env.pop(f"{key}_VSCODE_SNAP_ORIG", None)
+            if original:
+                env[key] = original
+            else:
+                env.pop(key, None)
+        original_data = env.pop("XDG_DATA_DIRS_VSCODE_SNAP_ORIG", None)
+        if original_data:
+            env["XDG_DATA_DIRS"] = original_data
+        subprocess.Popen(command, env=env, cwd=str(Path.home()), stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
         return True
     except Exception:  # noqa: BLE001
         return False
@@ -280,20 +344,26 @@ def _wait_for_window(markers: tuple[str, ...] = (), *, new_since: set[str] | Non
 
 
 def _inner_layout(width: int, height: int) -> dict[str, tuple[int, int, int, int]]:
-    """Pixel rectangles inside the overlay's 12.6vw rails and 4.6vh bars."""
+    """A usable IDE split inside the overlay's 12.6vw rails and 4.6vh bars."""
     rail = round(width * RAIL_FRACTION)
     bar = round(height * BAR_FRACTION)
     inner_w = max(1, width - 2 * rail)
     inner_h = max(1, height - 2 * bar)
-    left_w = inner_w // 2
-    right_w = inner_w - left_w
-    top_h = inner_h // 2
-    bottom_h = inner_h - top_h
-    right_x = rail + left_w
+    horizontal_gap = min(PANE_GAP, max(0, inner_w - 2))
+    vertical_gap = min(PANE_GAP, max(0, inner_h - 2))
+    usable_w = inner_w - horizontal_gap
+    usable_h = inner_h - vertical_gap
+    # The editor is the primary work surface. The right column is supporting context, with enough
+    # height for ChatGPT to read comfortably and a shorter terminal for commands and logs.
+    left_w = round(usable_w * EDITOR_FRACTION)
+    right_w = usable_w - left_w
+    chat_h = round(usable_h * CHATGPT_FRACTION)
+    terminal_h = usable_h - chat_h
+    right_x = rail + left_w + horizontal_gap
     return {
         "editor": (rail, bar, left_w, inner_h),
-        "chatgpt": (right_x, bar, right_w, top_h),
-        "terminal": (right_x, bar + top_h, right_w, bottom_h),
+        "chatgpt": (right_x, bar, right_w, chat_h),
+        "terminal": (right_x, bar + chat_h + vertical_gap, right_w, terminal_h),
     }
 
 
@@ -322,6 +392,66 @@ def lay_it_out() -> dict:
     windows = {"editor": editor, "chatgpt": chatgpt, "terminal": terminal}
     return {name: bool(window and _place_window(window[0], *rects[name]))
             for name, window in windows.items()}
+
+
+def _restore_surfaces(snapshot: tuple, created: tuple) -> None:
+    """Return the desktop to the exact app geometry it had before Iron Man."""
+    saved_ids = {item[0] for item in snapshot}
+    for wid, _title in _windows():
+        if wid in saved_ids:
+            continue
+        if wid in set(created):
+            subprocess.run(["wmctrl", "-i", "-c", wid], timeout=4, check=False)
+    for wid, _title, rect, maximized in snapshot:
+        if not any(current_wid == wid for current_wid, _ in _windows()):
+            continue
+        _place_window(wid, *rect)
+        state = "add" if maximized else "remove"
+        subprocess.run(["wmctrl", "-i", "-r", wid, "-b",
+                        f"{state},maximized_vert,maximized_horz"], timeout=4, check=False)
+
+
+def _save_recovery(snapshot: tuple, created: tuple) -> None:
+    try:
+        RECOVERY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        RECOVERY_FILE.write_text(json.dumps({"surfaces": snapshot, "created": created}))
+    except OSError:
+        pass
+
+
+def _load_recovery() -> tuple[tuple, tuple]:
+    try:
+        raw = json.loads(RECOVERY_FILE.read_text())
+        return tuple(tuple(item) for item in raw.get("surfaces", [])), tuple(raw.get("created", []))
+    except (OSError, ValueError, TypeError):
+        return (), ()
+
+
+def _clear_recovery() -> None:
+    try:
+        RECOVERY_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _rescue_editor_without_snapshot() -> None:
+    """Recover a pre-fix session that was left maximized by an older Iron Man build."""
+    editor = _find_window(("visual studio code",))
+    if not editor:
+        return
+    wid = editor[0]
+    subprocess.run(["wmctrl", "-i", "-r", wid, "-b", "remove,maximized_vert,maximized_horz"],
+                   timeout=4, check=False)
+    time.sleep(0.15)
+    width, height = _screen()
+    rect = _window_geometry(wid)
+    if rect and rect[2] < round(width * 0.94) and rect[3] < round(height * 0.94):
+        return
+    # Leave a visible desktop margin even when the compositor has no remembered restore rect.
+    x, y = round(width * 0.06), round(height * 0.05)
+    w, h = round(width * 0.88), round(height * 0.88)
+    subprocess.run(["wmctrl", "-i", "-r", wid, "-e", f"0,{x},{y},{w},{h}"],
+                   timeout=4, check=False)
 
 
 # --------------------------------------------------------------------------- the sting
@@ -377,18 +507,29 @@ def activate() -> dict:
     """Run the whole sequence and report what actually happened at each step."""
     global _on
 
+    surfaces = _snapshot_surfaces()
+    before_ids = {wid for wid, _title in _windows()}
     show_the_overview()
     closed = clear_the_desk()
     time.sleep(1.2)                  # windows need a moment to go before the survivors are moved
     placed = lay_it_out()
     sting = play_sting()
 
-    _on = State(started=time.time(), closed=tuple(closed))
+    after_ids = {wid for wid, _title in _windows()}
+    created = tuple(after_ids - before_ids)
+    _save_recovery(surfaces, created)
+    _on = State(started=time.time(), closed=tuple(closed), surfaces=surfaces, created=created)
     return {"closed": closed, "placed": placed, "sting": sting}
 
 
 def deactivate() -> dict:
     global _on
     was, _on = _on, None
+    recovery = (was.surfaces, was.created) if was else _load_recovery()
+    if recovery[0] or recovery[1]:
+        _restore_surfaces(*recovery)
+        _clear_recovery()
+    else:
+        _rescue_editor_without_snapshot()
     return {"was_on": was is not None,
             "minutes": int((time.time() - was.started) / 60) if was else 0}

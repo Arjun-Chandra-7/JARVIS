@@ -1,3 +1,50 @@
+<!-- A short boot sequence covers the already-arranged workspace. It is made entirely from SVG
+     and CSS, so it is instant, offline, and leaves no video decoder running behind the HUD. -->
+<section class="intro" id="im-intro" hidden aria-hidden="true">
+  <div class="intro-shutter intro-shutter-top"></div>
+  <div class="intro-shutter intro-shutter-bottom"></div>
+  <div class="intro-grid"></div>
+  <svg class="intro-circuit" viewBox="0 0 1920 1080" preserveAspectRatio="none">
+    <g class="intro-traces">
+      <path d="M0 188 H420 L510 278 H720"/>
+      <path d="M1920 188 H1500 L1410 278 H1200"/>
+      <path d="M0 892 H420 L510 802 H720"/>
+      <path d="M1920 892 H1500 L1410 802 H1200"/>
+      <path d="M960 0 V252 M960 828 V1080"/>
+    </g>
+    <g class="intro-nodes">
+      <circle cx="420" cy="188" r="5"/><circle cx="1500" cy="188" r="5"/>
+      <circle cx="420" cy="892" r="5"/><circle cx="1500" cy="892" r="5"/>
+    </g>
+  </svg>
+  <svg class="intro-reactor" viewBox="0 0 240 240">
+    <defs>
+      <filter id="im-glow" x="-80%" y="-80%" width="260%" height="260%">
+        <feGaussianBlur stdDeviation="4" result="blur"/>
+        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>
+    <circle class="intro-orbit orbit-a" cx="120" cy="120" r="104"/>
+    <circle class="intro-orbit orbit-b" cx="120" cy="120" r="86" stroke-dasharray="4 12"/>
+    <circle class="intro-orbit orbit-c" cx="120" cy="120" r="68" stroke-dasharray="42 14"/>
+    <g class="intro-blades">
+      <path d="M120 42 L133 91 L120 104 L107 91 Z"/>
+      <path d="M198 120 L149 133 L136 120 L149 107 Z"/>
+      <path d="M120 198 L107 149 L120 136 L133 149 Z"/>
+      <path d="M42 120 L91 107 L104 120 L91 133 Z"/>
+    </g>
+    <circle class="intro-core-halo" cx="120" cy="120" r="42"/>
+    <circle class="intro-core" cx="120" cy="120" r="28" filter="url(#im-glow)"/>
+    <path class="intro-mark" d="M120 99 L139 133 H101 Z"/>
+  </svg>
+  <div class="intro-copy t-stagger" id="im-introCopy">
+    <span class="intro-kicker t-stagger-line t-stagger-line--1">SYSTEM ASSEMBLY</span>
+    <strong class="t-stagger-line t-stagger-line--2">J.A.R.V.I.S.</strong>
+    <span class="intro-status t-stagger-line t-stagger-line--3">IRON MAN PROTOCOL // ONLINE</span>
+  </div>
+  <div class="intro-progress"><i></i></div>
+</section>
+
 <div class="hud" id="im-hud">
   <!-- ================= top ================= -->
   <header class="frame top">
@@ -63,18 +110,9 @@
     <div class="quote"><b>GOOD</b><b>IDEAS</b><b>TAKE TIME</b></div>
   </aside>
 
-  <!-- ================= centre ================= -->
-  <svg class="reactor" viewBox="0 0 120 120" aria-hidden="true">
-    <circle class="faint" cx="60" cy="60" r="56"/>
-    <circle class="faint" cx="60" cy="60" r="46" stroke-dasharray="3 7"/>
-    <g class="sweep">
-      <path d="M60 8 A52 52 0 0 1 104 38" stroke-width="2"/>
-      <path d="M60 112 A52 52 0 0 1 16 82" stroke-width="2"/>
-    </g>
-    <circle cx="60" cy="60" r="30"/>
-    <circle class="faint" cx="60" cy="60" r="22" stroke-dasharray="2 4"/>
-    <polygon class="core" points="60,44 74,68 46,68"/>
-  </svg>
+  <!-- Hairline dividers mirror the actual 60/40 app layout without stealing any pointer input. -->
+  <div class="workspace-guide guide-vertical" aria-hidden="true"><span>WORKSPACE</span></div>
+  <div class="workspace-guide guide-horizontal" aria-hidden="true"><span>TERMINAL</span></div>
 
   <!-- ================= bottom ================= -->
   <footer class="frame bottom cut-bl">

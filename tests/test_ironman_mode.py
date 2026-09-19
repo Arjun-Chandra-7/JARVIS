@@ -21,10 +21,14 @@ def test_normal_mode_rescues_the_overlay_even_when_backend_state_was_lost(monkey
 
 def test_layout_uses_the_css_frame_dimensions():
     assert ironman._inner_layout(1920, 1080) == {
-        "editor": (242, 50, 718, 980),
-        "chatgpt": (960, 50, 718, 490),
-        "terminal": (960, 540, 718, 490),
+        "editor": (242, 50, 856, 980),
+        "chatgpt": (1108, 50, 570, 601),
+        "terminal": (1108, 661, 570, 369),
     }
+
+
+def test_shell_titled_terminal_survives_the_desk_sweep():
+    assert ironman._worth_keeping("xor_sensei@Bhramastra: ~/Madara/Dev/Jarvis") is True
 
 
 def test_layout_launches_missing_windows_and_places_the_real_terminal_title(monkeypatch):
@@ -53,9 +57,9 @@ def test_layout_launches_missing_windows_and_places_the_real_terminal_title(monk
     assert launched == [ironman.TERMINAL_COMMAND, ironman.CHATGPT_COMMAND]
     assert [wid for wid, _rect in placed] == ["0x1", "0x3", "0x2"]
     assert placed == [
-        ("0x1", (126, 23, 374, 454)),
-        ("0x3", (500, 23, 374, 227)),
-        ("0x2", (500, 250, 374, 227)),
+        ("0x1", (126, 23, 443, 454)),
+        ("0x3", (579, 23, 295, 275)),
+        ("0x2", (579, 308, 295, 169)),
     ]
 
 
