@@ -59,6 +59,11 @@ async def handle(text: str, config=None) -> Optional[str]:
     if ironman.asked_to_start(said):
         if ironman.on():
             return "Already in Iron Man mode, sir."
+        # Said before the sequence runs, not after it half-works. An empty terminal pane has one
+        # cause and the answer should arrive before the question does.
+        from .modes import preflight
+
+        warning = await asyncio.to_thread(preflight.spoken_warning)
         result = await asyncio.to_thread(ironman.activate)
         await _tell_the_overlay("ironman")
         placed = [k for k, ok in result["placed"].items() if ok]
@@ -66,6 +71,6 @@ async def handle(text: str, config=None) -> Optional[str]:
         detail = f"Laid out {', '.join(placed)}." if placed else ""
         if missing:
             detail += f" I couldn't find {', '.join(missing)} to place."
-        return f"{ironman.ANNOUNCEMENT} {detail}".strip()
+        return " ".join(p for p in (ironman.ANNOUNCEMENT, detail, warning) if p).strip()
 
     return None

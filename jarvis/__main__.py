@@ -613,6 +613,8 @@ def main() -> None:
     parser.add_argument("--selftest", action="store_true", help="one live TTS→mic→STT round trip")
     parser.add_argument("--mic-check", action="store_true",
                         help="listen on every microphone at once and report which one hears you")
+    parser.add_argument("--mode-check", action="store_true",
+                        help="check everything Iron Man mode needs, without starting it")
     parser.add_argument("--screen-test", action="store_true", help="diagnose screen capture (Wayland/X11)")
     parser.add_argument("--perplexity-login", action="store_true",
                         help="one-time: sign in to Perplexity so Jarvis can deep-research as your account")
@@ -654,6 +656,9 @@ def main() -> None:
             _voice_selftest()
         elif args.mic_check:
             _mic_check()
+        elif args.mode_check:
+            from .modes import preflight
+            print(preflight.report())
         elif args.task:
             asyncio.run(_run_task(args.task))
         elif args.brief:
