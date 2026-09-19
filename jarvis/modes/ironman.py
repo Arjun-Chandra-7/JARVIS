@@ -167,6 +167,10 @@ def _place_window(wid: str, x: int, y: int, w: int, h: int) -> bool:
     try:
         # Removing maximisation first matters: many desktops otherwise accept the move and ignore
         # it, which is indistinguishable from success by return code alone.
+        # Fullscreen too, not just maximised: a fullscreen window silently ignores a move and
+        # the placement then reports success against geometry that never changed.
+        subprocess.run(["wmctrl", "-i", "-r", wid, "-b", "remove,fullscreen"],
+                       timeout=4, check=False)
         subprocess.run(["wmctrl", "-i", "-r", wid, "-b", "remove,maximized_vert,maximized_horz"],
                        timeout=4, check=False)
         requested = [x, y, w, h]
@@ -261,14 +265,48 @@ def _window_geometry(wid: str) -> Optional[tuple[int, int, int, int]]:
     return None
 
 
-def _window_maximized(wid: str) -> bool:
-    """Read maximisation without assuming a particular desktop shell."""
+def _window_state(wid: str) -> str:
+    """How the window is sitting: "fullscreen", "maximized", or "" for an ordinary window.
+
+    Fullscreen and maximised are different X11 states, and reading only the second is why a
+    window that was fullscreen came back floating. A fullscreen window carries
+    _NET_WM_STATE_FULLSCREEN and no MAXIMIZED_* at all, so it was recorded as "not maximised" and
+    the restore then dutifully *removed* maximisation and dropped it at its stored rectangle —
+    which, for a fullscreen window, is a size nobody ever chose.
+
+    Fullscreen wins when both are set, because that is what the user sees.
+    """
     try:
         out = subprocess.run(["xprop", "-id", wid, "_NET_WM_STATE"], capture_output=True,
                              text=True, timeout=4).stdout.lower()
-        return "maximized_vert" in out or "maximized_horz" in out
     except Exception:  # noqa: BLE001
-        return False
+        return ""
+    if "fullscreen" in out:
+        return "fullscreen"
+    if "maximized_vert" in out or "maximized_horz" in out:
+        return "maximized"
+    return ""
+
+
+def _window_maximized(wid: str) -> bool:
+    """Kept for callers that only care whether the window fills the screen somehow."""
+    return _window_state(wid) in ("fullscreen", "maximized")
+
+
+def _set_window_state(wid: str, state: str) -> None:
+    """Put a window back into the state it was found in."""
+    # Always clear both first: a window left fullscreen ignores a move, and one left maximised
+    # snaps back the moment it is unmaximised later.
+    subprocess.run(["wmctrl", "-i", "-r", wid, "-b", "remove,fullscreen"],
+                   timeout=4, check=False)
+    subprocess.run(["wmctrl", "-i", "-r", wid, "-b",
+                    "remove,maximized_vert,maximized_horz"], timeout=4, check=False)
+    if state == "fullscreen":
+        subprocess.run(["wmctrl", "-i", "-r", wid, "-b", "add,fullscreen"],
+                       timeout=4, check=False)
+    elif state == "maximized":
+        subprocess.run(["wmctrl", "-i", "-r", wid, "-b",
+                        "add,maximized_vert,maximized_horz"], timeout=4, check=False)
 
 
 def _snapshot_surfaces() -> tuple:
@@ -281,7 +319,7 @@ def _snapshot_surfaces() -> tuple:
             continue
         rect = _window_geometry(wid)
         if rect:
-            snapshot.append((wid, title, rect, _window_maximized(wid)))
+            snapshot.append((wid, title, rect, _window_state(wid)))
     return tuple(snapshot)
 
 
@@ -402,13 +440,14 @@ def _restore_surfaces(snapshot: tuple, created: tuple) -> None:
             continue
         if wid in set(created):
             subprocess.run(["wmctrl", "-i", "-c", wid], timeout=4, check=False)
-    for wid, _title, rect, maximized in snapshot:
+    for wid, _title, rect, how in snapshot:
         if not any(current_wid == wid for current_wid, _ in _windows()):
             continue
+        # Older recovery files stored a bool; read both shapes so a session interrupted by an
+        # upgrade still gets its windows back.
+        state = how if isinstance(how, str) else ("maximized" if how else "")
         _place_window(wid, *rect)
-        state = "add" if maximized else "remove"
-        subprocess.run(["wmctrl", "-i", "-r", wid, "-b",
-                        f"{state},maximized_vert,maximized_horz"], timeout=4, check=False)
+        _set_window_state(wid, state)
 
 
 def _save_recovery(snapshot: tuple, created: tuple) -> None:
