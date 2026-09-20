@@ -17,7 +17,7 @@ from ..config import Config
 from ..integrations.chatgpt import ChatGPTSession
 from ..jobs.runner import JobRunner
 from ..memory import vault as vaultmod
-from . import action_claims
+from . import action_claims, spoken
 from .groq_core import _parse_calls
 from .groq_tools import build_registry
 
@@ -230,6 +230,6 @@ class ChatGPTAgent:
                 return action_claims.honest_fallback()
 
             vaultmod.git_autocommit(self.config.vault_path, f"jarvis: memory update {now:%Y-%m-%d %H:%M}")
-            return final or "(no reply)"
+            return spoken.trim_trailer(final) or "(no reply)"
         except Exception as exc:  # noqa: BLE001
             return f"[chatgpt brain error] {exc}"

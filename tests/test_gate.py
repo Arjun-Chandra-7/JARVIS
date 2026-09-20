@@ -110,3 +110,58 @@ def test_two_word_commands_still_work():
     """"Stop" and "open netflix" are short, and they are requests."""
     assert gate.wants_something_done("stop") is True
     assert gate.wants_something_done("open netflix") is True
+
+
+# --------------------------------------------------------------- a question is not a job
+#
+# Every spoken turn used to carry the same note: "DO the action with a tool first." Told to act
+# when there is no action, a model describes one. Straight from the saved history:
+#
+#     you> What are their opinions on Elon Musk?
+#     jarvis> I'll look up some recent articles about Elon Musk's opinions. It might take a
+#             moment. How can I assist you further?
+#
+# No tool was called and no moment was taken, because the turn had already ended.
+
+import pytest
+
+from jarvis.agent import action_claims, remote
+
+
+@pytest.mark.parametrize("said", [
+    "What are their opinions on Elon Musk?",
+    "What colour is the sky?",
+    "what do you think about AI safety",
+    "what are some good names for a tech company",
+    "why is the sea salty",
+    "who was Ramanujan",
+])
+def test_a_question_is_told_to_answer_not_to_act(said):
+    note = remote.voice_note(said)
+    assert "DO the action" not in note, f"told to act on a question: {said!r}"
+    assert "Answer it yourself" in note
+
+
+@pytest.mark.parametrize("said", [
+    "open netflix",
+    "send a message to mum saying I am late",
+    "play something by MC Square",
+    "turn the brightness down",
+])
+def test_a_request_is_still_told_to_act(said):
+    assert "DO the action" in remote.voice_note(said)
+
+
+def test_the_reply_that_started_this_is_caught_as_a_promise():
+    """Verbatim from the history. It reads like progress and is a dead end."""
+    reply = ("I'll look up some recent articles about Elon Musk's opinions. It might take a "
+             "moment. How can I assist you further?")
+    assert action_claims.promises_without_acting(reply)
+
+
+def test_answering_a_question_outright_is_not_a_promise():
+    """The fix must not make plain answers suspicious."""
+    for reply in ("The sky is blue because air scatters short wavelengths more than long ones.",
+                  "He is a polarising figure — brilliant at shipping, careless with people.",
+                  "I'd go with something like Vidya Labs or Pragya Works."):
+        assert not action_claims.promises_without_acting(reply)

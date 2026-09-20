@@ -19,7 +19,7 @@ from typing import Any, Awaitable, Callable, Optional
 from ..config import Config
 from ..jobs.runner import JobRunner
 from ..memory import vault as vaultmod
-from . import action_claims, tool_contract, tool_router
+from . import action_claims, spoken, tool_contract, tool_router
 from ..brains import choose
 from .groq_tools import build_registry
 
@@ -633,14 +633,25 @@ class GroqAgent:
 
                 # A promise is the same failure as a false claim, and harder to notice because
                 # it sounds like progress. Both get one push back to actually act.
-                if (nothing_worked
+                #
+                # Deliberately not gated on something having been asked for, which is the gap
+                # this fell through. From the history: "What are their opinions on Elon Musk?"
+                # was answered with "I'll look up some recent articles about Elon Musk's
+                # opinions. It might take a moment." No tool ran and no moment was taken,
+                # because the turn had already ended. A question left on a promise is a dead end
+                # in the same way a command is, and a worse one to be on the receiving end of —
+                # nothing is coming, and nothing said so.
+                if (not self._any_tool_succeeded
                         and not action_claims_checked
                         and action_claims.promises_without_acting(reply)):
                     action_claims_checked = True
                     self.on_tool("brain", "promised instead of acting — retrying")
                     self.messages.append({"role": "assistant", "content": reply})
-                    self.messages.append({"role": "user",
-                                          "content": action_claims.nudge_to_act()})
+                    self.messages.append({
+                        "role": "user",
+                        "content": (action_claims.nudge_to_act() if nothing_worked
+                                    else action_claims.nudge_to_answer()),
+                    })
                     continue
 
                 if (nothing_worked
@@ -699,7 +710,9 @@ class GroqAgent:
         vaultmod.git_autocommit(self.config.vault_path, f"jarvis: memory update {now:%Y-%m-%d %H:%M}")
         self._trim()
         self._save_history()
-        return reply or "(no reply)"
+        # The offer of further assistance goes before the reply is spoken, written to the
+        # transcript or stored in history — one place rather than three.
+        return spoken.trim_trailer(reply) or "(no reply)"
 
     async def _execute(self, triples) -> None:
         """Append the assistant tool_calls turn + each tool result. triples = [(id, name, args)].

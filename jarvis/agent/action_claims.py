@@ -280,6 +280,20 @@ def promises_without_acting(reply: str) -> bool:
     return bool(_PROMISE.search(text))
 
 
+def nudge_to_answer() -> str:
+    """Said back to the model when it promised to look something up for a plain question.
+
+    A question left on a promise is a dead end in the same way a command is, and a worse one to
+    be on the receiving end of: nothing is coming, and nothing said so.
+    """
+    return (
+        "That was a question, not a job. You said you would go and look rather than answering. "
+        "The turn ends when you reply, so there is no later. Answer it now from what you already "
+        "know; only if the answer truly depends on something current, look it up in this turn and "
+        "then give the answer."
+    )
+
+
 def nudge_to_act() -> str:
     """Said back to the model when it has promised instead of acted."""
     return (
