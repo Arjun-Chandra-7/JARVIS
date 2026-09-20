@@ -73,6 +73,13 @@ def deterministic_handlers():
         from .browser_control_command import handle as f
         return await f(text, config)
 
+    async def linkedin(text, config):
+        # Before the site finder and the generic opener, both of which would take "open my
+        # LinkedIn" at face value and send you to linkedin.com — technically what was asked for
+        # and never what was wanted.
+        from .linkedin_command import handle as f
+        return await f(text, config)
+
     async def find_a_site(text, config):
         # "Find a site that does X" — opened and checked, not chosen from a blurb. Before the
         # plain draw handler, which would otherwise take the "draw…" half of a combined request.
@@ -139,6 +146,7 @@ def deterministic_handlers():
         ("system", system),
         ("screen_click", screen_click),
         ("browser_control", take_browser_control),
+        ("linkedin", linkedin),
         ("find_site", find_a_site),
         ("read_screen", read_screen),
         ("project", describe_project),
