@@ -1,4 +1,7 @@
-"""Local text embeddings via Ollama (nomic-embed-text). Fully local & free; optional.
+"""Local text embeddings via Ollama. Fully local & free; optional.
+
+The model is chosen in one place — see `embedding_model` — because it was five default arguments
+across two subsystems, and changing four of the five mixes two vector spaces without erroring.
 
 If Ollama isn't running, `available()` returns False and callers fall back to keyword search.
 Install: https://ollama.com  then  `ollama pull nomic-embed-text`.

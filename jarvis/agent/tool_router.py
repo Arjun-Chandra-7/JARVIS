@@ -16,7 +16,7 @@ because it stops re-reading thousands of tokens of schema it will not use.
 
 How
 ---
-Rank by semantic similarity using nomic-embed-text through Ollama (already installed for vault
+Rank by semantic similarity through Ollama (already installed for vault
 recall), fall back to lexical overlap when embeddings are unavailable, and always union in a small
 always-on set so common actions can never be routed away. When nothing scores well the model is
 also given `find_tools`, so it can ask for the rest of the catalogue instead of guessing — a

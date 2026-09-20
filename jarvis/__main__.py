@@ -426,8 +426,10 @@ def _run_index() -> None:
     from .memory.index import VaultIndex
 
     if not available():
+        from .memory import embedding_model
+
         print("Ollama isn't running. Install https://ollama.com and run:")
-        print("  ollama pull nomic-embed-text")
+        print(f"  ollama pull {embedding_model.name()}")
         print("…then retry. (Semantic search is optional; keyword recall works without it.)")
         return
     print("Building semantic index over the vault…")

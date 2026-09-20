@@ -107,8 +107,9 @@ class Config:
     # --- tool routing ---
     # Show the model only the tools relevant to the request. Measured on qwen2.5:3b over a
     # 17-command set: 11/17 correct with all 84 schemas versus 15/17 with the ten most relevant,
-    # and 1.48 s -> 0.91 s median. Ranking uses nomic-embed-text via Ollama, falling back to
-    # lexical overlap. JARVIS_TOOL_ROUTING=0 restores the old send-everything behaviour.
+    # and 1.48 s -> 0.91 s median. Ranking embeds through Ollama, falling back to lexical
+    # overlap; JARVIS_EMBED_MODEL picks the model and defaults to nomic-embed-text.
+    # JARVIS_TOOL_ROUTING=0 restores the old send-everything behaviour.
     tool_routing: bool = field(default_factory=lambda: _bool("JARVIS_TOOL_ROUTING", True))
     tool_routing_keep: int = field(default_factory=lambda: _int("JARVIS_TOOL_ROUTING_KEEP", 10))
 
