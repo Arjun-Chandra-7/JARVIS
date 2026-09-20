@@ -22,6 +22,12 @@ const fs = require("fs");
 app.commandLine.appendSwitch("ozone-platform", "x11");
 app.commandLine.appendSwitch("enable-features", "WebRTCPipeWireCapturer");
 
+// Under XWayland, `transparent: true` alone is not enough: Chromium picks a visual without an
+// alpha channel and then paints the window's own ground, so a rounded pill sits inside a visible
+// grey rectangle and the corners look broken. Asking for a transparent visual explicitly is what
+// makes the alpha real.
+app.commandLine.appendSwitch("enable-transparent-visuals");
+
 const REPO = path.resolve(__dirname, "..");
 const PY = path.join(REPO, ".venv", "bin", "python");
 const PORT = process.env.JARVIS_WEB_PORT || "8770";
