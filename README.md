@@ -36,6 +36,41 @@ need their own account, device, or desktop service configured before use.
   range only, and paired devices give names. See `docs/HUMAN_RADAR.md`.
 - Makes pictures. "Generate an image of a samurai in bamboo" writes a file and opens it.
 
+## Finding your own files
+
+`read_file` and `list_dir` want you to already know where something is. `find_document` searches
+your documents by what is written in them — "find that PDF about the hackathon" — across
+`~/Documents`, `~/Downloads` and `~/Desktop` by default, which `JARVIS_DOCUMENT_ROOTS` overrides.
+
+Ranked with BM25, no index on disk: a full fresh scan of the real folders takes about 1.5 s with
+poppler doing the PDFs, which is quicker than deciding whether a cached index has gone stale.
+
+Worth knowing before you use it: `~/Downloads` is where a browser drops identity documents, and
+indexing it puts their text in an index. There is no filename heuristic for "sensitive" here,
+because that is a denylist and one that is wrong once is worse than no promise. Point the roots
+somewhere else if that matters.
+
+## The memory vault, and facts that stop being true
+
+Recall runs both halves of a hybrid search — embeddings for paraphrase, BM25 for the proper nouns
+embeddings are bad at — and merges them by rank rather than by score, since a cosine and a BM25
+score are not comparable numbers. Results both halves found are marked, because that agreement is
+what the ranking is built on.
+
+Facts can now carry a window:
+
+    - Machine: ThinkPad X1 <!-- until:2026-03-04 -->
+    - Machine: Bhramastra <!-- since:2026-03-04 -->
+
+So "what is my machine" and "what did I have in January" are both answerable from one file.
+Obsidian renders neither comment; an unstamped line is true and always has been, so nothing in
+the existing vault needs changing.
+
+The embedding model behind both is `JARVIS_EMBED_MODEL`, defaulting to `nomic-embed-text`. It is
+worth experimenting with — the one controlled study in this area found swapping only the
+embedding model moved accuracy 6.2 points — and `tests/test_tool_routing.py` is the instrument to
+judge a change with.
+
 ## The voice
 
 Kokoro, 82M parameters, Apache-2.0, on the processor. Measured here: the model loads in 1.0s and

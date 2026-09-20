@@ -45,6 +45,12 @@ google-auth-httplib2
 # Phase 4 — proactive routines
 # apscheduler
 
+# Searching your own documents by what is in them (find_document). poppler's pdftotext is
+# preferred when present — it is faster and survives malformed files — and these are the
+# fallbacks, both small and pure Python.
+pypdf>=4.0
+python-docx>=1.1
+
 # screenshot blank-frame detection
 Pillow>=10.0
 
