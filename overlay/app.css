@@ -1659,3 +1659,91 @@ body[data-state="offline"] .shell { border-color: var(--border); }
   .icon-btn, .send-btn, .ghost-btn, .palette-item { transition: none; }
   .icon-btn:active, .send-btn:active, .ghost-btn:active, .palette-item:active { transform: none; }
 }
+
+
+/* ===================== the pill, closer up =====================
+ * Seen at three times its size, the orb was the heaviest thing on the bar and the emptiest: a
+ * forty-pixel disc of near-black holding a twelve-pixel dot, reading as a hole punched in the
+ * pill rather than as its one control. The disc is gone. What is left is a ring and a core —
+ * the same information in a tenth of the ink, and a shape that can take the state colour without
+ * a dark plate fighting it.
+ *
+ * The room that buys goes to the words, which are what anyone is actually reading. */
+.orb {
+  width: 34px;
+  height: 34px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+.orb:hover {
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+body[data-state="idle"] .orb:hover { box-shadow: inset 0 0 0 1px var(--accent-dim); }
+
+.orb-core { width: 9px; height: 9px; }
+.orb-ring { inset: -4px; }
+.orb-mic { width: 15px; height: 15px; stroke: var(--surface-void); }
+
+/* The halo while listening was drawn on the disc; with no disc it goes on the ring, so the
+ * pill's own ground shows through the middle of it. */
+body[data-state="listening"] .orb {
+  background: transparent;
+  box-shadow:
+    inset 0 0 0 1px var(--accent-line),
+    0 0 0 calc(1px + var(--level) * 3px) var(--accent-line),
+    0 0 calc(8px + var(--level) * 22px) rgba(126, 200, 227, calc(0.15 + var(--level) * 0.5));
+}
+body[data-state="thinking"] .orb {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--accent-dim), 0 0 14px rgba(126, 200, 227, 0.12);
+}
+body[data-state="speaking"] .orb { background: transparent; }
+
+.pillbar { gap: var(--space-2); padding-left: var(--space-2); }
+body[data-form="pill"] .pillbar { padding: var(--space-2); }
+
+/* Grey on near-black at twelve pixels is the one thing on the bar that has to be read from
+ * across a desk, and it was the faintest. */
+.pill-state { font-size: var(--text-sm); color: var(--text-secondary); letter-spacing: 0.005em; }
+
+
+/* Working, along the bottom edge.
+ *
+ * "Working…" is a word that does not change, so a pause and a hang look identical. A line that
+ * travels says the same thing and keeps saying it. It sits on the pill's own edge, which is the
+ * periphery — never over the words — and it exists only while a turn is in flight, so it is
+ * bounded by the thing it describes rather than running for ever. */
+.shell::before {
+  z-index: 3;
+}
+body[data-form="pill"][data-state="thinking"] .shell::before {
+  opacity: 1;
+  inset: auto 0 0 0;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  width: 45%;
+  animation: pill-working 1.5s var(--ease-out) infinite;
+}
+@keyframes pill-working {
+  0%   { transform: translateX(-100%); opacity: 0; }
+  20%  { opacity: 1; }
+  80%  { opacity: 1; }
+  100% { transform: translateX(222%); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  body[data-form="pill"][data-state="thinking"] .shell::before {
+    animation: none;
+    width: 100%;
+    opacity: 0.5;
+  }
+}
+
+/* Six pixels of colour against a dark bar, three pixels from the edge of the window. The dot is
+ * the whole of what the pill says about the agents, and it was the smallest thing on it. */
+.work-dot { width: 7px; height: 7px; }
+.pill-right { gap: var(--space-3); padding-right: 2px; }
+
+/* "Working…" was the dimmest label on the bar — accent-dim on near-black — which is backwards:
+ * it is the state you most want to be able to read from across the room. The accent now means
+ * one thing on the pill, audio is flowing, and the travelling line carries "working" instead. */
+body[data-form="pill"][data-state="thinking"] .pill-state { color: var(--text-secondary); }

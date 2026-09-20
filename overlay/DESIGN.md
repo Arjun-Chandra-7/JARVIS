@@ -15,6 +15,19 @@ assignment in `app.js` and the appearance follows from `app.css`.
 belongs there. The palette is obsidian and graphite with one ice-blue accent, spent only on state
 and focus — semantic colours stay separate so that "working" never reads as "succeeded".
 
+## The orb is a ring, not a disc
+
+Seen at three times its size the orb was the heaviest thing on the bar and the emptiest: a
+forty-pixel disc of near-black holding a twelve-pixel dot, reading as a hole punched in the pill
+rather than as its one control. It is a ring and a core now — the same information in a tenth of
+the ink, and a shape the state colour can land on without a dark plate fighting it. The room that
+buys goes to the words, which are what anyone is actually reading.
+
+`thinking` also gets a line travelling along the pill's bottom edge. "Working…" is a word that
+does not change, so a pause and a hang look identical; a line that travels keeps saying it. It is
+on the edge, never over the text, and it exists only while a turn is in flight — bounded by the
+thing it describes rather than running for ever.
+
 ## What the states look like
 
     idle        the orb breathes slowly, so waiting looks like waiting — and stops after
