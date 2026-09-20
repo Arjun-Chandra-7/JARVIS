@@ -120,11 +120,32 @@ def _synth_chunk_cli(text: str, model_path: str) -> tuple[bytes, int]:
     return proc.stdout, _sample_rate(model_path)
 
 
+def _better_voice_available() -> bool:
+    """Whether Kokoro is installed with its weights on disk.
+
+    Checked per call rather than cached: the weights can appear while Jarvis is running, and a
+    cached "no" from boot would mean a restart before the better voice is heard.
+    """
+    try:
+        from . import kokoro_tts
+
+        return kokoro_tts.available()
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def synth(text: str, model_path: str) -> tuple[bytes, int]:
     """Synthesise the whole text at once. Kept for callers that want a single buffer."""
     text = (text or "").strip()
     if not text:
         return b"", _sample_rate(model_path)
+    if _better_voice_available():
+        from . import kokoro_tts
+
+        try:
+            return kokoro_tts.synth(text)
+        except Exception:  # noqa: BLE001 - a voice that fails must not cost the reply
+            pass
     voice = _get_voice(model_path)
     if voice is not None:
         return _synth_chunk_api(voice, text)
@@ -134,7 +155,21 @@ def synth(text: str, model_path: str) -> tuple[bytes, int]:
 def synth_stream(
     text: str, model_path: str, stop_event: Optional[threading.Event] = None
 ) -> Iterator[tuple[bytes, int]]:
-    """Yield (pcm, sample_rate) per speakable chunk, synthesising as the caller consumes."""
+    """Yield (pcm, sample_rate) per speakable chunk, synthesising as the caller consumes.
+
+    Kokoro when it is there, Piper when it is not. The caller never chooses: every path into
+    speech goes through here, so preferring the better voice in one place means the pill, the
+    replies and the announcements all get it at once — and a machine without the weights keeps
+    working exactly as before.
+    """
+    if _better_voice_available():
+        from . import kokoro_tts
+
+        try:
+            yield from kokoro_tts.synth_stream(text, stop_event=stop_event)
+            return
+        except Exception:  # noqa: BLE001 - fall through to Piper rather than going silent
+            pass
     voice = _get_voice(model_path)
     for chunk in split_for_speech(text):
         if stop_event is not None and stop_event.is_set():
