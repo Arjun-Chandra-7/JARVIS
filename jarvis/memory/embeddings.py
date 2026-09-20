@@ -21,7 +21,13 @@ def available(timeout: float = 1.0) -> bool:
         return False
 
 
-def embed(text: str, model: str = "nomic-embed-text", timeout: float = 30.0) -> Optional[list[float]]:
+def embed(text: str, model: str = "", timeout: float = 30.0) -> Optional[list[float]]:
+    # Resolved here rather than in the signature so every caller gets the same model, including
+    # the ones that pass nothing. Two models do not share a vector space, and an index that
+    # mixes them does not error — it just answers worse.
+    from . import embedding_model
+
+    model = model or embedding_model.name()
     try:
         resp = httpx.post(
             f"{_BASE}/api/embeddings", json={"model": model, "prompt": text}, timeout=timeout

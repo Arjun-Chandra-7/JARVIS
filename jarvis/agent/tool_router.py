@@ -236,7 +236,13 @@ def _cosine(a: Iterable[float], b: Iterable[float]) -> float:
     return dot / math.sqrt(na * nb)
 
 
-def build_index(schemas: list[dict], model: str = "nomic-embed-text") -> bool:
+def _model_name(model: str) -> str:
+    from ..memory import embedding_model
+
+    return model or embedding_model.name()
+
+
+def build_index(schemas: list[dict], model: str = "") -> bool:
     """Embed every tool once and cache to disk. Returns False when embeddings are unavailable.
 
     The cache key covers the tool names, the alias table and the model, so editing any of them
@@ -245,6 +251,9 @@ def build_index(schemas: list[dict], model: str = "nomic-embed-text") -> bool:
     global _vectors, _vector_model, _embed_ok
     from ..memory import embeddings
 
+    # Resolved before the fingerprint, which is computed from it: the cache key has to name the
+    # model actually used, or switching models serves vectors from the old one.
+    model = _model_name(model)
     fp = _fingerprint(schemas, model)
     path = _cache_path(fp)
     with _lock:
@@ -288,7 +297,7 @@ def build_index(schemas: list[dict], model: str = "nomic-embed-text") -> bool:
     return True
 
 
-def semantic_scores(query: str, model: str = "nomic-embed-text") -> dict[str, float]:
+def semantic_scores(query: str, model: str = "") -> dict[str, float]:
     from ..memory import embeddings
 
     if not _vectors:
@@ -307,13 +316,14 @@ def select(
     keep: int = 10,
     always: Iterable[str] = ALWAYS,
     use_semantic: bool = True,
-    model: str = "nomic-embed-text",
+    model: str = "",
 ) -> list[dict]:
     """Return the tools worth showing the model for `query`, most relevant first.
 
     Order is deliberate: models attend more to what comes first, and the always-on tools are
     appended rather than prepended so a strong semantic match still leads.
     """
+    model = _model_name(model)
     if keep <= 0 or keep >= len(schemas):
         return schemas
 

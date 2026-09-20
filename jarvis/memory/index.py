@@ -40,9 +40,11 @@ def chunk_markdown(text: str, max_chars: int = 1200) -> list[str]:
 
 
 class VaultIndex:
-    def __init__(self, vault: Path, model: str = "nomic-embed-text") -> None:
+    def __init__(self, vault: Path, model: str = "") -> None:
+        from . import embedding_model
+
         self.vault = Path(vault)
-        self.model = model
+        self.model = model or embedding_model.name()
         store = self.vault / ".jarvis"
         store.mkdir(exist_ok=True)
         self.path = store / "semindex.json"
