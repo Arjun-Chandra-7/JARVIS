@@ -85,12 +85,22 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         if is_destructive(cmd) and not config.allow_unconfirmed_shell:
             if not await _confirm(f"run this command:\n    {cmd}"):
                 return "User declined the command."
+        # The confirmation above is a denylist and says so in its own docstring. The sandbox is
+        # the part that does not depend on having thought of the command in advance: your home is
+        # there, because a shell that cannot see your files is useless, but the credentials are
+        # not. See jarvis/agent/sandbox.py for what that does and does not buy.
+        from . import sandbox
+
         try:
-            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
-            out = (r.stdout or "") + (r.stderr or "")
-            return out.strip()[:6000] or f"(exit {r.returncode}, no output)"
+            result = await asyncio.to_thread(
+                sandbox.run, cmd, sandbox.GUARDED, None, 120.0)
         except Exception as exc:  # noqa: BLE001
             return f"error: {exc}"
+        out = result.stdout.strip()[:6000]
+        if not result.sandboxed and result.note:
+            # Never let the caller believe it was contained when it was not.
+            out = f"{out}\n\n[ran unsandboxed: {result.note}]".strip()
+        return out or f"(exit {result.returncode}, no output)"
 
     @tool("read_file", "Read a text file.", {"path": {"type": "string"}}, ["path"])
     async def read_file(a):
