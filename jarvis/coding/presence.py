@@ -13,10 +13,15 @@ for nothing, every few seconds, without touching the clipboard or stealing focus
 Telling *why* it stopped does need the words, so the terminal is read — but only on the
 transition, once, rather than on every poll. Reading it borrows the clipboard for a moment, and
 doing that continuously would be a tax on everything else you copy.
+
+Every session is tracked on its own. Watching only the busiest one meant that while any session
+was working, a different one finishing was invisible — and someone with three terminals open has
+three sessions.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import time
@@ -33,12 +38,65 @@ COLOURS = {
 
 AGENTS = ("claude", "codex", "agy")
 
-# Above this share of a core, over one sampling gap, the agent is doing something. Well below a
-# busy process and well above the idle twitching of a program waiting on a read.
-WORKING_ABOVE = 3.0
+# Above this share of a core, over one sampling gap, the agent is doing something.
+#
+# Measured on this machine, sampling every four seconds for a minute: a session actively working
+# held 9–20% and never dipped below 9, while sessions sitting at their prompt read 0.5–2.2% with
+# one excursion to 4.7%. Five is above everything idle and well below anything working.
+WORKING_ABOVE = 5.0
+
+# A run shorter than this was a twitch, not a task, and finishing it is not news. Without this a
+# single idle session crossing the threshold for one sample turned into an orange dot and then
+# "Claude has finished, sir" about a task nobody asked for.
+MIN_TASK_S = 6.0
 
 # How long a finished agent stays green before it is just an open window again.
 DONE_FOR_S = 90.0
+
+# A process missing from one listing is a race, not an exit — `ps` and a terminal redraw
+# regularly disagree. Its record is kept this long so that coming back does not read as a new
+# session with a new completion to announce.
+GONE_AFTER_S = 30.0
+
+
+# --------------------------------------------------------------------------- what is a session
+#
+# Claude keeps a daemon, a pool of pty hosts, and pre-warmed spare processes alive at all times;
+# the ChatGPT extension keeps an app-server. Every one of them carries the same command name as a
+# real session and every one of them burns processor time of its own.
+#
+# Counting them is what broke the dot. Measured here: of the ten processes named claude or codex,
+# only three were sessions. The 12–15% of a core that kept the dot orange was a spare, and the
+# first reading after a restart announced that Codex had finished — about an app-server that had
+# never run anything.
+#
+# The subcommand names the plumbing, and it is matched as a whole argument rather than as a word
+# anywhere in the line. Searching the line for "daemon" looked right and was not: every claimed
+# spare carries the daemon's socket path in its arguments, so the pattern threw out the real
+# sessions along with the plumbing. Nor is it always the second argument — the editor launches
+# the ChatGPT one as `codex -c features.code_mode_host=true app-server`. An exact argument, in
+# any position, is the thing that is neither too loose nor too strict.
+_PLUMBING_SUBCOMMANDS = {"daemon", "bg-pty-host", "app-server", "mcp"}
+
+# A spare is the awkward one, because a claimed spare *is* the session you are typing into — this
+# very file was written by one. What separates it from an unclaimed spare is that the unclaimed
+# one is still sitting in the daemon's scratch directory, while a claimed one has moved to the
+# directory you are working in.
+_SCRATCH = re.compile(r"/tmp/cc-daemon-")
+
+
+def _names_plumbing(args: str) -> bool:
+    """Whether any argument is one of the modes that means "a service, not a session"."""
+    return any(part.lower() in _PLUMBING_SUBCOMMANDS for part in args.split()[1:])
+
+
+def _now() -> float:
+    """The clock, behind one name so a test can move it.
+
+    Several of the rules here are about duration — a run too short to be a task, a green dot
+    going stale — and a test that cannot move time can only express them by sleeping.
+    """
+    return time.time()
 
 
 @dataclass
@@ -56,15 +114,36 @@ class State:
     # Stable identity for one running -> stopped cycle.  The process can briefly disappear from
     # `ps` while the terminal is redrawn; that must not manufacture a second completion event.
     completion_id: str = ""
-    at: float = field(default_factory=time.time)
+    at: float = field(default_factory=_now)
 
     @property
     def colour(self) -> str:
         return COLOURS.get(self.kind, "blue")
 
 
+def _working_directory(pid: int) -> str:
+    """Where the process thinks it is. Empty when it cannot be read.
+
+    Never a reason to reject on its own: a directory we are not allowed to read must not make a
+    real session invisible.
+    """
+    try:
+        return os.readlink(f"/proc/{pid}/cwd")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def is_a_session(pid: int, args: str) -> bool:
+    """Whether this process is something a person is talking to, rather than plumbing."""
+    if _names_plumbing(args):
+        return False
+    if _SCRATCH.search(_working_directory(pid)):
+        return False
+    return True
+
+
 def _processes() -> list[Agent]:
-    """Every coding agent currently running, by name."""
+    """Every coding agent session currently running, by name."""
     try:
         out = subprocess.run(["ps", "-eo", "pid,comm,args"], capture_output=True,
                              text=True, timeout=6).stdout
@@ -79,12 +158,13 @@ def _processes() -> list[Agent]:
         for name in AGENTS:
             # The command name is checked before the arguments: every shell that ever *mentioned*
             # claude would otherwise count as claude running, this session's own included.
-            if comm == name or comm == f"{name}.exe" or comm.startswith(f"{name}-"):
+            named = (comm == name or comm == f"{name}.exe" or comm.startswith(f"{name}-")
+                     or args.split(" ", 1)[0].rstrip("/").endswith(f"/{name}"))
+            if not named:
+                continue
+            if is_a_session(pid, args):
                 found.append(Agent(name=name, pid=pid))
-                break
-            if args.split(" ", 1)[0].rstrip("/").endswith(f"/{name}"):
-                found.append(Agent(name=name, pid=pid))
-                break
+            break
     return found
 
 
@@ -98,13 +178,11 @@ def _cpu_jiffies(pid: int) -> Optional[int]:
 
 
 _seen: dict[int, tuple[float, int]] = {}
-_cycles: dict[int, int] = {}
-_busy_pids: set[int] = set()
 
 
 def _busy(pid: int) -> float:
     """Share of a core this process has used since the last look."""
-    now, jiffies = time.time(), _cpu_jiffies(pid)
+    now, jiffies = _now(), _cpu_jiffies(pid)
     if jiffies is None:
         _seen.pop(pid, None)
         return 0.0
@@ -177,61 +255,139 @@ def classify_words(screen: str) -> str:
     return ""
 
 
+# --------------------------------------------------------------------------- per-session state
+@dataclass
+class Session:
+    """One agent process, and what it has been doing since we started watching it."""
+    name: str
+    pid: int
+    kind: str = "idle"
+    cpu: float = 0.0
+    busy_since: float = 0.0        # 0 when it is not working
+    cycles: int = 0                # how many runs we have seen, for a stable completion identity
+    stopped_at: float = 0.0
+    completion_id: str = ""
+    last_seen: float = field(default_factory=_now)
+
+    @property
+    def ever_ran(self) -> bool:
+        return self.cycles > 0
+
+
+@dataclass
+class Event:
+    """One thing that happened to one session, worth saying out loud exactly once."""
+    kind: str          # "done" or "asking"
+    agent: str
+    completion_id: str
+
+
+_sessions: dict[int, Session] = {}
+_events: list[Event] = []
 _state = State()
-_stopped_at: float = 0.0
+
+# Most urgent first, and the two transient states come before the steady one. A session waiting
+# on an answer is the only thing that needs you; a session that has just finished is news, and
+# news it stays for ninety seconds; a session working is a condition, not an event. Ordering
+# "running" above "done" meant that while any session worked — which, with three terminals open,
+# is most of the time — another one finishing was invisible.
+_URGENCY = ("asking", "done", "running", "idle")
 
 
 def look(read_terminal=None) -> State:
     """One reading. `read_terminal` is called only when it is worth calling."""
-    global _state, _stopped_at
+    global _state
 
-    agents = _processes()
-    if not agents:
-        # Do not reset the process-cycle bookkeeping here.  A transiently missing process is a
-        # normal race around terminal redraws, not evidence that a new task has completed.
-        _stopped_at = 0.0
-        _state = State(kind="idle")
-        return _state
+    now = _now()
+    live = {a.pid: a for a in _processes()}
 
-    # Sampled once each. Asking twice in the same breath resets the baseline and the second
-    # reading is always zero, because no time has passed between them — which made every agent
-    # look idle for ever.
-    for agent in agents:
-        agent.cpu = _busy(agent.pid)
-        if agent.cpu > WORKING_ABOVE:
-            if agent.pid not in _busy_pids:
-                _cycles[agent.pid] = _cycles.get(agent.pid, 0) + 1
-            _busy_pids.add(agent.pid)
-        else:
-            _busy_pids.discard(agent.pid)
-    busiest = max(agents, key=lambda a: a.cpu)
+    for pid in list(_sessions):
+        if pid in live:
+            _sessions[pid].last_seen = now
+        elif now - _sessions[pid].last_seen > GONE_AFTER_S:
+            _sessions.pop(pid)
+            _seen.pop(pid, None)
 
-    if busiest.cpu > WORKING_ABOVE:
-        _stopped_at = 0.0
-        _state = State(kind="running", agent=busiest.name,
-                       detail=f"{busiest.cpu:.0f}% of a core")
-        return _state
+    # The terminal is read at most once per look, on the first session that has something new to
+    # say. Reading it borrows the clipboard, and three sessions stopping together is no reason to
+    # borrow it three times.
+    read_already = False
+    words = ""
 
-    # It has stopped. Why it stopped needs the words, and those are only read on the change.
-    now = time.time()
-    if _state.kind == "running" or _stopped_at == 0.0:
-        _stopped_at = now
-        if _state.kind == "running" and _state.agent:
-            prev = next((a for a in agents if a.name == _state.agent), None)
-            if prev:
-                busiest = prev
-        words = classify_words(read_terminal() if read_terminal else "")
-        event = f"{busiest.name}:{busiest.pid}:{_cycles.get(busiest.pid, 0)}"
-        _state = State(kind=words or "done", agent=busiest.name,
-                       completion_id=event)
-        return _state
+    for pid, agent in live.items():
+        s = _sessions.setdefault(pid, Session(name=agent.name, pid=pid))
+        s.cpu = _busy(pid)
+        s.last_seen = now
 
-    # Already known to have stopped: stay as we were, until green goes stale.
-    if _state.kind == "done" and now - _stopped_at > DONE_FOR_S:
-        _state = State(kind="idle", agent=busiest.name,
-                       detail="still open, nothing running",
-                       completion_id=_state.completion_id)
+        if s.cpu > WORKING_ABOVE:
+            if not s.busy_since:
+                s.busy_since = now
+                s.cycles += 1
+            s.kind = "running"
+            s.stopped_at = 0.0
+            continue
+
+        if s.busy_since:
+            # It has just stopped. Why needs the words, and those are only read on the change.
+            ran_for = now - s.busy_since
+            s.busy_since = 0.0
+            s.stopped_at = now
+            if ran_for < MIN_TASK_S:
+                # A twitch, not a task. Nothing finished, so nothing to say about it.
+                s.cycles = max(0, s.cycles - 1)
+                s.kind = "idle"
+                continue
+            if not read_already and read_terminal is not None:
+                words, read_already = classify_words(read_terminal() or ""), True
+            s.kind = words or "done"
+            s.completion_id = f"{s.name}:{pid}:{s.cycles}"
+            # Recorded per session rather than left for the dot to carry. The dot can only show
+            # one thing, so a second session finishing while the first is still green — or while
+            # any session is still working — would otherwise never be announced at all.
+            _events.append(Event(kind=s.kind, agent=s.name, completion_id=s.completion_id))
+            continue
+
+        # Not working, and not working a moment ago either.
+        if s.kind == "done" and now - s.stopped_at > DONE_FOR_S:
+            s.kind = "idle"             # green means "just finished"; this is only still open
+        elif not s.ever_ran:
+            # Open, but it has never done anything we saw. That is not a completion, and saying
+            # so on the first look is how a restart came to announce work nobody had asked for.
+            s.kind = "idle"
+
+    _state = _summarise()
     return _state
+
+
+def _summarise() -> State:
+    """One state for the dot, from however many sessions are open."""
+    if not _sessions:
+        return State(kind="idle")
+    for kind in _URGENCY:
+        here = [s for s in _sessions.values() if s.kind == kind]
+        if not here:
+            continue
+        if kind == "idle":
+            break
+        # The busiest of the equally urgent, so "running" names the one actually working.
+        s = max(here, key=lambda x: x.cpu)
+        detail = f"{s.cpu:.0f}% of a core" if kind == "running" else ""
+        return State(kind=kind, agent=s.name, detail=detail, completion_id=s.completion_id)
+    any_open = max(_sessions.values(), key=lambda x: x.cpu)
+    return State(kind="idle", agent=any_open.name, detail="still open, nothing running",
+                 completion_id=any_open.completion_id)
+
+
+def drain_events() -> list[Event]:
+    """Everything that has happened since this was last asked. Reading it clears it."""
+    global _events
+    out, _events = _events, []
+    return out
+
+
+def sessions() -> list[Session]:
+    """Every session being watched, for anything that wants more than one dot's worth."""
+    return sorted(_sessions.values(), key=lambda s: (s.name, s.pid))
 
 
 def current() -> State:
@@ -239,8 +395,8 @@ def current() -> State:
 
 
 def reset() -> None:
-    global _state, _stopped_at
-    _state, _stopped_at = State(), 0.0
+    global _state
+    _state = State()
+    _sessions.clear()
     _seen.clear()
-    _cycles.clear()
-    _busy_pids.clear()
+    _events.clear()

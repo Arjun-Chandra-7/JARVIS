@@ -735,35 +735,42 @@ class VoiceSession:
             except Exception:  # noqa: BLE001
                 return ""
 
-        was = None
+        first_look = True
         announced = set()
         while True:
             await asyncio.sleep(4.0)
             try:
                 now = await asyncio.to_thread(presence.look, read_if_already_there)
+                events = presence.drain_events()
             except Exception:  # noqa: BLE001 — a failed look must not end the watcher
                 continue
 
-            if was is not None and now.kind != was:
-                who = roster.spoken_name(now.agent)
-                if now.kind == "asking":
+            # Announcements come from the per-session events, not from the dot. The dot can only
+            # show one thing at a time, so watching it for changes meant a session finishing
+            # while another was still working was never mentioned — and with three terminals
+            # open, another one is nearly always working.
+            for event in events:
+                if first_look:
+                    # Whatever was already on screen when Jarvis started is not news.
+                    announced.add(event.completion_id)
+                    continue
+                if event.completion_id in announced:
+                    continue
+                announced.add(event.completion_id)
+                who = roster.spoken_name(event.agent)
+                if event.kind == "asking":
                     self._speak(f"{who} is waiting on you, sir.")
-                elif now.kind == "done" and now.completion_id not in announced:
-                    # A prompt sent through coding_command has its own output-based watcher.  The
-                    # process watcher is useful for agents started by hand, but speaking here as
-                    # well turns one prompt into two completion announcements.
-                    expected = watch.waiting_for()
-                    expected_c = roster.canonical_name(expected)
-                    now_c = roster.canonical_name(now.agent)
-                    if ((not expected_c or expected_c != now_c)
-                            and not watch.recently_finished(now.agent)):
-                        self._speak(f"{who} has finished, sir.")
-                        announced.add(now.completion_id)
-                    else:
-                        # The prompt watcher already delivered this completion (or is about to).
-                        announced.add(now.completion_id)
+                    continue
+                # A prompt sent through coding_command has its own output-based watcher. The
+                # process watcher is useful for agents started by hand, but speaking here as
+                # well turns one prompt into two completion announcements.
+                expected_c = roster.canonical_name(watch.waiting_for())
+                if ((not expected_c or expected_c != roster.canonical_name(event.agent))
+                        and not watch.recently_finished(event.agent)):
+                    self._speak(f"{who} has finished, sir.")
+
             self.on_event("agent", f"{now.kind}:{now.agent}")
-            was = now.kind
+            first_look = False
 
     async def _watch_coding_terminal(self) -> None:
         """Say what the agent in the editor concluded, once it has stopped writing.
