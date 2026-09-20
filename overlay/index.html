@@ -96,6 +96,37 @@
             <button class="ghost-btn danger" id="cancelBtn" type="button" hidden>Cancel</button>
           </div>
 
+          <!-- What is playing, and the three controls that work on it. Present only while
+               something is actually playing: a music bar with nothing in it is a permanent
+               reminder of nothing. -->
+          <div class="nowplaying" id="nowPlaying" hidden>
+            <img class="np-art" id="npArt" alt="" referrerpolicy="no-referrer" hidden />
+            <div class="np-text">
+              <div class="np-title" id="npTitle"></div>
+              <div class="np-artist" id="npArtist"></div>
+            </div>
+            <div class="np-controls">
+              <button class="icon-btn" id="npPrev" type="button" aria-label="Previous track"
+                      title="Previous">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M18 5v14L8 12zM6 5v14" />
+                </svg>
+              </button>
+              <button class="icon-btn" id="npPlay" type="button" aria-label="Play or pause"
+                      title="Play / pause">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M7 4v16M17 4v16" />
+                </svg>
+              </button>
+              <button class="icon-btn" id="npNext" type="button" aria-label="Next track"
+                      title="Next">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M6 5v14l10-7zM18 5v14" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
           <form class="composer" id="composer">
             <div class="context-chip" id="contextChip" hidden>
               <span class="context-kind" id="contextKind">Selection</span>

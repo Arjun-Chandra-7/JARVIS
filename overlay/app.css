@@ -1526,3 +1526,53 @@ kbd {
   text-align: center;
   color: var(--text-muted);
 }
+
+
+/* ===================== what is playing =====================
+ * The backend has known what Spotify is doing for a long time and the overlay never said so,
+ * which meant reaching for the taskbar to skip a track while JARVIS sat on top of everything.
+ *
+ * It is a strip, not a player: cover, two lines, three controls. It appears only while something
+ * is playing, and the poll behind it stops with the panel. */
+.nowplaying {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 0 0 auto;
+  padding: var(--space-2);
+  padding-right: var(--space-1);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  animation: msg-in var(--dur-base) var(--ease-out);
+}
+@media (prefers-reduced-motion: reduce) { .nowplaying { animation: none; } }
+
+.np-art {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-chip);
+  object-fit: cover;
+  background: var(--surface-overlay);
+}
+.np-text { flex: 1 1 auto; min-width: 0; display: grid; gap: 1px; }
+.np-title {
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.np-artist {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.np-controls { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+
+/* Paused is the one state worth colouring: it is the difference between "this is playing" and
+ * "this is what you stopped". */
+.nowplaying[data-playing="false"] .np-title { color: var(--text-secondary); }

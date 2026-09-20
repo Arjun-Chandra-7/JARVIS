@@ -533,6 +533,8 @@ function syncLoops() {
     clearInterval(levelTimer);
     levelTimer = 0;
   }
+
+  syncNowPlaying();
 }
 
 // ---------------------------------------------------------------- forms
@@ -1457,3 +1459,87 @@ els.paletteList.addEventListener("pointermove", (e) => {
 els.palette.addEventListener("pointerdown", (e) => {
   if (e.target === els.palette) closePalette();
 });
+
+// ---------------------------------------------------------------- what is playing
+//
+// The backend has been able to see Spotify for a long time; the overlay never said so, which
+// meant reaching past an always-on-top window to skip a track.
+//
+// Polled, not streamed, because playerctl has nothing to subscribe to — so it is polled slowly
+// and only while the panel is open and on screen. The rule in DESIGN.md applies here as much as
+// to an animation: nothing new is always on.
+const NOWPLAYING_EVERY_MS = 5000;
+let nowPlayingTimer = 0;
+let nowPlayingTrack = null;   // the last title seen, so the art only reloads when it changes
+
+els.nowPlaying = $("nowPlaying");
+els.npArt = $("npArt");
+els.npTitle = $("npTitle");
+els.npArtist = $("npArtist");
+
+const PLAY_GLYPH = '<path d="M7 4l12 8-12 8z" />';
+const PAUSE_GLYPH = '<path d="M7 4v16M17 4v16" />';
+
+async function pollNowPlaying() {
+  let j;
+  try {
+    j = await (await fetch(`${API}/spotify`, { cache: "no-store" })).json();
+  } catch {
+    // Backend unreachable: say nothing rather than leaving a stale track on screen.
+    els.nowPlaying.hidden = true;
+    return;
+  }
+  // Nothing loaded in the player at all. A paused track still counts as something to show —
+  // that is exactly when the play button is wanted.
+  if (!j || (!j.title && !j.playing)) {
+    els.nowPlaying.hidden = true;
+    nowPlayingTrack = null;
+    return;
+  }
+  els.nowPlaying.hidden = false;
+  els.nowPlaying.dataset.playing = String(!!j.playing);
+  els.npTitle.textContent = j.title || "";
+  els.npArtist.textContent = j.artist || "";
+  $("npPlay").querySelector("svg").innerHTML = j.playing ? PAUSE_GLYPH : PLAY_GLYPH;
+
+  if (j.title !== nowPlayingTrack) {
+    nowPlayingTrack = j.title;
+    // https only. The art URL comes from whatever is playing, and a renderer this privileged
+    // should not be talked into fetching file:// or anything else by a track's metadata.
+    const art = typeof j.art === "string" && /^https:\/\//.test(j.art) ? j.art : "";
+    els.npArt.hidden = !art;
+    if (art) els.npArt.src = art;
+  }
+}
+
+async function musicControl(command) {
+  try {
+    await fetch(`${API}/spotify/control`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: command }),
+    });
+  } catch {
+    toast("Could not reach the player");
+    return;
+  }
+  // playerctl takes a moment to settle; asking immediately reports the state before the change.
+  setTimeout(pollNowPlaying, 350);
+}
+
+$("npPrev").addEventListener("click", () => musicControl("previous"));
+$("npNext").addEventListener("click", () => musicControl("next"));
+$("npPlay").addEventListener("click", () => musicControl("play-pause"));
+
+/** Runs with the panel, stops with it. Called from syncLoops. */
+function syncNowPlaying() {
+  const want = state.visible && state.form !== "pill" && state.form !== "ironman";
+  if (want && !nowPlayingTimer) {
+    pollNowPlaying();
+    nowPlayingTimer = setInterval(pollNowPlaying, NOWPLAYING_EVERY_MS);
+  }
+  if (!want && nowPlayingTimer) {
+    clearInterval(nowPlayingTimer);
+    nowPlayingTimer = 0;
+  }
+}
