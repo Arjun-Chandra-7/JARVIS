@@ -90,6 +90,9 @@ CORPUS: list[tuple[str, str]] = [
     ("what's in my downloads folder", "list_dir"),
     ("read the readme in this project", "read_file"),
     ("what's on my clipboard", "read_clipboard"),
+    ("find that pdf about the hackathon", "find_document"),
+    ("where is the document with the portfolio guide in it", "find_document"),
+    ("which file mentions the invoice number", "find_document"),
 
     # ---- knowledge and memory
     ("what did we decide about the hackathon", "recall"),

@@ -132,6 +132,23 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         except Exception as exc:  # noqa: BLE001
             return f"error: {exc}"
 
+    @tool("find_document",
+          "Search the user's own files (PDF, Word, text, markdown) by what is written in them, "
+          "for when they remember the content but not the filename. Use for 'find that PDF "
+          "about X' or 'where is the document with Y in it'. Not for the memory vault — that is "
+          "`recall` — and not for reading a file whose path is already known.",
+          {"query": {"type": "string", "description": "words that appear in the document"}},
+          ["query"])
+    async def find_document(a):
+        from ..memory import doc_search
+
+        query = a.get("query", "")
+        try:
+            hits = await asyncio.to_thread(doc_search.search, query, 5)
+        except Exception as exc:  # noqa: BLE001
+            return f"error: {exc}"
+        return doc_search.readable(query, hits)[:4000]
+
     @tool("web_search", "Search the web (returns a short summary + top links).", {"query": {"type": "string"}}, ["query"])
     async def web_search(a):
         import httpx

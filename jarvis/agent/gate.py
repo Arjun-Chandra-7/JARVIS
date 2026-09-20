@@ -34,7 +34,8 @@ import re
 READ_ONLY = {
     "analyze_image", "bluetooth_scan", "browser_read", "capture_screen", "catch_up",
     "check_coding_tasks", "check_pa_status", "contact_context", "conversation_search",
-    "deep_research", "desktop_read", "find_contact", "get_activity_recordings",
+    "deep_research", "desktop_read", "find_contact", "find_document",
+    "get_activity_recordings",
     "get_brightness", "google_agenda", "google_email_check", "google_email_read",
     "google_tasks_list", "instagram_dms", "linkedin_networking", "linkedin_pending_drafts",
     "linkedin_read_draft", "linkedin_stats", "linkedin_top_ideas", "list_apps",
