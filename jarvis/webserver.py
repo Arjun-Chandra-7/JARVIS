@@ -52,12 +52,24 @@ async def lifespan(app: FastAPI):
         presence.start(CONFIG)
     except Exception:  # noqa: BLE001 - presence is optional, never block the server on it
         pass
+    # The browser extension dials out to us, so the relay has to be listening before the browser
+    # is, not after. One idle loopback listener; it costs nothing until something connects, and
+    # the extension retries on its own if this fails or Jarvis restarts.
+    from .integrations import browser
+    try:
+        await browser.start_relay()
+    except Exception:  # noqa: BLE001 - browser control is optional, like presence
+        pass
     try:
         yield
     finally:
         watch.cancel()
         contacts_task.cancel()
         _unsub()
+        try:
+            await browser.relay().stop()
+        except Exception:  # noqa: BLE001
+            pass
         try:
             presence.service().stop()
         except Exception:  # noqa: BLE001
