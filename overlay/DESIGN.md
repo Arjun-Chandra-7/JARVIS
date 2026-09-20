@@ -46,7 +46,10 @@ pill slightly taller after every answer.
 
 ## Rules worth keeping
 
-- **Nothing new is always on**, and there is a number attached to that rule. Sampling the
+- **Nothing new is always on**, and there is a number attached to that rule. It is a rule about
+  what runs, not about what is drawn: a *static* gradient — the highlight along the top edge that
+  makes the pill read as a raised object — is composited once and costs nothing. An animation
+  costs, whatever it is animating. Sampling the
   compositor process of the running window, the idle orb's breath cost **27% of a core,
   continuously**, to move a ten-pixel dot. None of the usual remedies touched it — promoting the
   element to its own layer, dropping to opacity alone, slowing it to twelve seconds, all within a
@@ -71,11 +74,44 @@ pill slightly taller after every answer.
   a control — goes on the message element, not inside `.msg-body`, or the typing animation throws
   it away on the next frame.
 
+## The command palette
+
+`Ctrl+K`. A voice assistant you have to already know the words for is a menu with the menu
+missing: the palette is the list of what JARVIS can be told to do, filtered as you type and run
+from the keyboard.
+
+Every entry reaches something that already exists — a capture endpoint, a control endpoint, a tab
+in this window, or a sentence the backend's own command layer parses. An entry with no working
+destination does not belong in it. The "Ask" group is whatever `/suggestions` is offering, so the
+list grows when the backend learns something rather than when `app.js` is edited.
+
+The filter is a scored subsequence match, and consecutive letters are weighted hard. Without that,
+`irn` put "Cancel what is running" — i·s, r·unning, ru·n·ning — above "Iron Man mode", which starts
+with the letters in order.
+
+## What is playing
+
+A strip, not a player: cover, two lines, three controls, posting to `/spotify/control`. It is there
+only while something is loaded — a paused track counts, because that is exactly when the play
+button is wanted — and the poll behind it starts and stops with the panel. The cover loads only
+from an `https` URL: the address comes from whatever happens to be playing, and a renderer with
+this much reach should not be talked into fetching `file://` by a track's metadata.
+
+## A measure to read against
+
+The panel is as wide as the window and the window can be the whole desktop. At that width the
+transcript put your words against one edge and JARVIS's against the other with a metre of nothing
+between them, and the now-playing strip had its title and its skip button eighteen hundred pixels
+apart. Content is held to a measure and centred in whatever room there is; the chrome — the pill
+bar, the tabs — still spans, because that is the window. The panel may be any width. The reading
+column is not.
+
 ## Keyboard
 
+    Ctrl+K   the command palette
     /        jump to the input from anywhere
-    1-4      the tabs, while the workspace is open
-    Esc      clear the box, then collapse, then hide
+    Alt+1-4  the tabs, while the workspace is open
+    Esc      close the palette, then clear the box, then collapse, then hide
     ← →      move along the tabs
 
 These are listed in the tab bar, because a shortcut nobody is told about is a shortcut nobody uses.

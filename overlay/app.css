@@ -259,11 +259,19 @@ body:not([data-form="pill"]) .pill-reply { display: none; }
  *
  * Red does not pulse. A blinking red dot reads as an alarm you are supposed to watch; this one
  * is a question waiting to be answered, and it stays still so it is noticed once rather than
- * nagging. The others breathe on the same slow beat as everything else in the pill. */
+ * nagging.
+ *
+ * The others breathe a fixed number of times and then stop, rather than for ever. Measured on
+ * the running window: an agent working is the commonest state there is — a build, a long edit,
+ * anything you walked away from — and while that dot breathed the GPU process sat at 20% of a
+ * core, continuously, for a six-pixel dot. That is the same cost DESIGN.md measured for the idle
+ * orb and the same answer: the pulse is what draws the eye when the state *changes*, and holding
+ * it after that is paying full price for something nobody is still looking at. Changing
+ * data-agent restarts the run, so every real change gets its pulse. */
 .work-dot[data-agent="running"] {
   background: #ff8a1e;
   box-shadow: 0 0 0 3px rgba(255, 138, 30, 0.22);
-  animation: agent-pulse 1.8s var(--ease-out) infinite;
+  animation: agent-pulse 1.8s var(--ease-out) 7;
 }
 .work-dot[data-agent="asking"] {
   background: var(--error);
@@ -273,13 +281,15 @@ body:not([data-form="pill"]) .pill-reply { display: none; }
 .work-dot[data-agent="done"] {
   background: var(--success);
   box-shadow: 0 0 0 3px var(--success-dim);
-  animation: agent-pulse 2.6s var(--ease-out) infinite;
+  animation: agent-pulse 2.6s var(--ease-out) 5;
 }
 .work-dot[data-agent="idle"] { display: none; }
 
+/* Ends where the dot rests, so the last iteration settles into the resting colour instead of
+ * snapping back to it. */
 @keyframes agent-pulse {
-  0%, 100% { opacity: 0.5; }
-  50%      { opacity: 1; }
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
 }
 @media (prefers-reduced-motion: reduce) {
   .work-dot[data-agent] { animation: none; opacity: 1; }
@@ -1576,3 +1586,76 @@ kbd {
 /* Paused is the one state worth colouring: it is the difference between "this is playing" and
  * "this is what you stopped". */
 .nowplaying[data-playing="false"] .np-title { color: var(--text-secondary); }
+
+
+/* ===================== a measure to read against =====================
+ * The panel is as wide as the window, and the window can be the whole desktop. At that width a
+ * transcript puts your words against the right edge and JARVIS's against the left with a metre
+ * of nothing between them, and the now-playing strip put its title and its skip button eighteen
+ * hundred pixels apart. Both were legible and neither was readable.
+ *
+ * Content gets a measure and sits in the middle of whatever room there is. The panel may be any
+ * width; the reading column is not. */
+.view > * {
+  width: 100%;
+  max-width: min(100%, 860px);
+  margin-inline: auto;
+}
+/* Cards and gauges are grids that use the room they are given, so they get more of it. */
+#view-tasks > .cards,
+#view-system > .systems,
+#view-system > .telemetry,
+#view-system > .inspector { max-width: min(100%, 1100px); }
+
+
+/* ===================== the surface reads as a surface =====================
+ * A flat fill with a hairline border looks like a rectangle of paint. One static highlight along
+ * the top edge — the light in the room catching a raised object — is what makes it read as a
+ * thing lying on the desktop rather than a hole cut in it.
+ *
+ * Static, so it is free: the measured cost in DESIGN.md is the cost of *animating* over a
+ * transparent always-on-top window, and a gradient that never changes is composited once. */
+.shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 1;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.055) 0,
+    rgba(255, 255, 255, 0.018) 26px,
+    rgba(255, 255, 255, 0) 64px
+  );
+}
+
+/* The edge carries the state too — the same peripheral signal as the hairline, on the one part
+ * of the window that is visible from any angle. DESIGN.md has always said the panel edge loses
+ * its accent when offline; nothing had ever given it one. */
+body[data-state="listening"] .shell { border-color: var(--accent-line); }
+body[data-state="speaking"] .shell { border-color: var(--accent-line); }
+body[data-state="thinking"] .shell { border-color: var(--accent-dim); }
+body[data-state="failed"] .shell { border-color: var(--error-dim); }
+body[data-state="offline"] .shell { border-color: var(--border); }
+
+
+/* ===================== things move when you press them =====================
+ * The orb dipped under the pointer and nothing else did, so every other control felt like a
+ * picture of a button. */
+.icon-btn,
+.send-btn,
+.ghost-btn,
+.palette-item { transition: transform var(--dur-fast) var(--ease-out),
+                            background var(--dur-fast) var(--ease-out),
+                            color var(--dur-fast) var(--ease-out),
+                            border-color var(--dur-fast) var(--ease-out); }
+.icon-btn:active,
+.send-btn:active,
+.ghost-btn:active { transform: scale(0.93); }
+.palette-item:active { transform: scale(0.995); }
+
+@media (prefers-reduced-motion: reduce) {
+  .icon-btn, .send-btn, .ghost-btn, .palette-item { transition: none; }
+  .icon-btn:active, .send-btn:active, .ghost-btn:active, .palette-item:active { transform: none; }
+}
