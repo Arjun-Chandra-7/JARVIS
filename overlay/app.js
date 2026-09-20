@@ -1101,6 +1101,21 @@ function handleEvent(kind, text) {
 
 // ---------------------------------------------------------------- keyboard
 document.addEventListener("keydown", (e) => {
+  // Ctrl+K opens the list of everything JARVIS can be told to do; Ctrl+Shift+K is the older
+  // workspace toggle, which the expand button also does and which nobody had to discover.
+  if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+    e.preventDefault();
+    if (e.shiftKey) setForm(state.form === "workspace" ? "conversation" : "workspace");
+    else togglePalette();
+    return;
+  }
+  // While the palette is up it owns the keyboard: nothing below should also fire, or Escape
+  // would close the palette and collapse the panel in the same press.
+  if (palette.open) {
+    handlePaletteKey(e);
+    return;
+  }
+
   // Typing is the commonest thing to want and it needed a click on the right box first.
   // Alt, not a bare number: expanding the panel puts the cursor in the input, so plain 1-4 were
   // unreachable exactly when someone would want them, and typing a digit would have moved the tab.
@@ -1137,10 +1152,6 @@ document.addEventListener("keydown", (e) => {
     setForm("conversation");
     e.preventDefault();
     return;
-  }
-  if ((e.ctrlKey || e.metaKey) && e.key === "k") {
-    setForm(state.form === "workspace" ? "conversation" : "workspace");
-    e.preventDefault();
   }
 });
 
@@ -1193,3 +1204,256 @@ els.shortcutSave.addEventListener("click", async () => {
   }
   refreshTasks();
 })();
+
+// ---------------------------------------------------------------- command palette
+//
+// A voice assistant you have to already know the words for is a menu with the menu missing.
+// Ctrl+K lists what JARVIS can be told to do, filters as you type, and runs it from the keyboard.
+//
+// Every entry below reaches something that already exists: a capture endpoint, a control
+// endpoint, a tab in this window, or a sentence the backend's own command layer parses. Nothing
+// here is wired to a stub — an entry with no working destination does not belong in the list.
+
+const palette = {
+  open: false,
+  items: [],      // what is currently shown, in order
+  index: 0,       // which row is highlighted
+  asleep: null,   // from /power, so the sleep entry names the thing it will actually do
+  suggestions: [],
+};
+
+els.palette = $("palette");
+els.paletteInput = $("paletteInput");
+els.paletteList = $("paletteList");
+
+/** Send a sentence the backend's command layer understands, and show it in the transcript. */
+function runPhrase(phrase) {
+  send(phrase);
+}
+
+function commandList() {
+  const speaking = state.activity === "speaking";
+  const list = [
+    { group: "Capture", label: "Read my screen", note: "attach a screenshot",
+      run: () => useLens("screen") },
+    { group: "Capture", label: "Explain the selection", note: "attach selected text",
+      run: () => useLens("selection") },
+    { group: "Capture", label: "Use what is on the clipboard", note: "attach the clipboard",
+      run: () => useLens("clipboard") },
+    { group: "Capture", label: "Read this window", note: "attach the focused window",
+      run: () => useLens("window") },
+
+    { group: "Voice", label: "Stop speaking", note: speaking ? "playing now" : "",
+      run: () => els.stopSpeakBtn.click() },
+    { group: "Voice", label: "Cancel what is running", note: "stops queued work",
+      run: () => cancelRunning(els.cancelBtn, { alsoIdle: true }) },
+    { group: "Voice",
+      // Named for what pressing it does, which means knowing which way round it currently is.
+      label: palette.asleep ? "Listen for the wake word again" : "Stop listening for the wake word",
+      note: palette.asleep === null ? "" : (palette.asleep ? "asleep" : "awake"),
+      run: () => setPower(palette.asleep ? "wake" : "sleep") },
+
+    { group: "Modes", label: "Study mode", note: "closes the distractions",
+      run: () => runPhrase("study mode") },
+    { group: "Modes", label: "Leave study mode", note: "", run: () => runPhrase("exit study mode") },
+    { group: "Modes", label: "Iron Man mode", note: "lays out the workshop",
+      run: () => runPhrase("iron man mode") },
+    { group: "Modes", label: "Back to normal mode", note: "restores the desktop",
+      run: () => runPhrase("normal mode") },
+    { group: "Modes", label: "Open my LinkedIn copilot", note: "",
+      run: () => runPhrase("open my linkedin copilot") },
+
+    { group: "Go to", label: "Conversation", note: "Alt+1",
+      run: () => { setForm("workspace"); selectTab("chat"); } },
+    { group: "Go to", label: "Tasks", note: "Alt+2",
+      run: () => { setForm("workspace"); selectTab("tasks"); } },
+    { group: "Go to", label: "Memory", note: "Alt+3",
+      run: () => { setForm("workspace"); selectTab("memory"); } },
+    { group: "Go to", label: "System", note: "Alt+4",
+      run: () => { setForm("workspace"); selectTab("system"); } },
+    { group: "Go to", label: "Collapse to the pill", note: "Esc", run: () => setForm("pill") },
+    { group: "Go to", label: "Hide the overlay", note: "", run: () => window.jarvis.hide() },
+  ];
+  // What the backend itself suggests, so the list grows when the backend learns something new
+  // rather than when this file is edited.
+  for (const s of palette.suggestions) {
+    if (s && s.label && s.say) list.push({ group: "Ask", label: s.label, note: "", run: () => send(s.say) });
+  }
+  return list;
+}
+
+async function setPower(action) {
+  try {
+    const r = await fetch(`${API}/power`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    });
+    const j = await r.json();
+    palette.asleep = !!j.asleep;
+    toast(j.asleep ? "Not listening for the wake word" : "Listening for the wake word");
+  } catch {
+    toast("Could not reach the backend");
+  }
+}
+
+/* Subsequence match, scored so that initials beat letters buried mid-word: typing "rms" should
+ * find "Read my screen" rather than whichever entry happens to contain those letters first.
+ * Returns null when the query does not match at all. */
+function fuzzy(text, query) {
+  const q = query.toLowerCase().replace(/\s+/g, "");
+  if (!q) return { score: 0, html: escapeHtml(text) };
+  const lower = text.toLowerCase();
+  let qi = 0;
+  let html = "";
+  let score = 0;
+  let run = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (qi < q.length && lower[i] === q[qi]) {
+      html += `<b>${escapeHtml(text[i])}</b>`;
+      const boundary = i === 0 || /[\s\-/]/.test(text[i - 1]);
+      // Consecutive letters are weighted hard, because they are the strongest evidence that
+      // this is the entry meant: without it "irn" put "Cancel what is running" — i·s, r·unning,
+      // ru·n·ning — above "Iron Man mode", which starts with the letters in order.
+      score += 1 + run * 3 + (boundary ? 4 : 0) + (i === 0 ? 6 : 0);
+      run += 1;
+      qi += 1;
+    } else {
+      html += escapeHtml(text[i]);
+      run = 0;
+    }
+  }
+  return qi === q.length ? { score, html } : null;
+}
+
+function renderPalette() {
+  const query = els.paletteInput.value.trim();
+  const matches = [];
+  for (const cmd of commandList()) {
+    const hit = fuzzy(cmd.label, query);
+    if (hit) matches.push({ ...cmd, score: hit.score, html: hit.html });
+  }
+  // With nothing typed the list keeps its written order, which is grouped and readable. Once
+  // something is typed the best match belongs at the top, whatever group it came from.
+  if (query) matches.sort((a, b) => b.score - a.score);
+
+  palette.items = matches;
+  if (palette.index >= matches.length) palette.index = Math.max(0, matches.length - 1);
+
+  if (!matches.length) {
+    els.paletteList.innerHTML =
+      `<p class="palette-empty">Nothing matches “${escapeHtml(query)}”. ` +
+      `Press Esc and just ask.</p>`;
+    return;
+  }
+
+  let html = "";
+  let group = null;
+  matches.forEach((cmd, i) => {
+    // Headings only make sense while the list is in its written order; a sorted list is one list.
+    if (!query && cmd.group !== group) {
+      group = cmd.group;
+      html += `<div class="palette-group">${escapeHtml(cmd.group)}</div>`;
+    }
+    html +=
+      `<button type="button" class="palette-item" role="option" data-i="${i}" ` +
+      `aria-selected="${i === palette.index}">` +
+      `<span class="palette-label">${cmd.html}</span>` +
+      (cmd.note ? `<span class="palette-note">${escapeHtml(cmd.note)}</span>` : "") +
+      `</button>`;
+  });
+  els.paletteList.innerHTML = html;
+  scrollSelectedIntoView();
+}
+
+function scrollSelectedIntoView() {
+  const el = els.paletteList.querySelector('[aria-selected="true"]');
+  if (el) el.scrollIntoView({ block: "nearest" });
+}
+
+function moveSelection(delta) {
+  if (!palette.items.length) return;
+  // Wraps, because a list you can walk off the end of makes you look at it to use it.
+  palette.index = (palette.index + delta + palette.items.length) % palette.items.length;
+  for (const el of els.paletteList.querySelectorAll(".palette-item")) {
+    el.setAttribute("aria-selected", String(Number(el.dataset.i) === palette.index));
+  }
+  scrollSelectedIntoView();
+}
+
+function runSelected() {
+  const cmd = palette.items[palette.index];
+  if (!cmd) return;
+  closePalette();
+  cmd.run();
+}
+
+function openPalette() {
+  // The palette needs the panel: on the collapsed pill there is nowhere to put it.
+  if (state.form === "pill") setForm("conversation");
+  palette.open = true;
+  palette.index = 0;
+  els.palette.hidden = false;
+  els.paletteInput.value = "";
+  renderPalette();
+  els.paletteInput.focus();
+  // Both are one cheap request and both change what the list should say, so they are fetched
+  // when it opens rather than polled.
+  fetch(`${API}/power`).then((r) => r.json()).then((j) => {
+    palette.asleep = !!j.asleep;
+    if (palette.open) renderPalette();
+  }).catch(() => { /* leave the entry unlabelled rather than guessing */ });
+  if (!palette.suggestions.length) {
+    fetch(`${API}/suggestions`).then((r) => r.json()).then((j) => {
+      palette.suggestions = Array.isArray(j.suggestions) ? j.suggestions : [];
+      if (palette.open) renderPalette();
+    }).catch(() => { /* the built-in entries are the whole list, then */ });
+  }
+}
+
+function closePalette() {
+  palette.open = false;
+  els.palette.hidden = true;
+  els.paletteInput.blur();
+}
+
+function togglePalette() {
+  if (palette.open) closePalette();
+  else openPalette();
+}
+
+function handlePaletteKey(e) {
+  switch (e.key) {
+    case "Escape": e.preventDefault(); closePalette(); break;
+    case "ArrowDown": e.preventDefault(); moveSelection(1); break;
+    case "ArrowUp": e.preventDefault(); moveSelection(-1); break;
+    case "Tab": e.preventDefault(); moveSelection(e.shiftKey ? -1 : 1); break;
+    case "Enter": e.preventDefault(); runSelected(); break;
+    default: break;
+  }
+}
+
+els.paletteInput.addEventListener("input", () => {
+  palette.index = 0;
+  renderPalette();
+});
+
+els.paletteList.addEventListener("click", (e) => {
+  const row = e.target.closest(".palette-item");
+  if (!row) return;
+  palette.index = Number(row.dataset.i);
+  runSelected();
+});
+
+// Pointer and keyboard move the same highlight, so there is never a second "current" row.
+els.paletteList.addEventListener("pointermove", (e) => {
+  const row = e.target.closest(".palette-item");
+  if (!row || Number(row.dataset.i) === palette.index) return;
+  palette.index = Number(row.dataset.i);
+  moveSelection(0);
+});
+
+// Clicking the dimmed area around the box dismisses it, the way every other sheet does.
+els.palette.addEventListener("pointerdown", (e) => {
+  if (e.target === els.palette) closePalette();
+});

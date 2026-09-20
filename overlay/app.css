@@ -10,20 +10,9 @@
 
 * { box-sizing: border-box; }
 
-/* A class like `.activity {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex: 0 0 auto;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-card);
-  background: var(--surface-raised);
-  box-shadow: inset 2px 0 0 var(--accent);
-  font-size: var(--text-sm);
-  color: var(--text-secondary);
-}` outranks the user-agent's `[hidden]` rule, so
- * elements toggled with el.hidden stayed on screen — the activity strip claimed "Working…" while
- * the pill sat idle. Make `hidden` win everywhere. */
+/* A class of our own outranks the user-agent's `[hidden]` rule, so elements toggled with
+ * el.hidden stayed on screen — the activity strip claimed "Working…" while the pill sat
+ * idle. Make `hidden` win everywhere. */
 [hidden] { display: none !important; }
 
 html,
@@ -46,6 +35,8 @@ body {
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* The accent hairline and the command palette are both positioned against this. */
+  position: relative;
   border-radius: var(--radius-panel);
   border: 1px solid var(--border);
   background: color-mix(in srgb, var(--surface-base) calc(var(--panel-alpha) * 100%), transparent);
@@ -1378,3 +1369,160 @@ body[data-form="pill"] .pillbar { cursor: grab; }
 body[data-form="pill"] .pillbar:active { cursor: grabbing; }
 body[data-form="pill"] .orb,
 body[data-form="pill"] .icon-btn { cursor: pointer; }
+
+
+/* ===================== the command palette =====================
+ * Two ways to drive JARVIS existed: say it, or type a sentence and hope the command layer
+ * recognised it. Neither told you what it could do. This is the third — every entry is a thing
+ * the program already does, named, searchable, and reachable from the keyboard.
+ *
+ * It covers the panel rather than sitting inside it, because it is a summoned surface: it should
+ * take the whole attention while it is open and leave nothing behind when it closes. */
+.palette {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: var(--space-6) var(--space-4) var(--space-4);
+  /* Dimmed, not blurred: one blurred surface in the window, and the shell already spent it. */
+  background: rgba(6, 8, 10, 0.55);
+  animation: palette-scrim var(--dur-fast) var(--ease-out);
+}
+@keyframes palette-scrim { from { opacity: 0; } to { opacity: 1; } }
+
+.palette-box {
+  width: min(520px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-panel);
+  background: var(--surface-base);
+  box-shadow: var(--shadow-panel);
+  overflow: hidden;
+  animation: palette-in var(--dur-base) var(--ease-spring);
+}
+@keyframes palette-in {
+  from { opacity: 0; transform: translateY(-8px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .palette, .palette-box { animation: none; }
+}
+
+.palette-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.palette-glyph {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: var(--text-faint);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+.palette-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: none;
+  outline: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-md);
+  user-select: text;
+  cursor: auto;
+}
+.palette-input::placeholder { color: var(--text-faint); }
+
+.palette-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-2);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.palette-list::-webkit-scrollbar { width: 8px; }
+.palette-list::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+
+/* A heading per group, so the list reads as a map of what JARVIS does rather than a flat menu. */
+.palette-group {
+  padding: var(--space-3) var(--space-2) var(--space-1);
+  font-size: var(--text-xs);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.palette-group:first-child { padding-top: var(--space-1); }
+
+.palette-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-chip);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+/* One highlight, moved by the keyboard and by the pointer alike — two separate hover and
+ * selection styles meant the arrow keys and the mouse each showed a different "current" row. */
+.palette-item[aria-selected="true"] {
+  background: var(--surface-overlay);
+  color: var(--text-primary);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.palette-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+                 white-space: nowrap; }
+/* The characters that matched what was typed, so it is obvious why a row is in the list. */
+.palette-label b { color: var(--accent); font-weight: 600; }
+.palette-note {
+  flex: 0 0 auto;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-foot {
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  flex: 0 0 auto;
+}
+.palette-empty { padding: var(--space-5) var(--space-3); text-align: center;
+                 color: var(--text-muted); font-size: var(--text-sm); }
+
+kbd {
+  display: inline-block;
+  min-width: 16px;
+  padding: 1px 4px;
+  margin-right: 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface-raised);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  line-height: 14px;
+  text-align: center;
+  color: var(--text-muted);
+}
