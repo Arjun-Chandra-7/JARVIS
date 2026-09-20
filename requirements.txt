@@ -47,6 +47,11 @@ psutil>=5.9
 # deep research via the user's Perplexity account (drives system Chrome; no browser download)
 playwright>=1.40
 
+# The browser-control relay (browser-extension/): a loopback websocket server presenting the
+# extension's tabs in the shape Chromium's debug port presents them. Already pulled in
+# transitively before this, but it is a direct dependency now and should say so.
+websockets>=12
+
 # Human-presence radar: webcam face detection (YuNet) for bearing + metric range
 opencv-python-headless>=4.9
 onnxruntime>=1.16          # runs the YOLOX person detector for the human radar
