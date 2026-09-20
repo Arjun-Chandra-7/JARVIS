@@ -1,4 +1,15 @@
-"""Hybrid recall over the vault: semantic (Ollama, if available) + keyword, merged.
+"""Hybrid recall over the vault, in one ranked answer.
+
+Three stages, in an order that is the design rather than an accident:
+
+    find        semantic (Ollama, when it is up) and keyword, independently
+    fuse        merged by rank, because a cosine and a BM25 score do not add
+    age         recency breaks the ties the fusion leaves
+
+Decay comes last and only last. It is a tiebreaker, not the ranking — it adjusts an order that
+relevance has already decided, so a strong old match still beats a weak fresh one. Nothing is
+ever removed for being old; a note from two years ago still comes back when it is the only thing
+that answers.
 
 Keyword search uses a real `rg` binary when one is on PATH, otherwise a dependency-free Python
 walk (note: Claude Code ships `rg` as a shell function, which Python can't see — hence the
@@ -12,7 +23,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from . import embeddings, fuse
+from . import decay, embeddings, fuse
 from .index import VaultIndex
 
 
@@ -73,6 +84,21 @@ def _keyword_matches(query: str, vault: Path, max_files: int = 8) -> list[tuple[
     return [(rel, snippet) for (rel, snippet, _text), _score in ordered[:max_files]]
 
 
+def _modified_times(vault: Path, paths) -> dict[str, float]:
+    """When each note was last written, for the recency prior.
+
+    A note we cannot stat gets no entry, which `decay` reads as "unknown age" and weighs at full
+    rather than burying.
+    """
+    ages: dict[str, float] = {}
+    for rel in paths:
+        try:
+            ages[rel] = (vault / rel).stat().st_mtime
+        except OSError:
+            continue
+    return ages
+
+
 def recall(query: str, vault, k: int = 5) -> str:
     """One ranked answer, not two lists under two headings.
 
@@ -108,8 +134,15 @@ def recall(query: str, vault, k: int = 5) -> str:
         return f"No matches for '{query}' in the vault."
 
     both = set(semantic_order) & set(keyword_order)
+
+    # Fuse first, then let age break the ties the fusion leaves. Ordered this way round on
+    # purpose: decay is a tiebreaker, not the ranking, so it adjusts an order that relevance has
+    # already decided rather than competing with it.
+    fused = fuse.reciprocal_rank_fusion([semantic_order, keyword_order])
+    ranked = decay.apply(list(fused.items()), _modified_times(vault, fused))
+
     lines: list[str] = []
-    for path in fuse.fuse(semantic_order, keyword_order)[:k]:
+    for path, _score in ranked[:k]:
         # Worth saying which results both halves found: that is the signal the fusion is built
         # on, and it tells the reader why this one is at the top.
         mark = " (both)" if path in both else ""
