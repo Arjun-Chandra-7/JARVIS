@@ -25,6 +25,13 @@ openwakeword>=0.6              # alive but slow-moving: last upstream commit 202
 # the live fork so an install cannot silently resolve to the abandoned tree.
 piper-tts>=1.3
 
+# A voice that does not sound like a phone menu. 82M params, Apache-2.0, 2.4x realtime on this
+# processor. Deliberately the ONNX build: `pip install kokoro` pulls misaki -> spacy, which does
+# not build here, and wants espeak-ng from apt on top. This one needs onnxruntime, already
+# present for the human radar. Weights (338 MB) are not fetched automatically — see
+# jarvis/audio/kokoro_tts.py for where they go and why.
+kokoro-onnx>=0.4
+
 # Phase 2b — local semantic search (install when you get there)
 #   Ollama is a separate system install: https://ollama.com  (then: ollama pull nomic-embed-text)
 # lancedb

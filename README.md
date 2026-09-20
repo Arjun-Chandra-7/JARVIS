@@ -36,6 +36,40 @@ need their own account, device, or desktop service configured before use.
   range only, and paired devices give names. See `docs/HUMAN_RADAR.md`.
 - Makes pictures. "Generate an image of a samurai in bamboo" writes a file and opens it.
 
+## The voice
+
+Kokoro, 82M parameters, Apache-2.0, on the processor. Measured here: the model loads in 1.0s and
+synthesises at about 2.4x realtime, 24 kHz. Fifty-four voices; the default is `bm_george`,
+British male, because JARVIS is a particular voice and the default should not be a coin flip.
+
+Kokoro has no emotion conditioning, and nothing here pretends otherwise. What it has is a speed
+control, and that is enough for *delivery* — four of them, picked from the words before any model
+sees them:
+
+    neutral   answers and readings, most of everything
+    brisk     acknowledgements; "on it, sir" should not be savoured
+    grave     failures and warnings, where slowing down is the signal
+    warm      greetings and goodbyes, the two lines a day that are not work
+
+Trouble is checked before greeting, so "Good morning, sir. The overnight backup failed." is read
+as a failure rather than as a greeting.
+
+The weights are 338 MB and are not fetched automatically. Until they are on disk the voice stays
+Piper, so Jarvis cannot promise a voice it has no way to produce:
+
+    .venv/bin/pip install kokoro-onnx
+    mkdir -p ~/Madara/.cache/kokoro && cd ~/Madara/.cache/kokoro
+    base=https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0
+    curl -L -O $base/kokoro-v1.0.onnx && curl -L -O $base/voices-v1.0.bin
+
+## Driving the browser you already have open
+
+Control normally needs the browser started with `--remote-debugging-port`, and restarting it to
+get that costs every open tab. `browser-extension/` removes the trade: an extension holds the
+same protocol from inside the browser, with no port and no restart. One unpacked load, then
+Jarvis prefers the native port when it is there and this when it is not. See
+`browser-extension/README.md`, including what you are trusting it with.
+
 ## Pictures
 
 SD-Turbo, one step, on the processor, offline and free. About 8 seconds for a 512px picture once
