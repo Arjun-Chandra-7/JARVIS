@@ -114,6 +114,11 @@ def test_the_tab_id_comes_out_of_the_path(path, expected):
     ({"id": 3, "url": "chrome://extensions"}, False),
     ({"id": 4, "url": "devtools://devtools/x"}, False),
     ({"url": "https://example.com"}, False),          # no id: nothing to attach to
+    # Found by driving a real browser: the first tab it offered was Opera's own GX Corner, and
+    # attaching returned "The extensions gallery cannot be scripted." It is an ordinary https
+    # URL, so the scheme check above lets it straight through.
+    ({"id": 5, "url": "https://gxcorner.games/"}, False),
+    ({"id": 6, "url": "https://chromewebstore.google.com/category/extensions"}, False),
 ])
 def test_only_drivable_tabs_are_offered(tab, ok):
     """The browser's own pages cannot be driven, and listing them just invites a failure."""

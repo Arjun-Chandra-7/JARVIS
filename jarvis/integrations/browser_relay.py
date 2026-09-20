@@ -230,11 +230,30 @@ class Relay:
 
 
 # --------------------------------------------------------------------------- helpers
+# Ordinary https pages that Chromium refuses to let any extension script. Found by driving a real
+# browser rather than by reading docs: the first tab offered was Opera's own GX Corner, and the
+# attach came back "The extensions gallery cannot be scripted." These are not opera:// URLs, so
+# the scheme check below lets them through, and every attempt on one fails the same way.
+_UNSCRIPTABLE_HOSTS = (
+    "gxcorner.games",
+    "addons.opera.com",
+    "chrome.google.com/webstore",
+    "chromewebstore.google.com",
+)
+
+
 def drivable(tab: dict) -> bool:
-    """Tabs worth offering. The browser's own pages cannot be driven and should not be listed."""
+    """Tabs worth offering.
+
+    A tab that can never be driven does not belong in the list: offering one only moves the
+    failure to the moment somebody tries to use it.
+    """
     url = (tab.get("url") or "").lower()
-    return tab.get("id") is not None and not url.startswith(
-        ("chrome://", "opera://", "devtools://", "chrome-extension://", "about:"))
+    if tab.get("id") is None:
+        return False
+    if url.startswith(("chrome://", "opera://", "devtools://", "chrome-extension://", "about:")):
+        return False
+    return not any(host in url for host in _UNSCRIPTABLE_HOSTS)
 
 
 def tab_id_from_path(path: str) -> Optional[int]:
