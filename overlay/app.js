@@ -1543,3 +1543,60 @@ function syncNowPlaying() {
     nowPlayingTimer = 0;
   }
 }
+
+// ---------------------------------------------------------------- the quick chips
+//
+// Four chips were written into the page by hand while the backend was already publishing the
+// list it wants offered. They disagreed, and the hand-written pair was the stale one.
+//
+// The two capture chips stay in the markup: they are not suggestions, they are the two lenses,
+// and they must work whether or not the backend answers. Everything after them comes from
+// /suggestions, and if that fetch fails the page keeps exactly what it shipped with.
+const QUICK_CHIP_LIMIT = 3;
+
+/* Words, not characters. "Read screen" and the "Read my screen" lens are the same button twice,
+ * and neither string contains the other — only the words give it away. */
+const chipWords = (s) => new Set(s.toLowerCase().match(/[a-z]+/g) || []);
+const sameButton = (a, b) => {
+  const [small, big] = a.size <= b.size ? [a, b] : [b, a];
+  return small.size > 0 && [...small].every((w) => big.has(w));
+};
+
+function renderQuickChips() {
+  const offered = palette.suggestions.filter((s) => s && s.label && s.say);
+  if (!offered.length) return;
+
+  const lenses = [...els.quick.querySelectorAll("[data-lens]")];
+  const taken = lenses.map((b) => chipWords(b.textContent));
+
+  const chosen = [];
+  for (const s of offered) {
+    const words = chipWords(s.label);
+    if (taken.some((t) => sameButton(t, words))) continue;
+    taken.push(words);
+    chosen.push(s);
+    if (chosen.length === QUICK_CHIP_LIMIT) break;
+  }
+  if (!chosen.length) return;
+
+  for (const b of els.quick.querySelectorAll("[data-say]")) b.remove();
+  els.quick.insertAdjacentHTML(
+    "beforeend",
+    chosen
+      .map((s) => `<button type="button" class="chip" data-say="${escapeHtml(s.say)}">` +
+                  `${escapeHtml(s.label)}</button>`)
+      .join(""),
+  );
+}
+
+async function loadSuggestions() {
+  try {
+    const j = await (await fetch(`${API}/suggestions`)).json();
+    palette.suggestions = Array.isArray(j.suggestions) ? j.suggestions : [];
+  } catch {
+    return;   // the markup's own chips are the whole list, then
+  }
+  renderQuickChips();
+}
+
+loadSuggestions();
