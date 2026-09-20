@@ -85,8 +85,8 @@ def test_without_the_package_it_is_unavailable_and_says_what_to_do(monkeypatch):
     real_import = builtins.__import__
 
     def no_kokoro(name, *args, **kwargs):
-        if name == "kokoro":
-            raise ImportError("no kokoro here")
+        if name == "kokoro_onnx":
+            raise ImportError("no kokoro_onnx here")
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", no_kokoro)
@@ -103,9 +103,28 @@ def test_without_the_weights_it_is_unavailable_even_with_the_package(monkeypatch
 def test_checking_for_weights_never_downloads_them(monkeypatch, tmp_path):
     """_weights_present looks at the disk and nothing else. If it ever reached for the network
     this would be the test that noticed."""
-    monkeypatch.setenv("HF_HOME", str(tmp_path))
+    monkeypatch.setenv("JARVIS_KOKORO_DIR", str(tmp_path))
     assert k._weights_present() is False
     assert not list(tmp_path.iterdir()), "checking for the weights created something"
+
+
+def test_the_weights_live_outside_the_system_disk(monkeypatch):
+    """338 MB belongs in the cache this machine already keeps models in, not in /."""
+    monkeypatch.delenv("JARVIS_KOKORO_DIR", raising=False)
+    assert "Madara" in str(k.model_dir())
+
+
+def test_a_british_voice_gets_british_phonemes():
+    """The phonemiser's language has to agree with the voice or it mispronounces everything."""
+    assert k._lang_for("bm_george") == "en-gb"
+    assert k._lang_for("af_heart") == "en-us"
+
+
+def test_a_long_answer_is_split_so_speech_can_start_early():
+    """A four-sentence answer should start speaking after the first one, not after all four."""
+    pieces = k._sentences("One thing. Then another thing. And a third. Finally a fourth.")
+    assert len(pieces) == 4
+    assert pieces[0] == "One thing."
 
 
 def test_the_british_voice_is_the_default():

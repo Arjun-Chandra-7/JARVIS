@@ -20,12 +20,20 @@ What it does have is fifty-four voices and a speed control, and those two are en
 `Delivery` below is: a small, honest amount of variation, chosen per utterance, with the reason
 written next to each one. Real, and modest, and not called emotion.
 
+Why the ONNX build and not the reference one
+--------------------------------------------
+`pip install kokoro` pulls misaki, which pulls spacy, which does not build on this machine — and
+its phonemiser wants espeak-ng from apt. `kokoro-onnx` needs onnxruntime, which is already here
+for the human radar, and nothing else. Measured after switching: the model loads in 1.0 s and
+synthesises at **2.4x realtime** on the processor, 24 kHz.
+
 Weights are not fetched automatically
 -------------------------------------
-The same rule the picture model follows. 330 MB is not something to download because somebody
-said good morning, and a disk with 24 GB free is not a place to be casual. Until the package and
-the weights are both present, `available()` is False and the voice stays Piper — so Jarvis can
-never promise a voice it has no way to produce.
+The same rule the picture model follows. 338 MB is not something to download because somebody
+said good morning, and a disk with 24 GB free is not a place to be casual. They live in the cache
+this machine already keeps models in, never in the system root. Until the package and the weights
+are both present, `available()` is False and the voice stays Piper — so Jarvis can never promise
+a voice it has no way to produce.
 """
 
 from __future__ import annotations
@@ -97,22 +105,25 @@ def delivery_for(text: str) -> Delivery:
     return NEUTRAL
 
 
-def _weights_present() -> bool:
-    """Whether the model is on disk already. Never downloads to find out."""
+def model_dir() -> "Path":
+    """Where the weights live: the cache this machine already keeps models in."""
     from pathlib import Path
 
-    home = os.environ.get("HF_HOME") or os.path.expanduser("~/.cache/huggingface")
-    hub = Path(home) / "hub"
-    if not hub.exists():
-        return False
-    return any(hub.glob("models--hexgrad--Kokoro-82M*/snapshots/*/*.pth")) or \
-        any(hub.glob("models--hexgrad--Kokoro-82M*/snapshots/*/*.safetensors"))
+    return Path(os.environ.get(
+        "JARVIS_KOKORO_DIR", os.path.expanduser("~/Madara/.cache/kokoro")))
+
+
+def _weights_present() -> bool:
+    """Whether the model is on disk already. Never downloads to find out."""
+    directory = model_dir()
+    return (directory / "kokoro-v1.0.onnx").exists() and \
+        (directory / "voices-v1.0.bin").exists()
 
 
 def available() -> bool:
     """Both halves present: the package and the weights."""
     try:
-        import kokoro  # noqa: F401
+        import kokoro_onnx  # noqa: F401
     except Exception:  # noqa: BLE001
         return False
     return _weights_present()
@@ -121,30 +132,34 @@ def available() -> bool:
 def how_to_install() -> str:
     """What to do about it, said once, where the user can act on it."""
     try:
-        import kokoro  # noqa: F401
+        import kokoro_onnx  # noqa: F401
     except Exception:  # noqa: BLE001
+        # Not `pip install kokoro`: that pulls misaki, which pulls spacy, which does not build
+        # here, and wants espeak-ng from apt on top. The ONNX build needs onnxruntime, which is
+        # already installed for the human radar.
         return ("Kokoro is not installed. For a better voice:\n"
-                "    .venv/bin/pip install kokoro soundfile\n"
-                "    sudo apt install espeak-ng")
+                "    .venv/bin/pip install kokoro-onnx")
     if not _weights_present():
-        return ("Kokoro is installed but its weights are not on disk (about 330 MB). "
-                "Fetch them into the cache this machine already uses:\n"
-                "    HF_HOME=~/Madara/.cache/huggingface .venv/bin/python -c "
-                "\"from kokoro import KPipeline; KPipeline(lang_code='b')\"")
+        return (f"Kokoro is installed but its weights are not in {model_dir()} (about 338 MB):\n"
+                "    mkdir -p ~/Madara/.cache/kokoro && cd ~/Madara/.cache/kokoro\n"
+                "    base=https://github.com/thewh1teagle/kokoro-onnx/releases/download/"
+                "model-files-v1.0\n"
+                "    curl -L -O $base/kokoro-v1.0.onnx && curl -L -O $base/voices-v1.0.bin")
     return ""
 
 
 def _get_pipeline(voice: str):
-    """One pipeline per voice family, built on first use and kept."""
+    """The model, loaded on first use and kept. Costs about a second to load."""
     global _pipeline, _pipeline_voice
-    lang = _LANG_FOR_PREFIX.get(voice[:1], "a")
     with _lock:
-        if _pipeline is not None and _pipeline_voice == lang:
+        if _pipeline is not None:
             return _pipeline
-        from kokoro import KPipeline
+        from kokoro_onnx import Kokoro
 
-        _pipeline = KPipeline(lang_code=lang)
-        _pipeline_voice = lang
+        directory = model_dir()
+        _pipeline = Kokoro(str(directory / "kokoro-v1.0.onnx"),
+                           str(directory / "voices-v1.0.bin"))
+        _pipeline_voice = voice
         return _pipeline
 
 
@@ -161,6 +176,11 @@ def _to_pcm16(samples) -> bytes:
     return (array * 32767.0).astype(np.int16).tobytes()
 
 
+def _lang_for(voice: str) -> str:
+    """The phonemiser's language must agree with the voice, or it mispronounces everything."""
+    return "en-gb" if voice.startswith("b") else "en-us"
+
+
 def synth(text: str, voice: str = "", delivery: Optional[Delivery] = None) -> tuple[bytes, int]:
     """The whole line as one buffer, matching local_tts.synth's shape."""
     said = (text or "").strip()
@@ -168,38 +188,51 @@ def synth(text: str, voice: str = "", delivery: Optional[Delivery] = None) -> tu
         return b"", SAMPLE_RATE
     chosen = delivery or delivery_for(said)
     use_voice = voice or chosen.voice or DEFAULT_VOICE
-    pipeline = _get_pipeline(use_voice)
-    chunks: list[bytes] = []
-    for result in pipeline(said, voice=use_voice, speed=chosen.speed):
-        audio = getattr(result, "audio", None)
-        if audio is None and isinstance(result, tuple):
-            audio = result[-1]
-        if audio is not None:
-            chunks.append(_to_pcm16(audio))
-    return b"".join(chunks), SAMPLE_RATE
+    model = _get_pipeline(use_voice)
+    samples, rate = model.create(said, voice=use_voice, speed=chosen.speed,
+                                 lang=_lang_for(use_voice))
+    return _to_pcm16(samples), int(rate)
 
 
 def synth_stream(text: str, voice: str = "", delivery: Optional[Delivery] = None,
                  stop_event: Optional[threading.Event] = None) -> Iterator[tuple[bytes, int]]:
-    """Yield (pcm, rate) per segment, so speech starts before the line is finished.
+    """Yield (pcm, rate) per sentence, so speech starts before the line is finished.
 
-    Kokoro's pipeline already splits on sentence boundaries, so this hands each one on as it
-    arrives rather than imposing a second splitter on top of it.
+    Split here rather than handing the whole line over, because the point is time-to-first-audio:
+    a four-sentence answer should start speaking after the first one, not after all four.
     """
     said = (text or "").strip()
     if not said:
         return
     chosen = delivery or delivery_for(said)
     use_voice = voice or chosen.voice or DEFAULT_VOICE
-    pipeline = _get_pipeline(use_voice)
-    for result in pipeline(said, voice=use_voice, speed=chosen.speed):
+    model = _get_pipeline(use_voice)
+    lang = _lang_for(use_voice)
+    for sentence in _sentences(said):
         if stop_event is not None and stop_event.is_set():
             return
-        audio = getattr(result, "audio", None)
-        if audio is None and isinstance(result, tuple):
-            audio = result[-1]
-        if audio is None:
-            continue
-        pcm = _to_pcm16(audio)
+        samples, rate = model.create(sentence, voice=use_voice, speed=chosen.speed, lang=lang)
+        pcm = _to_pcm16(samples)
         if pcm:
-            yield pcm, SAMPLE_RATE
+            yield pcm, int(rate)
+
+
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+
+
+def _sentences(text: str, max_chars: int = 320) -> list[str]:
+    """Sentence-sized pieces, with anything very long broken on a clause boundary."""
+    out: list[str] = []
+    for part in _SENTENCE_SPLIT.split(text):
+        part = part.strip()
+        if not part:
+            continue
+        while len(part) > max_chars:
+            cut = part.rfind(",", 0, max_chars)
+            if cut < max_chars // 3:
+                cut = max_chars
+            out.append(part[:cut].strip())
+            part = part[cut:].lstrip(", ")
+        if part:
+            out.append(part)
+    return out
