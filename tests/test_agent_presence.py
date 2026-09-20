@@ -50,6 +50,14 @@ def test_an_agent_that_stopped_without_a_question_is_green(monkeypatch):
     monkeypatch.setattr(presence, "_busy", lambda _pid: 0.0)
     state = presence.look(lambda: "All done. tokens used 4,201")
     assert (state.kind, state.colour) == ("done", "green")
+    first_id = state.completion_id
+    # A short process-list gap must not create a second completion identity for the same cycle.
+    monkeypatch.setattr(presence, "_processes", lambda: [])
+    presence.look()
+    monkeypatch.setattr(presence, "_processes",
+                        lambda: [presence.Agent(name="claude", pid=1)])
+    state = presence.look(lambda: "All done. tokens used 4,201")
+    assert state.completion_id == first_id
 
 
 @pytest.mark.parametrize("screen", [
@@ -152,3 +160,39 @@ def test_a_shell_that_merely_mentions_an_agent_is_not_an_agent(monkeypatch):
 def test_every_state_has_a_colour():
     for kind in ("idle", "running", "asking", "done"):
         assert presence.State(kind=kind).colour in ("blue", "orange", "red", "green")
+
+
+def test_previously_running_agent_is_chosen_over_arbitrary_idle_agent(monkeypatch):
+    """When an agent stops and all open agents have 0% CPU, the one that was just working
+    must be the one reported as done, regardless of PID ordering in ps."""
+    procs = [
+        presence.Agent(name="codex", pid=10),
+        presence.Agent(name="claude", pid=20),
+    ]
+    monkeypatch.setattr(presence, "_processes", lambda: procs)
+    # Claude is busy working, Codex is idle
+    monkeypatch.setattr(presence, "_busy", lambda pid: 25.0 if pid == 20 else 0.0)
+    running = presence.look()
+    assert (running.kind, running.agent) == ("running", "claude")
+
+    # Claude stops; both processes now report 0.0 CPU
+    monkeypatch.setattr(presence, "_busy", lambda _pid: 0.0)
+    stopped = presence.look(lambda: "Done.")
+    assert (stopped.kind, stopped.agent) == ("done", "claude")
+    assert stopped.completion_id.startswith("claude:20:")
+
+
+def test_roster_canonical_and_spoken_names():
+    from jarvis.coding import roster
+    assert roster.canonical_name("Antigravity") == "agy"
+    assert roster.canonical_name("agy") == "agy"
+    assert roster.canonical_name("gemini") == "agy"
+    assert roster.canonical_name("Claude") == "claude"
+    assert roster.canonical_name("codex") == "codex"
+    assert roster.canonical_name(None) == ""
+
+    assert roster.spoken_name("agy") == "Antigravity"
+    assert roster.spoken_name("Antigravity") == "Antigravity"
+    assert roster.spoken_name("claude") == "Claude"
+    assert roster.spoken_name("codex") == "Codex"
+    assert roster.spoken_name(None) == "The agent"

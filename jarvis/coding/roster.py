@@ -59,6 +59,30 @@ AGENTS = (
 BY_NAME = {a.name: a for a in AGENTS}
 PREFERENCE = ("claude", "codex", "agy")
 
+_CANONICAL = {
+    "claude": "claude",
+    "codex": "codex",
+    "agy": "agy",
+    "antigravity": "agy",
+    "gemini": "agy",
+}
+
+
+def canonical_name(name: Optional[str]) -> str:
+    """Canonical agent name ('claude', 'codex', 'agy') from any alias or spoken form."""
+    if not name:
+        return ""
+    n = name.strip().lower()
+    return _CANONICAL.get(n, n)
+
+
+def spoken_name(name: Optional[str]) -> str:
+    """Spoken name ('Claude', 'Codex', 'Antigravity') from any alias or canonical form."""
+    c = canonical_name(name)
+    if c in BY_NAME:
+        return BY_NAME[c].spoken
+    return (name or "").title() if name else "The agent"
+
 
 # --------------------------------------------------------------------------- how hard to think
 # Read from the request, because the person asking already said how big it is. "Add a button" and

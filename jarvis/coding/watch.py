@@ -44,12 +44,14 @@ class Finished:
 
 
 _waiting: Optional[Expected] = None
+_last_finished: Optional[tuple[str, float]] = None
 
 
 def expect(agent: str, work: str) -> None:
     """Note that an answer is coming, so the watcher knows to look."""
-    global _waiting
+    global _waiting, _last_finished
     _waiting = Expected(agent=agent, work=work)
+    _last_finished = None
 
 
 def waiting_for() -> Optional[str]:
@@ -61,13 +63,26 @@ def forget() -> None:
     _waiting = None
 
 
+def recently_finished(agent: str, within_s: float = 30.0) -> bool:
+    """Whether this agent's per-prompt result was just delivered.
+
+    The process watcher and this watcher poll independently.  This small hand-off closes the
+    timing window where both see the same completion and speak over each other.
+    """
+    if _last_finished is None:
+        return False
+    who, at = _last_finished
+    from . import roster
+    return roster.canonical_name(who) == roster.canonical_name(agent) and time.time() - at <= within_s
+
+
 def check(read_terminal) -> Optional[Finished]:
     """One look. Returns what to announce, or None while the agent is still working.
 
     `read_terminal` is passed in rather than imported so this can be tested without an editor,
     and so a look never costs anything when nothing is expected.
     """
-    global _waiting
+    global _waiting, _last_finished
     if _waiting is None:
         return None
 
@@ -89,10 +104,16 @@ def check(read_terminal) -> Optional[Finished]:
     if now - _waiting.last_change < QUIET_FOR_S:
         return None                      # quiet, but not for long enough to be sure
 
+    from . import presence
+    if presence.classify_words(screen) == "asking":
+        _waiting.last_change = now
+        return None                      # paused to ask a question; not finished
+
     from . import answers
 
     done = Finished(agent=_waiting.agent,
                     said=answers.spoken_answer(screen),
                     link=answers.worth_opening(screen))
+    _last_finished = (_waiting.agent, now)
     forget()
     return done

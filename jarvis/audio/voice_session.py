@@ -722,7 +722,7 @@ class VoiceSession:
         out loud. Nothing is announced on the first look, or every restart would greet you with
         the state of a session you have been watching for an hour.
         """
-        from ..coding import presence, terminal, vscode
+        from ..coding import presence, roster, terminal, vscode, watch
 
         def read_if_already_there():
             # Only when the editor already has the keyboard. Reading the terminal focuses a
@@ -736,6 +736,7 @@ class VoiceSession:
                 return ""
 
         was = None
+        announced = set()
         while True:
             await asyncio.sleep(4.0)
             try:
@@ -744,11 +745,23 @@ class VoiceSession:
                 continue
 
             if was is not None and now.kind != was:
-                who = now.agent.title() if now.agent else "The agent"
+                who = roster.spoken_name(now.agent)
                 if now.kind == "asking":
                     self._speak(f"{who} is waiting on you, sir.")
-                elif now.kind == "done":
-                    self._speak(f"{who} has finished, sir.")
+                elif now.kind == "done" and now.completion_id not in announced:
+                    # A prompt sent through coding_command has its own output-based watcher.  The
+                    # process watcher is useful for agents started by hand, but speaking here as
+                    # well turns one prompt into two completion announcements.
+                    expected = watch.waiting_for()
+                    expected_c = roster.canonical_name(expected)
+                    now_c = roster.canonical_name(now.agent)
+                    if ((not expected_c or expected_c != now_c)
+                            and not watch.recently_finished(now.agent)):
+                        self._speak(f"{who} has finished, sir.")
+                        announced.add(now.completion_id)
+                    else:
+                        # The prompt watcher already delivered this completion (or is about to).
+                        announced.add(now.completion_id)
             self.on_event("agent", f"{now.kind}:{now.agent}")
             was = now.kind
 
@@ -758,7 +771,7 @@ class VoiceSession:
         Only looks when an answer is actually expected, so the terminal is not being read — and
         the clipboard borrowed — every few seconds for no reason.
         """
-        from ..coding import terminal, watch
+        from ..coding import roster, terminal, watch
 
         while True:
             await asyncio.sleep(6.0)
@@ -770,9 +783,11 @@ class VoiceSession:
                 continue
             if done is None:
                 continue
+            spoken_who = roster.spoken_name(done.agent)
             if done.said:
                 self.on_event("coding", f"{done.agent}: {done.said[:160]}")
-                self._speak(f"{done.agent.title()} says: {done.said}")
+                self._speak(f"{spoken_who} says: {done.said}")
+            opened = False
             if done.link:
                 # The thing you wanted next. Opened rather than read out, because a URL spoken
                 # aloud is unusable and this one is one click of work.
@@ -780,8 +795,12 @@ class VoiceSession:
                     from ..integrations import apps
                     await asyncio.to_thread(apps.open_url, done.link)
                     self._speak("I've opened the link it printed.")
+                    opened = True
                 except Exception:  # noqa: BLE001
                     pass
+            if not done.said and not opened:
+                self.on_event("coding", f"{done.agent}: finished")
+                self._speak(f"{spoken_who} has finished, sir.")
 
     async def _watch_power(self) -> None:
         """Announce the charger going in or coming out, with the battery level."""

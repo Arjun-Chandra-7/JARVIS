@@ -53,6 +53,9 @@ class State:
     kind: str = "idle"
     agent: str = ""
     detail: str = ""
+    # Stable identity for one running -> stopped cycle.  The process can briefly disappear from
+    # `ps` while the terminal is redrawn; that must not manufacture a second completion event.
+    completion_id: str = ""
     at: float = field(default_factory=time.time)
 
     @property
@@ -95,6 +98,8 @@ def _cpu_jiffies(pid: int) -> Optional[int]:
 
 
 _seen: dict[int, tuple[float, int]] = {}
+_cycles: dict[int, int] = {}
+_busy_pids: set[int] = set()
 
 
 def _busy(pid: int) -> float:
@@ -182,6 +187,8 @@ def look(read_terminal=None) -> State:
 
     agents = _processes()
     if not agents:
+        # Do not reset the process-cycle bookkeeping here.  A transiently missing process is a
+        # normal race around terminal redraws, not evidence that a new task has completed.
         _stopped_at = 0.0
         _state = State(kind="idle")
         return _state
@@ -191,6 +198,12 @@ def look(read_terminal=None) -> State:
     # look idle for ever.
     for agent in agents:
         agent.cpu = _busy(agent.pid)
+        if agent.cpu > WORKING_ABOVE:
+            if agent.pid not in _busy_pids:
+                _cycles[agent.pid] = _cycles.get(agent.pid, 0) + 1
+            _busy_pids.add(agent.pid)
+        else:
+            _busy_pids.discard(agent.pid)
     busiest = max(agents, key=lambda a: a.cpu)
 
     if busiest.cpu > WORKING_ABOVE:
@@ -203,13 +216,21 @@ def look(read_terminal=None) -> State:
     now = time.time()
     if _state.kind == "running" or _stopped_at == 0.0:
         _stopped_at = now
+        if _state.kind == "running" and _state.agent:
+            prev = next((a for a in agents if a.name == _state.agent), None)
+            if prev:
+                busiest = prev
         words = classify_words(read_terminal() if read_terminal else "")
-        _state = State(kind=words or "done", agent=busiest.name)
+        event = f"{busiest.name}:{busiest.pid}:{_cycles.get(busiest.pid, 0)}"
+        _state = State(kind=words or "done", agent=busiest.name,
+                       completion_id=event)
         return _state
 
     # Already known to have stopped: stay as we were, until green goes stale.
     if _state.kind == "done" and now - _stopped_at > DONE_FOR_S:
-        _state = State(kind="idle", agent=busiest.name, detail="still open, nothing running")
+        _state = State(kind="idle", agent=busiest.name,
+                       detail="still open, nothing running",
+                       completion_id=_state.completion_id)
     return _state
 
 
@@ -221,3 +242,5 @@ def reset() -> None:
     global _state, _stopped_at
     _state, _stopped_at = State(), 0.0
     _seen.clear()
+    _cycles.clear()
+    _busy_pids.clear()
