@@ -195,6 +195,11 @@ def _is_a_turn_note(message: dict) -> bool:
             and str(message.get("content", "")).startswith(TURN_NOTE))
 
 
+# Beyond this, the last conversation is not the conversation being had now. Long enough to go to
+# lunch and carry on; short enough that overnight is a clean start.
+HISTORY_STALE_AFTER_S = 4 * 3600
+
+
 class GroqAgent:
     def __init__(self, config: Config, mode: str = "text",
                  confirm_fn: Optional[ConfirmCallback] = None, on_tool: Optional[ToolCallback] = None) -> None:
@@ -250,16 +255,35 @@ class GroqAgent:
     def _restore_history(self, keep: int = 16) -> None:
         """Reload the last few plain user/assistant turns so Jarvis remembers the last chat.
 
-        Restored turns are fenced with a note that they are old. Without it the model treats a
-        previous answer as current and simply repeats it: asked the battery level twice across
-        sessions it replays the earlier number verbatim instead of calling `system_stats` again,
-        so one wrong reading becomes permanent.
+        Only a recent one. A conversation that stopped hours ago is not the conversation being
+        had now, and restoring it makes the model carry on with whatever it was last thinking
+        about. Said "Good morning" the next day, it answered: "Initiate Deep Research Sequence
+        for tech event team name ideas?" — the topic from the night before, offered as though the
+        greeting had been a request to continue it.
+
+        Restored turns are also fenced. Without the fence the model treats a previous answer as
+        current and simply repeats it: asked the battery level twice across sessions it replays
+        the earlier number verbatim instead of calling `system_stats` again, so one wrong reading
+        becomes permanent.
         """
         import json
+        import time
+
         try:
-            turns = json.loads(self._history_path().read_text(encoding="utf-8"))
+            raw = json.loads(self._history_path().read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return
+
+        # Written as a bare list before this change; both shapes are read so an upgrade does not
+        # throw away the history somebody is in the middle of.
+        if isinstance(raw, dict):
+            turns, saved_at = raw.get("turns", []), float(raw.get("saved_at") or 0)
+        else:
+            turns, saved_at = raw, 0.0
+
+        if saved_at and (time.time() - saved_at) > HISTORY_STALE_AFTER_S:
+            return                       # a different conversation; start clean
+
         clean = [t for t in turns if isinstance(t, dict)
                  and t.get("role") in ("user", "assistant") and isinstance(t.get("content"), str) and t["content"].strip()]
         if not clean:
@@ -270,13 +294,17 @@ class GroqAgent:
                 "The following turns are from an EARLIER session, kept only so you remember what "
                 "was discussed. Every measurement, status, time, and number in them is STALE. If "
                 "the user asks about any of it again, call the tool and report the fresh value — "
-                "never repeat an old one."
+                "never repeat an old one. That conversation is over: do not continue its topic, "
+                "do not re-offer what was suggested in it, and do not assume a new message is "
+                "about it. Answer what is actually being said now."
             ),
         }
         self.messages[1:1] = [fence] + clean[-keep:]
 
     def _save_history(self, keep: int = 16) -> None:
         import json
+        import time
+
         turns = [{"role": m["role"], "content": m["content"][:4000]}
                  for m in self.messages[1:]
                  if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str) and m["content"].strip()
@@ -284,7 +312,11 @@ class GroqAgent:
         try:
             p = self._history_path()
             p.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            p.write_text(json.dumps(turns[-keep:], ensure_ascii=False, indent=1), encoding="utf-8")
+            # Stamped, so the next session can tell whether this is the same conversation or
+            # yesterday's. A bare list carries no such thing, which is how a greeting the next
+            # morning got answered with the previous night's topic.
+            p.write_text(json.dumps({"saved_at": time.time(), "turns": turns[-keep:]},
+                                    ensure_ascii=False, indent=1), encoding="utf-8")
         except OSError:
             pass
 
