@@ -18,8 +18,12 @@ httpx              # Deepgram (STT) + ElevenLabs (TTS) over HTTP
 
 # Default offline voice
 faster-whisper>=1.0
-openwakeword>=0.6
-piper-tts>=1.2
+openwakeword>=0.6              # alive but slow-moving: last upstream commit 2025-12-30
+# piper-tts is published from OHF-Voice/piper1-gpl now. The original rhasspy/piper was archived
+# on 2025-08-26, along with the rest of the Rhasspy lineage (rhasspy3, wyoming-satellite); the
+# work moved under Home Assistant's umbrella. Pinning the floor to the first release cut from
+# the live fork so an install cannot silently resolve to the abandoned tree.
+piper-tts>=1.3
 
 # Phase 2b — local semantic search (install when you get there)
 #   Ollama is a separate system install: https://ollama.com  (then: ollama pull nomic-embed-text)
