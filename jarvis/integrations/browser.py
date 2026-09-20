@@ -20,6 +20,12 @@ Control needs Opera GX started with `--remote-debugging-port`, which is a loopba
 local process can use to drive the browser. Jarvis only ever starts it on 127.0.0.1, and never
 starts it silently: if Opera GX is already running without the port, `ensure()` says so and asks
 before restarting it, because restarting a browser loses whatever is half-typed in it.
+
+That trade-off is the single commonest failure in Jarvis's journal — four of ten entries — because
+nobody accepts it. The answer is `browser_relay`: an extension inside the browser offers the same
+protocol with no port and no restart. Everything below prefers the native port when it is there
+and falls back to the relay when it is not, and neither the CDP plumbing nor anything above it
+can tell the difference.
 """
 
 from __future__ import annotations
@@ -102,8 +108,41 @@ def is_running() -> bool:
         return False
 
 
-def control_ready(timeout: float = 1.5) -> bool:
-    """True when a debuggable Opera GX is listening."""
+# The relay, started once and left running. It costs one idle loopback listener; the extension
+# reconnects to it on its own, so it has to be up before the browser is, not after.
+_relay = None
+
+
+def relay() -> "Any":
+    """The relay object, created on first use. Starting it is separate — see `start_relay`."""
+    global _relay
+    if _relay is None:
+        from .browser_relay import Relay
+
+        _relay = Relay()
+    return _relay
+
+
+async def start_relay() -> bool:
+    """Begin listening for the extension. Safe to call more than once."""
+    r = relay()
+    if r._server is not None:
+        return True
+    try:
+        await r.start()
+        return True
+    except OSError:
+        # Almost always "address already in use" — another Jarvis owns the port, which is fine.
+        return False
+
+
+def relay_ready() -> bool:
+    """True when the extension is connected and offering tabs."""
+    return _relay is not None and _relay.connected and bool(_relay.targets())
+
+
+def native_ready(timeout: float = 1.5) -> bool:
+    """True when a debuggable Opera GX is listening on the debug port."""
     import httpx
 
     try:
@@ -111,6 +150,15 @@ def control_ready(timeout: float = 1.5) -> bool:
         return True
     except Exception:  # noqa: BLE001
         return False
+
+
+def control_ready(timeout: float = 1.5) -> bool:
+    """True when the browser can be driven at all, by either route.
+
+    The port is preferred when both are available: it is the browser's own, it needs no third
+    process, and it can see targets an extension cannot.
+    """
+    return native_ready(timeout) or relay_ready()
 
 
 def launch(url: str = "", wait_s: float = 12.0, restore: bool = False) -> bool:
@@ -165,8 +213,12 @@ def ensure(url: str = "", allow_restart: bool = False) -> dict:
 
     Returns {ok, state, message}. `state` is one of ready | launched | needs_restart | missing.
     """
-    if control_ready():
+    if native_ready():
         return {"ok": True, "state": "ready", "message": "Opera GX is under control."}
+    if relay_ready():
+        # The extension is in, so there is nothing to restart and nothing to ask.
+        return {"ok": True, "state": "extension",
+                "message": "Opera GX is under control through the extension."}
     if not _exe():
         return {"ok": False, "state": "missing",
                 "message": "Opera GX is not installed (looked for opera-gx on PATH)."}
@@ -174,10 +226,14 @@ def ensure(url: str = "", allow_restart: bool = False) -> dict:
         if not allow_restart:
             return {
                 "ok": False, "state": "needs_restart",
+                # Naming the extension first because it is the answer that costs nothing. The
+                # restart is still offered, since it works today and the extension needs
+                # installing once.
                 "message": ("Opera GX is running without control enabled, so I can only open "
-                            "pages, not click inside them. Restarting it with control on will "
-                            "close your current tabs — say 'restart Opera with control' and I "
-                            "will do it."),
+                            "pages, not click inside them. Loading the Jarvis extension fixes "
+                            "this permanently and costs no tabs — see browser-extension/README. "
+                            "Otherwise say 'restart Opera with control' and I will restart it, "
+                            "restoring your tabs."),
             }
         stop()
         time.sleep(1.5)
@@ -192,12 +248,22 @@ def ensure(url: str = "", allow_restart: bool = False) -> dict:
 
 # --------------------------------------------------------------------------- CDP plumbing
 async def _targets() -> list[dict]:
+    """Every drivable tab, from whichever route is live.
+
+    The relay hands back the same records Chromium's /json does — `webSocketDebuggerUrl` and all —
+    so `_connect` and `_Session` below never learn which route they are on.
+    """
     import httpx
 
-    async with httpx.AsyncClient(timeout=4) as client:
-        r = await client.get(f"http://127.0.0.1:{DEBUG_PORT}/json")
-        r.raise_for_status()
-        return r.json()
+    try:
+        async with httpx.AsyncClient(timeout=4) as client:
+            r = await client.get(f"http://127.0.0.1:{DEBUG_PORT}/json")
+            r.raise_for_status()
+            return r.json()
+    except Exception:  # noqa: BLE001 — no port is the normal case now, not an error
+        if relay_ready():
+            return relay().targets()
+        raise
 
 
 # The one tab Jarvis is driving. Without this every call re-picks "the first page CDP happens to
