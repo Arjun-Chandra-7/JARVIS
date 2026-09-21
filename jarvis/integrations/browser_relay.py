@@ -114,6 +114,13 @@ class Relay:
         kind = msg.get("type")
         if kind == "tabs":
             self._tabs = [t for t in msg.get("tabs", []) if drivable(t)]
+            # Tab updates arrive as soon as a page navigates. Enforce study mode here so a
+            # newly opened Short is closed promptly, without waiting for the next sweep.
+            from ..modes import study
+            if study.on():
+                for tab in self._tabs:
+                    if study._looks_distracting(tab.get("url", ""), tab.get("title", "")):
+                        await self._extension.send(json.dumps({"type": "close-tab", "tabId": tab["id"]}))
         elif kind == "result":
             fut = self._pending.pop(msg.get("id"), None)
             if fut and not fut.done():
@@ -220,6 +227,18 @@ class Relay:
             })
         if path.rstrip("/") == "/json" or path.startswith("/json/list"):
             return _json_response(self.targets())
+        if path.startswith("/json/close/"):
+            # A web page can issue a cross-origin GET even when it cannot read the reply.
+            # The custom header forces a browser preflight, so arbitrary sites cannot use
+            # this local endpoint to close the user's tabs.
+            if request.headers.get("X-Jarvis-Study") != "close":
+                return _json_response({"closed": False})
+            try:
+                tab_id = int(path.removeprefix("/json/close/").split("?", 1)[0])
+                reply = await self._to_extension({"type": "close-tab", "tabId": tab_id})
+                return _json_response({"closed": not bool(reply.get("error"))})
+            except (ValueError, ConnectionError, asyncio.TimeoutError):
+                return _json_response({"closed": False})
         return None                                  # anything else continues to the websocket
 
     async def stop(self) -> None:

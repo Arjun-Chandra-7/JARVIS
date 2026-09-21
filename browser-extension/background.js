@@ -63,6 +63,14 @@ function connect() {
       case "cdp":
         await forward(msg);
         break;
+      case "close-tab":
+        try {
+          await chrome.tabs.remove(msg.tabId);
+          send({ type: "result", id: msg.id, result: { closed: true } });
+        } catch (err) {
+          send({ type: "result", id: msg.id, error: String(err && err.message ? err.message : err) });
+        }
+        break;
       default:
         break;
     }

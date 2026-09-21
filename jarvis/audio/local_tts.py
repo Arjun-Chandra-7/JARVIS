@@ -165,11 +165,17 @@ def synth_stream(
     if _better_voice_available():
         from . import kokoro_tts
 
+        emitted = False
         try:
-            yield from kokoro_tts.synth_stream(text, stop_event=stop_event)
+            for item in kokoro_tts.synth_stream(text, stop_event=stop_event):
+                emitted = True
+                yield item
             return
         except Exception:  # noqa: BLE001 - fall through to Piper rather than going silent
-            pass
+            if emitted:
+                # Replaying the whole answer in Piper after Kokoro said its first sentence
+                # sounds like Jarvis repeating himself. The next reply may use the fallback.
+                return
     voice = _get_voice(model_path)
     for chunk in split_for_speech(text):
         if stop_event is not None and stop_event.is_set():

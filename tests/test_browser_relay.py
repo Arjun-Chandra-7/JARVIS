@@ -36,6 +36,7 @@ class FakeExtension:
     def __init__(self, tabs):
         self.tabs = tabs
         self.attached: list[int] = []
+        self.closed: list[int] = []
         self.commands: list[tuple] = []
         self.ws = None
 
@@ -58,6 +59,12 @@ class FakeExtension:
                 else:
                     await self.ws.send(json.dumps(
                         {"type": "result", "id": msg["id"], "result": {"echo": msg["method"]}}))
+            elif kind == "close-tab":
+                self.closed.append(msg["tabId"])
+                self.tabs = [tab for tab in self.tabs if tab["id"] != msg["tabId"]]
+                await self.ws.send(json.dumps({"type": "result", "id": msg.get("id"),
+                                               "result": {"closed": True}}))
+                await self.ws.send(json.dumps({"type": "tabs", "tabs": self.tabs}))
 
     async def emit(self, tab_id, method, params):
         await self.ws.send(json.dumps(
@@ -197,6 +204,32 @@ def test_the_http_endpoints_answer_like_a_debug_port():
                 listing = (await client.get(f"http://127.0.0.1:{port}/json")).json()
             assert version["Protocol-Version"] == "1.3"
             assert [t["id"] for t in listing] == ["11"]
+
+    asyncio.run(run())
+
+
+def test_study_mode_closes_a_new_short_through_the_extension(monkeypatch, tmp_path):
+    """The relay must actually command the extension to remove a tab, not just list it."""
+    async def run():
+        import httpx
+        from jarvis.modes import study
+
+        monkeypatch.setenv("JARVIS_STATE_DIR", str(tmp_path))
+        study.start()
+        try:
+            async with wired([{"id": 30, "url": "https://example.com/", "title": "Notes"},
+                              {"id": 31, "url": "https://youtube.com/shorts/abc",
+                               "title": "NCERT Class 10"}]) as (relay, ext, port):
+                assert await _until(lambda: ext.closed == [31])
+                async with httpx.AsyncClient(timeout=4) as client:
+                    blocked = (await client.get(f"http://127.0.0.1:{port}/json/close/30")).json()
+                    result = (await client.get(f"http://127.0.0.1:{port}/json/close/30",
+                                               headers={"X-Jarvis-Study": "close"})).json()
+                assert not blocked["closed"]
+                assert result["closed"]
+                assert ext.closed == [31, 30]
+        finally:
+            study.stop()
 
     asyncio.run(run())
 

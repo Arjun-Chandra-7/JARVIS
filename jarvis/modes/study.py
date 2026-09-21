@@ -15,10 +15,16 @@ system file you will find confusing in a fortnight.
 from __future__ import annotations
 
 import re
+import json
+import os
 import subprocess
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
+
+from ..preferences import state_dir
 
 # Matched against process names and window titles, case-insensitively.
 DISTRACTING_APPS = (
@@ -53,23 +59,45 @@ class Session:
 _on: Optional[Session] = None
 
 
+def _state_file() -> Path:
+    return state_dir() / "study-mode.json"
+
+
 def on() -> bool:
-    return _on is not None
+    return _state_file().exists()
 
 
 def session() -> Optional[Session]:
+    global _on
+    if not on():
+        _on = None
+        return None
+    try:
+        started = float(json.loads(_state_file().read_text())["started"])
+    except (OSError, ValueError, KeyError, TypeError):
+        started = time.time()
+    if _on is None or _on.started != started:
+        _on = Session(started=started)
     return _on
 
 
 def start() -> Session:
     global _on
     _on = Session()
+    path = _state_file()
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temp = path.with_suffix(".tmp")
+    temp.write_text(json.dumps({"started": _on.started}))
+    os.chmod(temp, 0o600)
+    temp.replace(path)
     return _on
 
 
 def stop() -> Optional[Session]:
     global _on
-    was, _on = _on, None
+    was = session()
+    _on = None
+    _state_file().unlink(missing_ok=True)
     return was
 
 
@@ -112,9 +140,34 @@ def close_apps() -> list[str]:
 
 
 # --------------------------------------------------------------------------- browser tabs
+_EDUCATIONAL = re.compile(
+    r"(?i)\b(ncert|cbse|class\s*(?:9|10|11|12)|chapter|lesson|lecture|tutorial|"
+    r"explained|explanation|study|revision|exam|board|maths?|mathematics|science|"
+    r"physics|chemistry|biology|history|geography|civics|economics|grammar|"
+    r"solved|solution|derivation|learn|education|course|jee|neet)\b")
+_pending_video_titles: dict[str, float] = {}
+
+
 def _looks_distracting(url: str, title: str) -> bool:
-    haystack = f"{url} {title}".lower()
-    return any(bad in haystack for bad in DISTRACTING_SITES)
+    """Allow only recognisable educational YouTube videos; Shorts are always blocked."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    path = parsed.path.lower()
+    if host in {"youtube.com", "m.youtube.com", "youtu.be", "music.youtube.com"}:
+        if path.startswith("/shorts"):
+            return True
+        if host == "youtu.be" or path == "/watch":
+            # Navigation publishes the URL before the title. Give the educational video a
+            # moment to identify itself; otherwise every permitted video closes on load.
+            if title.strip().lower() in {"", "youtube", "youtube - youtube"}:
+                return time.monotonic() - _pending_video_titles.setdefault(
+                    url, time.monotonic()) > 8
+            _pending_video_titles.pop(url, None)
+            return not bool(_EDUCATIONAL.search(title))
+        return True
+    return any(host == site or host.endswith("." + site)
+               for site in ("netflix.com", "instagram.com")) or any(
+                   bad in f"{url} {title}".lower() for bad in DISTRACTING_SITES)
 
 
 async def close_tabs() -> list[str]:
@@ -132,25 +185,32 @@ async def close_tabs() -> list[str]:
         url, title = target.get("url", ""), target.get("title", "")
         if not _looks_distracting(url, title):
             continue
-        if not await _close_tab(target.get("id", "")):
+        if not await _close_tab(target):
             continue
         closed.append(title[:50] or url[:50])
     return closed
 
 
-async def _close_tab(target_id: str) -> bool:
+async def _close_tab(target: dict) -> bool:
     """Close one tab through the debugging port, which is how Jarvis reaches the browser."""
+    target_id = target.get("id", "")
     if not target_id:
         return False
     import httpx
 
     from ..integrations import browser
 
+    debugger = target.get("webSocketDebuggerUrl", "")
+    port = browser.relay().port if f":{browser.relay().port}/" in debugger else browser.DEBUG_PORT
+
     try:
         async with httpx.AsyncClient(timeout=4) as client:
             reply = await client.get(
-                f"http://127.0.0.1:{browser.DEBUG_PORT}/json/close/{target_id}")
-        return reply.status_code == 200
+                f"http://127.0.0.1:{port}/json/close/{target_id}",
+                headers={"X-Jarvis-Study": "close"} if port == browser.relay().port else None)
+        if reply.status_code != 200:
+            return False
+        return bool(reply.json().get("closed")) if port == browser.relay().port else True
     except Exception:  # noqa: BLE001
         return False
 
@@ -161,7 +221,7 @@ async def enforce() -> tuple[list[str], list[str]]:
         return [], []
     apps = close_apps()
     tabs = await close_tabs()
-    here = _on
+    here = session()
     if here is not None:
         here.closed_apps.extend(apps)
         here.closed_tabs.extend(tabs)

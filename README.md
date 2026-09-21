@@ -74,8 +74,8 @@ judge a change with.
 ## The voice
 
 Kokoro, 82M parameters, Apache-2.0, on the processor. Measured here: the model loads in 1.0s and
-synthesises at about 2.4x realtime, 24 kHz. Fifty-four voices; the default is `bm_george`,
-British male, because JARVIS is a particular voice and the default should not be a coin flip.
+synthesises at about 2.4x realtime, 24 kHz. Fifty-four voices; the default is `bm_daniel`,
+British male. Set `JARVIS_KOKORO_VOICE` to another installed voice if you prefer it.
 
 Kokoro has no emotion conditioning, and nothing here pretends otherwise. What it has is a speed
 control, and that is enough for *delivery* — four of them, picked from the words before any model
@@ -96,6 +96,21 @@ Piper, so Jarvis cannot promise a voice it has no way to produce:
     mkdir -p ~/Madara/.cache/kokoro && cd ~/Madara/.cache/kokoro
     base=https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0
     curl -L -O $base/kokoro-v1.0.onnx && curl -L -O $base/voices-v1.0.bin
+
+## Focus and coding setup
+
+"Study mode" closes Netflix, Instagram, YouTube Shorts and noneducational YouTube tabs, and
+keeps closing them until "exit study mode". YouTube videos are judged from their page titles;
+ambiguous titles are blocked. It also opens ChatGPT in Opera and sends the exam tutor instructions
+from `jarvis/modes/study_prompt.txt`. Browser blocking needs the Jarvis browser extension loaded
+in Opera. The mode flag survives a Jarvis restart.
+
+"Open my coding setup" asks every other window to close, then launches an empty VS Code window,
+Spotify and ChatGPT in Opera. Applications with unsaved work may ask before they close.
+
+Claude completion alerts come from Claude's Stop hook. Install it once with
+`.venv/bin/python scripts/install-claude-stop-hook.py`. The passive coding activity display never
+reads the terminal or clipboard and never announces a completion based on CPU use.
 
 ## Driving the browser you already have open
 

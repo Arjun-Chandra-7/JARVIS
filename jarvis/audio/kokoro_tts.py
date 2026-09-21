@@ -48,8 +48,8 @@ from typing import Iterator, Optional
 # take the rate from the synthesiser rather than assume one — which is why `synth` returns it.
 SAMPLE_RATE = 24000
 
-# British male. JARVIS is a particular voice and this is the closest of the fifty-four.
-DEFAULT_VOICE = os.environ.get("JARVIS_KOKORO_VOICE", "bm_george")
+# A less metallic British male voice than George. Override with JARVIS_KOKORO_VOICE.
+DEFAULT_VOICE = os.environ.get("JARVIS_KOKORO_VOICE", "bm_daniel")
 
 # American English 'a', British English 'b'. Must agree with the voice's first letter or the
 # grapheme-to-phoneme stage mispronounces its way through everything.
