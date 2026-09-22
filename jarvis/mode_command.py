@@ -27,6 +27,10 @@ async def handle(text: str, config=None) -> Optional[str]:
 
     # ---- study mode
     if study.asked_to_stop(said):
+        from .modes import exam_tutor
+
+        exam_tutor.forget()
+        study.forget_judgements()
         was = study.stop()
         if was is None:
             return "Study mode wasn't on, sir."
@@ -41,10 +45,24 @@ async def handle(text: str, config=None) -> Optional[str]:
         study.start()
         apps, tabs = await study.enforce()
         shut = len(apps) + len(tabs)
-        return ("Study mode, sir. " +
-                (f"Closed {shut} distraction{'s' if shut != 1 else ''}, and I'll keep them closed. "
-                 if shut else "Nothing to close. ") +
-                "Say “exit study mode” when you're done.")
+
+        # The tutor comes up with the mode, so the brief is already in place before the first
+        # question rather than being pasted in again every session.
+        from .modes import exam_tutor
+
+        tutor_said = ""
+        try:
+            _opened, tutor_said = await exam_tutor.open_with_brief()
+        except Exception:  # noqa: BLE001 — study mode's job is closing things; this is extra
+            tutor_said = ""
+
+        return " ".join(p for p in (
+            "Study mode, sir.",
+            (f"Closed {shut} distraction{'s' if shut != 1 else ''}, and I'll keep them closed."
+             if shut else "Nothing to close."),
+            tutor_said,
+            "Say “exit study mode” when you're done.",
+        ) if p)
 
     # ---- Iron Man mode
     if ironman.asked_to_stop(said):
