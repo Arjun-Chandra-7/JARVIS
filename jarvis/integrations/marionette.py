@@ -166,7 +166,15 @@ class Connection:
     def tabs(self) -> list[dict]:
         """Every open tab, in the shape the rest of the program expects of a target listing."""
         handles = self._send("WebDriver:GetWindowHandles") or []
-        current = self._send("WebDriver:GetWindowHandle")
+        # Asked defensively: after a tab is closed the session still points at the destroyed
+        # context, and asking which window is current then fails with "Browsing context has been
+        # discarded". Found by closing a tab and calling this immediately afterwards.
+        try:
+            current = self._send("WebDriver:GetWindowHandle")
+        except MarionetteError:
+            current = handles[0] if handles else None
+            if current:
+                self._send("WebDriver:SwitchToWindow", {"handle": current})
         out: list[dict] = []
         for handle in handles:
             try:
@@ -186,12 +194,25 @@ class Connection:
         self._send("WebDriver:SwitchToWindow", {"handle": handle})
 
     def close_tab(self, handle: str) -> bool:
+        """Close one tab and leave the session somewhere that still exists.
+
+        The second half is not optional. CloseWindow destroys the context the session is pointed
+        at, so without switching away every later command fails with "Browsing context has been
+        discarded" — which, for study mode, means the first Short it closes breaks everything
+        after it. CloseWindow hands back the remaining handles, so the landing place is already
+        in the reply.
+        """
         try:
             self.switch_to(handle)
-            self._send("WebDriver:CloseWindow")
-            return True
+            remaining = self._send("WebDriver:CloseWindow") or []
         except MarionetteError:
             return False
+        if remaining:
+            try:
+                self.switch_to(remaining[0])
+            except MarionetteError:
+                pass
+        return True
 
 
 def reachable(port: int = MARIONETTE_PORT, timeout: float = 1.0) -> bool:

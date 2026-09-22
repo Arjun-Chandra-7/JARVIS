@@ -297,6 +297,15 @@ async def close_tab(target: "dict | str") -> bool:
     target_id = target.get("id", "")
     if not target_id:
         return False
+
+    # Firefox has no equivalent of the debug port's close endpoint; a tab is closed by switching
+    # to it and closing the window. Study mode depends on this, so without it the whole "shut
+    # the Short" behaviour silently did nothing on Zen.
+    if _firefox_now():
+        from . import firefox_page  # noqa: F401  (kept together with the other page work)
+
+        return bool(await _through_marionette(lambda conn: conn.close_tab(str(target_id))))
+
     import httpx
 
     debugger = target.get("webSocketDebuggerUrl", "")
