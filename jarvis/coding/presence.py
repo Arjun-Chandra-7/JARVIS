@@ -430,6 +430,22 @@ def drain_events() -> list[Event]:
     return out
 
 
+def working_directories(name: str = "") -> list[str]:
+    """Where the live agent sessions are working, newest first.
+
+    The transcript for a session is found from its working directory, and nothing else on the
+    machine knows that mapping — so it is published here, beside the process list it comes from.
+    """
+    out: list[str] = []
+    for agent in _processes():
+        if name and agent.name != name:
+            continue
+        cwd = _working_directory(agent.pid)
+        if cwd and cwd not in out:
+            out.append(cwd)
+    return out
+
+
 def sessions() -> list[Session]:
     """Every session being watched, for anything that wants more than one dot's worth."""
     return sorted(_sessions.values(), key=lambda s: (s.name, s.pid))

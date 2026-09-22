@@ -770,17 +770,46 @@ class VoiceSession:
     async def _watch_coding_terminal(self) -> None:
         """Say what the agent in the editor concluded, once it has stopped writing.
 
-        Only looks when an answer is actually expected, so the terminal is not being read — and
-        the clipboard borrowed — every few seconds for no reason.
+        Only looks when an answer is actually expected — but "only when expected" still meant
+        copying the terminal every six seconds for up to fifteen minutes, by opening the command
+        palette each time. Where the agent keeps a transcript, its own final message is read
+        instead and nothing touches the clipboard at all. The terminal stays as the fallback for
+        agents that do not write one.
         """
-        from ..coding import roster, terminal, watch
+        from ..coding import presence, roster, terminal, transcripts, watch
+
+        def screen() -> str:
+            """The agent's answer: from its transcript when that is unambiguous, else the screen.
+
+            `watch.expect` records which agent was prompted but not where, so the transcript can
+            only be trusted when that agent has exactly one session open. With two, there is no
+            way to tell the one Jarvis typed into from the one you are using yourself, and
+            reading the wrong session's answer aloud is worse than borrowing the clipboard.
+
+            In the ordinary case — one agent in the editor — this is the whole fifteen minutes of
+            six-second clipboard copies replaced by reading a file.
+            """
+            try:
+                expecting = roster.canonical_name(watch.waiting_for() or "")
+                candidates = [
+                    cwd for cwd in presence.working_directories(expecting)
+                    if transcripts.transcript_for(cwd)
+                ]
+                if len(candidates) == 1:
+                    # Authoritative: either the turn has ended and this is the answer, or it has
+                    # not and there is nothing to say yet. Falling back to the terminal here
+                    # would reintroduce the copying this replaced.
+                    return transcripts.final_answer(candidates[0]) or ""
+            except Exception:  # noqa: BLE001
+                pass
+            return terminal.tail(80) or ""
 
         while True:
             await asyncio.sleep(6.0)
             if watch.waiting_for() is None:
                 continue
             try:
-                done = await asyncio.to_thread(watch.check, lambda: terminal.tail(80))
+                done = await asyncio.to_thread(watch.check, screen)
             except Exception:  # noqa: BLE001 — a failed look must not end the watcher
                 continue
             if done is None:

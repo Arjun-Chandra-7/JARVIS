@@ -194,6 +194,10 @@ def test_voice_session_watchers_guarantee_single_announcement_antigravity(monkey
             await real_sleep(0.001)
 
         monkeypatch.setattr(asyncio, "sleep", fast_sleep)
+        # These exercise the terminal fallback, so the machine running the tests must not be
+        # allowed to answer instead: without this the developer's own open Claude session
+        # supplies a transcript and the test measures their laptop rather than the code.
+        monkeypatch.setattr("jarvis.coding.presence.working_directories", lambda _n="": [])
         monkeypatch.setattr("jarvis.coding.vscode.active_window", lambda: "1")
         monkeypatch.setattr("jarvis.coding.vscode.window", lambda: "2")
 
@@ -268,6 +272,10 @@ def test_voice_session_terminal_fallback_speech_when_no_prose(monkeypatch):
             await real_sleep(0.001)
 
         monkeypatch.setattr(asyncio, "sleep", fast_sleep)
+        # These exercise the terminal fallback, so the machine running the tests must not be
+        # allowed to answer instead: without this the developer's own open Claude session
+        # supplies a transcript and the test measures their laptop rather than the code.
+        monkeypatch.setattr("jarvis.coding.presence.working_directories", lambda _n="": [])
         monkeypatch.setattr("jarvis.coding.vscode.active_window", lambda: "1")
         monkeypatch.setattr("jarvis.coding.vscode.window", lambda: "2")
 
@@ -323,6 +331,10 @@ def test_voice_session_terminal_watcher_finishes_before_agent_watcher(monkeypatc
             await real_sleep(0.001)
 
         monkeypatch.setattr(asyncio, "sleep", fast_sleep)
+        # These exercise the terminal fallback, so the machine running the tests must not be
+        # allowed to answer instead: without this the developer's own open Claude session
+        # supplies a transcript and the test measures their laptop rather than the code.
+        monkeypatch.setattr("jarvis.coding.presence.working_directories", lambda _n="": [])
         monkeypatch.setattr("jarvis.coding.vscode.active_window", lambda: "1")
         monkeypatch.setattr("jarvis.coding.vscode.window", lambda: "2")
 

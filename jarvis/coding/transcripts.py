@@ -166,3 +166,42 @@ def state_for(cwd: str, now: Optional[float] = None) -> Optional[Turn]:
     """What the agent working in `cwd` is doing, from its own record of it."""
     path = transcript_for(cwd)
     return read(path, now=now) if path else None
+
+
+def _text_of(content) -> str:
+    """The words out of a message, whatever shape it arrived in."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts = [
+        block.get("text", "")
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "text"
+    ]
+    return "\n".join(p for p in parts if p).strip()
+
+
+def final_answer(cwd: str) -> Optional[str]:
+    """What the agent said at the end of its turn, or None if the turn has not ended.
+
+    This is the one place that reads message *content*, and only for a turn that has finished —
+    because the caller is the watcher armed when you asked Jarvis to send a prompt, and reading
+    the answer back is the entire point of having asked.
+
+    It exists to replace a clipboard. The alternative was polling the terminal every six seconds
+    for up to fifteen minutes, by opening the command palette and copying the screen each time.
+    """
+    path = transcript_for(cwd)
+    if not path:
+        return None
+    for record in reversed(_tail_records(path)):
+        message = record.get("message") or {}
+        if message.get("role") != "assistant":
+            continue
+        if not message.get("stop_reason"):
+            continue
+        if message.get("stop_reason") != "end_turn":
+            return None            # still mid-turn; there is no final answer yet
+        return _text_of(message.get("content")) or None
+    return None
