@@ -247,6 +247,34 @@ def ensure(url: str = "", allow_restart: bool = False) -> dict:
 
 
 # --------------------------------------------------------------------------- CDP plumbing
+async def close_tab(target_id: str) -> bool:
+    """Close one tab, by whichever route is driving the browser.
+
+    Kept here rather than in the caller because the two routes close a tab differently — the port
+    has an HTTP endpoint for it, the extension has `chrome.tabs.remove` — and study mode should
+    not have to know which one it is talking to.
+    """
+    if not target_id:
+        return False
+    import httpx
+
+    if native_ready():
+        try:
+            async with httpx.AsyncClient(timeout=4) as client:
+                reply = await client.get(
+                    f"http://127.0.0.1:{DEBUG_PORT}/json/close/{target_id}")
+            if reply.status_code == 200:
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+    if relay_ready():
+        try:
+            return await relay().close_tab(int(target_id))
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
 async def _targets() -> list[dict]:
     """Every drivable tab, from whichever route is live.
 

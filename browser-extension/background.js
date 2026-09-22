@@ -63,6 +63,9 @@ function connect() {
       case "cdp":
         await forward(msg);
         break;
+      case "close":
+        await closeTab(msg);
+        break;
       default:
         break;
     }
@@ -126,6 +129,21 @@ function detachTab(tabId) {
   if (!attached.has(tabId)) return;
   attached.delete(tabId);
   chrome.debugger.detach({ tabId }).catch(() => { /* the tab may already be gone */ });
+}
+
+// Closing is `chrome.tabs.remove`, not a CDP command. Study mode needs it, and doing it through
+// the debugger would mean attaching to a tab purely in order to destroy it — which raises the
+// "being debugged" banner on something that is about to vanish.
+async function closeTab(msg) {
+  const tabId = msg.tabId;
+  try {
+    detachTab(tabId);
+    await chrome.tabs.remove(tabId);
+    send({ type: "result", id: msg.id, result: { closed: true } });
+  } catch (err) {
+    send({ type: "result", id: msg.id, error: String(err && err.message ? err.message : err) });
+  }
+  sendTabs();
 }
 
 async function forward(msg) {

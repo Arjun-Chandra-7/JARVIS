@@ -135,6 +135,17 @@ class Relay:
         if self._extension is not None:
             await self._extension.send(json.dumps({"type": "list-tabs"}))
 
+    async def close_tab(self, tab_id: int) -> bool:
+        """Close a tab. Not a CDP command — see the extension for why it is not."""
+        try:
+            reply = await self._to_extension({"type": "close", "tabId": int(tab_id)})
+        except Exception:  # noqa: BLE001
+            return False
+        if reply.get("error"):
+            return False
+        self._tabs = [t for t in self._tabs if t.get("id") != int(tab_id)]
+        return True
+
     async def _to_extension(self, body: dict) -> dict:
         if self._extension is None:
             raise ConnectionError("no browser extension is connected")
