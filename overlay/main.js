@@ -296,7 +296,12 @@ function createWindow() {
     // focusable so the text input and keyboard navigation work like a normal window; the window
     // is shown without activation, so appearing never steals focus from what you were typing in.
     focusable: true,
-    backgroundColor: "#00000000",
+    // Transparent, and white underneath it rather than black. The alpha is what makes the
+    // overlay float; but a compositor that will not grant a transparent visual drops the alpha
+    // and paints the rest, and the rest used to be #000000 — a black rectangle where the pill
+    // should be, which is precisely how this fails in the wild. White fails into the design
+    // instead of into a void.
+    backgroundColor: "#00ffffff",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
