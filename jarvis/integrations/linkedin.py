@@ -166,7 +166,11 @@ def _ensure() -> str | None:
 def open_console(view: str = "dashboard") -> bool:
     """Open the desktop console, on a specific screen."""
     url = f"{base_url()}/app/?view={view}"
-    return apps.open_url(url, browser="opera", new_window=True) is not None
+    # Whatever the person actually browses with. This was pinned to Opera, so switching
+    # browsers silently stopped the dashboard from appearing at all.
+    from . import web_browser
+
+    return apps.open_url(url, browser=web_browser.preferred(), new_window=True) is not None
 
 
 def open_profile() -> str:
@@ -182,7 +186,9 @@ def open_profile() -> str:
     profile_url = str((data.get("values") or {}).get("linkedin_profile_url") or "").strip()
     if not profile_url:
         return "No LinkedIn profile URL is stored in the copilot settings."
-    opened = apps.open_url(profile_url, browser="opera", new_window=True)
+    from . import web_browser
+
+    opened = apps.open_url(profile_url, browser=web_browser.preferred(), new_window=True)
     return "Opened your LinkedIn profile." if opened else "I couldn't open a browser window."
 
 

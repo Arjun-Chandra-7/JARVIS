@@ -47,6 +47,8 @@ def open_setup() -> dict:
         opened.append("VS Code")
     if apps.launch_app("spotify"):
         opened.append("Spotify")
-    if apps.open_url("https://chatgpt.com/", browser="opera"):
+    from ..integrations import web_browser
+
+    if apps.open_url("https://chatgpt.com/", browser=web_browser.preferred()):
         opened.append("ChatGPT in Opera")
     return {"closed": len(closed), "opened": opened}

@@ -16,9 +16,16 @@ def test_open_profile_uses_stored_copilot_url(monkeypatch):
         lambda url, browser="opera", **kwargs: opened.append((url, browser, kwargs)) or url,
     )
 
+    # Whatever the person actually browses with. This used to assert "opera", which pinned the
+    # bug: the call had a browser's name baked into it, so changing browsers did not change
+    # browsers and the dashboard quietly stopped appearing.
+    from jarvis.integrations import web_browser
+
+    monkeypatch.setattr(web_browser, "preferred", lambda: "app.zen_browser.zen")
+
     result = linkedin.open_profile()
 
-    assert opened == [(profile_url, "opera", {"new_window": True})]
+    assert opened == [(profile_url, "app.zen_browser.zen", {"new_window": True})]
     assert result == "Opened your LinkedIn profile."
 
 

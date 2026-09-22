@@ -11,6 +11,12 @@ import os
 import shutil
 import sys
 from dataclasses import dataclass, field
+
+
+def _preferred_browser() -> str:
+    from .integrations.web_browser import preferred
+
+    return preferred() or "firefox"
 from pathlib import Path
 
 try:
@@ -90,7 +96,9 @@ class Config:
     # --- browser ---
     # Opera GX is the browser on this machine, and the one precision control drives. `opera`
     # (plain) stays selectable; anything on PATH works.
-    browser: str = field(default_factory=lambda: os.environ.get("JARVIS_BROWSER", "opera-gx"))
+    # No hard-coded favourite: JARVIS_BROWSER when set, otherwise the desktop's own default.
+    # Pinning this to Opera meant changing browsers did not change browsers.
+    browser: str = field(default_factory=lambda: _preferred_browser())
     # Chromium's DevTools port, on loopback, is what lets Jarvis click inside a page instead of
     # guessing pixel coordinates from a screenshot. Set JARVIS_BROWSER_CONTROL=0 to disable.
     browser_control: bool = field(default_factory=lambda: _bool("JARVIS_BROWSER_CONTROL", True))

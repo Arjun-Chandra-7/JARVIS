@@ -13,7 +13,10 @@ PROMPT_FILE = Path(__file__).with_name("exam_tutor_prompt.md")
 
 
 async def open_and_prime() -> bool:
-    opened = await asyncio.to_thread(apps.open_url, "https://chatgpt.com/", "opera")
+    from ..integrations import web_browser
+
+    opened = await asyncio.to_thread(
+        apps.open_url, "https://chatgpt.com/", web_browser.preferred())
     if not opened:
         return False
     target = None
