@@ -5,7 +5,8 @@ calendar, the network queue, the numbers. Opening linkedin.com instead is techni
 asked for and never what was wanted — and that is what used to happen, because "open X" is
 handled by the generic opener and LinkedIn is a website like any other.
 
-So any request to open, see or go to LinkedIn comes here first, and the words pick the screen:
+So any request to open, see or go to LinkedIn — or to the professional dashboard, which is what
+this person actually calls it — comes here first, and the words pick the screen:
 ask for the profile and you get the profile, ask for drafts and you get approvals, ask for
 nothing in particular and you get the dashboard.
 
@@ -44,6 +45,13 @@ _LINKEDIN = re.compile(
         link\s*din | linked\s*din
     )\b""")
 
+# The other name for the same thing. The person who uses this calls it "my professional
+# dashboard", and that phrase contains no form of the word LinkedIn — so it missed the pattern
+# below entirely, went to the generic opener, and opened a website. Their name for it is the one
+# that has to work.
+_PROFESSIONAL = re.compile(
+    r"(?ix)\b(?:professional|work|career)\s+(?:dash(?:board)?|console|copilot|assistant|hub)\b")
+
 # Asking to look at it.
 _WANTS_TO_SEE = re.compile(
     r"""(?ix)\b(?:
@@ -62,7 +70,7 @@ _WANTS_TO_ACT = re.compile(
 def parse(text: str) -> Optional[str]:
     """The copilot screen to open, or None when this is not that request."""
     said = (text or "").strip()
-    if not said or not _LINKEDIN.search(said):
+    if not said or not (_LINKEDIN.search(said) or _PROFESSIONAL.search(said)):
         return None
     if _WANTS_TO_ACT.search(said):
         return None
