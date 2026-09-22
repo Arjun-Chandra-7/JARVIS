@@ -82,23 +82,37 @@ def test_the_family_is_recognised_through_a_flatpak_id(name, expected):
     assert wb.family(name) == expected
 
 
-def test_only_chromium_can_be_driven():
-    """Firefox dropped its partial CDP support for WebDriver BiDi, which is a different protocol
-    and not one anything here speaks."""
+def test_both_families_can_be_driven():
+    """Chromium over the DevTools protocol, Firefox over Marionette. This used to say only
+    Chromium, which was true until Marionette landed."""
     assert wb.can_be_driven("google-chrome") is True
-    assert wb.can_be_driven("app.zen_browser.zen") is False
+    assert wb.can_be_driven("app.zen_browser.zen") is True
 
 
-def test_an_undrivable_browser_says_why_and_names_itself():
-    """"I can't do that" is useless; "Zen is Firefox-family" tells somebody what to change."""
-    said = wb.why_not_drivable("app.zen_browser.zen")
-    assert "Zen" in said
-    assert "Firefox" in said
-    assert "Chromium" in said
+def test_a_browser_from_neither_family_cannot():
+    assert wb.can_be_driven("lynx") is False
+
+
+def test_something_unspeakable_says_which_protocols_are_known():
+    """"I can't do that" is useless; naming the two that are known tells somebody what to
+    switch to."""
+    said = wb.why_not_drivable("lynx")
+    assert "DevTools" in said and "Marionette" in said
 
 
 def test_a_drivable_browser_has_nothing_to_explain():
     assert wb.why_not_drivable("google-chrome") == ""
+    assert wb.why_not_drivable("app.zen_browser.zen") == ""
+
+
+def test_each_family_is_told_how_to_switch_automation_on():
+    """Separate question from "can it be driven": this one is "it could, but it is off", and the
+    remedy differs by family — a restart for Firefox, an extension or a port for Chromium."""
+    firefox = wb.how_to_enable("app.zen_browser.zen")
+    assert "Zen" in firefox and "restor" in firefox      # it keeps your tabs, which is the point
+    chromium = wb.how_to_enable("google-chrome")
+    assert "extension" in chromium or "debug port" in chromium
+    assert wb.how_to_enable("lynx") == ""
 
 
 def test_the_answer_is_cached_but_forgettable(monkeypatch):

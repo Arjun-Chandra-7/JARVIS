@@ -13,10 +13,14 @@ Worth separating, because the answers differ and conflating them is what made th
 
 *Opening* works with any browser: hand the URL to the desktop and the user's default takes it.
 
-*Driving* — clicking inside a page, reading it, typing into it — needs the DevTools protocol, and
-that is a Chromium thing. A Firefox-family browser (Zen, Floorp, LibreWolf, Firefox) does not
-speak it, so `can_be_driven()` answers honestly instead of letting a caller discover it halfway
-through a click.
+*Driving* — clicking inside a page, reading it, typing into it — needs an automation protocol,
+and the two families have different ones. Chromium has the DevTools protocol; Firefox has
+Marionette. Both are supported, so `can_be_driven()` is about whether Jarvis speaks this
+browser's protocol at all — not about which one it is.
+
+What differs is the *condition*. Chromium needs its debug port or the extension; Firefox needs to
+have been started with `--marionette`. Neither is on by default, which is why `why_not_drivable()`
+names the specific remedy rather than shrugging.
 
 The order of preference
 -----------------------
@@ -97,13 +101,13 @@ def family(name: Optional[str] = None) -> str:
 
 
 def can_be_driven(name: Optional[str] = None) -> bool:
-    """Whether Jarvis can click and read inside this browser's pages.
+    """Whether Jarvis speaks this browser's automation protocol at all.
 
-    Only Chromium's family speaks the DevTools protocol that `browser.py` is built on. Firefox
-    removed its own partial CDP support in favour of WebDriver BiDi, which is a different
-    protocol and not one anything here talks yet.
+    Both families are supported now — Chromium over the DevTools protocol, Firefox over
+    Marionette. This says nothing about whether the browser currently *has* automation switched
+    on; that is a live question and `browser.control_ready()` answers it.
     """
-    return family(name) == "chromium"
+    return family(name) in ("chromium", "firefox")
 
 
 def why_not_drivable(name: Optional[str] = None) -> str:
@@ -111,10 +115,25 @@ def why_not_drivable(name: Optional[str] = None) -> str:
     if can_be_driven(name):
         return ""
     which = name if name is not None else preferred()
-    if family(which) == "firefox":
-        return (f"{_spoken(which)} is a Firefox-family browser, so I can open pages in it but "
-                "not click inside them — that needs a Chromium browser.")
-    return f"I can open pages in {_spoken(which)} but I can't drive them."
+    return (f"I can open pages in {_spoken(which)} but I don't speak its automation protocol — "
+            "I know Chromium's DevTools and Firefox's Marionette.")
+
+
+def how_to_enable(name: Optional[str] = None) -> str:
+    """What would have to happen for this browser to be driveable, in a sentence.
+
+    Separate from why_not_drivable because they answer different questions: one is "I cannot
+    ever", the other is "I could, but it is switched off".
+    """
+    which = name if name is not None else preferred()
+    kind = family(which)
+    if kind == "firefox":
+        return (f"{_spoken(which)} needs restarting with automation enabled. It restores your "
+                "tabs, so it costs a few seconds rather than your session.")
+    if kind == "chromium":
+        return (f"{_spoken(which)} needs either the Jarvis extension loaded once, or a restart "
+                "with its debug port open.")
+    return ""
 
 
 def _spoken(name: str) -> str:
