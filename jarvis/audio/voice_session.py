@@ -699,11 +699,16 @@ class VoiceSession:
         Closing Discord once achieves nothing — it is open again within a minute, because the
         hand that opens it is not really asking a question. So it is closed again, quietly, and
         only mentioned when something actually came back.
+
+        Every eight seconds rather than twenty, because of Shorts: a Short is often over inside
+        twenty seconds, so a sweep on that interval lets you watch the whole thing before it
+        closes — which is the same as not closing it. A sweep is one tab listing over loopback;
+        doing it more often costs nothing worth counting.
         """
         from ..modes import study
 
         while True:
-            await asyncio.sleep(20.0)
+            await asyncio.sleep(8.0)
             if not study.on():
                 continue
             try:
