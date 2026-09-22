@@ -945,7 +945,9 @@ class VoiceSession:
                     self.config.whisper_model,
                     self.config.partial_model if self.config.live_partials else None,
                 )
-                # Load the Piper voice now: it costs ~1.6 s once here instead of on every reply.
+                # Load whichever voice will speak, now rather than on the first reply —
+                # about a second for Kokoro, 1.6 s for Piper, paid while the screen still
+                # says it is warming up.
                 local_tts.warmup(self.config.piper_model)
                 if self.config.live_partials and self._endpointer is not None:
                     self._partials = local_stt.PartialTranscriber(

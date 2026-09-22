@@ -98,7 +98,18 @@ def _get_voice(model_path: str):
 
 
 def warmup(model_path: str) -> bool:
-    """Load the voice ahead of first use so the first reply isn't slow. True if the API is live."""
+    """Load the voice ahead of first use so the first reply isn't slow. True if a voice is ready.
+
+    Whichever voice will actually speak. Warming Piper on a machine that has Kokoro would pay
+    1.6 s at startup for a fallback and still leave Kokoro's second to be paid on the first
+    reply — the exact delay this exists to remove.
+    """
+    if _better_voice_available():
+        from . import kokoro_tts
+
+        if kokoro_tts.warmup():
+            return True
+        # Kokoro is present but would not load, so Piper is about to be doing the talking.
     return _get_voice(model_path) is not None
 
 

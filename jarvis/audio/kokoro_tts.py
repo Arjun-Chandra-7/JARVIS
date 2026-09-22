@@ -163,6 +163,25 @@ def _get_pipeline(voice: str):
         return _pipeline
 
 
+def warmup(voice: str = "") -> bool:
+    """Load the weights ahead of the first reply. True when a voice is ready to speak.
+
+    Measured: the load is about a second, and without this it is a second of silence between the
+    first thing said to Jarvis and the first thing Jarvis says back — the one delay a user reads
+    as slowness, because there is nothing yet on screen to explain it.
+
+    Never downloads. When the weights are not there this is a no-op returning False, and Piper
+    stays the voice.
+    """
+    if not available():
+        return False
+    try:
+        _get_pipeline(voice or DEFAULT_VOICE)
+        return True
+    except Exception:  # noqa: BLE001 - a voice that will not load must not stop startup
+        return False
+
+
 def _to_pcm16(samples) -> bytes:
     """float32 -1..1 from the model, int16 for the same output path Piper's audio takes."""
     import numpy as np
@@ -219,14 +238,47 @@ def synth_stream(text: str, voice: str = "", delivery: Optional[Delivery] = None
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
+# The first piece is cut short on purpose. Measured: a single five-second sentence took 1.67s to
+# synthesise, and every one of those seconds was silence, because nothing could be spoken until
+# the whole thing was ready. Breaking the opening clause off gets a voice going in a fraction of
+# that, and the rest is synthesised while it plays.
+#
+# Only the first piece. Later ones are whole sentences, because a clause break mid-reply is
+# audible as a stumble and there is no latency left to buy by then.
+FIRST_PIECE_CHARS = 90
 
-def _sentences(text: str, max_chars: int = 320) -> list[str]:
-    """Sentence-sized pieces, with anything very long broken on a clause boundary."""
+# Past this a piece is too long to synthesise in one go whatever its punctuation says.
+MAX_PIECE_CHARS = 320
+
+
+def _split_on_a_clause(part: str, limit: int) -> tuple[str, str]:
+    """`part` broken at the last clause boundary before `limit`, or unbroken when there is none.
+
+    A comma is preferred, then the other places a sentence naturally pauses. Splitting mid-phrase
+    would be worse than waiting: the listener hears a glitch rather than a breath.
+    """
+    if len(part) <= limit:
+        return part, ""
+    for mark in (", ", "; ", ": ", " — ", " and ", " but "):
+        cut = part.rfind(mark, 0, limit)
+        if cut > limit // 3:
+            return part[:cut + (1 if mark == ", " else 0)].strip(), part[cut + len(mark):].strip()
+    return part, ""
+
+
+def _sentences(text: str, max_chars: int = MAX_PIECE_CHARS) -> list[str]:
+    """Speakable pieces, shortest first so a voice starts as soon as possible."""
     out: list[str] = []
     for part in _SENTENCE_SPLIT.split(text):
         part = part.strip()
         if not part:
             continue
+        # Only the very first piece of the whole reply is cut for latency.
+        if not out:
+            head, tail = _split_on_a_clause(part, FIRST_PIECE_CHARS)
+            if tail:
+                out.append(head)
+                part = tail
         while len(part) > max_chars:
             cut = part.rfind(",", 0, max_chars)
             if cut < max_chars // 3:

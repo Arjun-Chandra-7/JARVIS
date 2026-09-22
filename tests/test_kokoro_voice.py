@@ -130,3 +130,87 @@ def test_a_long_answer_is_split_so_speech_can_start_early():
 def test_the_british_voice_is_the_default():
     """JARVIS is a particular voice, and the default should not be a coin flip among fifty-four."""
     assert k.DEFAULT_VOICE.startswith("b")
+
+
+# --------------------------------------------------------------------------- starting to speak
+class TestTimeToFirstWord:
+    """Why the first piece is short.
+
+    A reply is synthesised piece by piece and spoken as each piece lands, so the wait before
+    Jarvis starts talking is the cost of the *first* piece alone. Measured on this machine: one
+    five-second sentence took 1.67 s to synthesise, all of it silence. Breaking the opening
+    clause off brought that to 1.05 s for the same line.
+    """
+
+    def test_a_long_opening_sentence_is_broken_at_a_clause(self):
+        pieces = k._sentences(
+            "Your first meeting is at ten with the design team, and the build from last night "
+            "finished cleanly.")
+        assert len(pieces) == 2
+        assert pieces[0] == "Your first meeting is at ten with the design team,"
+        assert pieces[1].startswith("and the build")
+
+    def test_only_the_first_piece_is_cut_that_way(self):
+        """A clause break mid-reply is audible as a stumble, and buys no latency by then."""
+        pieces = k._sentences(
+            "Right away. The deployment finished at nine, the tests all passed, and the site is "
+            "live.")
+        assert pieces[0] == "Right away."
+        # The second sentence is long and full of commas, and is still left whole.
+        assert pieces[1] == ("The deployment finished at nine, the tests all passed, and the "
+                             "site is live.")
+
+    def test_a_short_line_is_left_alone(self):
+        assert k._sentences("On it, sir.") == ["On it, sir."]
+
+    def test_a_sentence_with_nowhere_to_break_is_not_chopped_mid_phrase(self):
+        """Better a slightly longer wait than a glitch in the middle of a word."""
+        said = "Antidisestablishmentarianism " * 4
+        assert k._sentences(said.strip()) == [said.strip()]
+
+    def test_nothing_is_lost_or_duplicated_in_the_split(self):
+        said = ("Good morning, sir. The overnight build finished, the backup completed, and "
+                "there are two messages waiting for you.")
+        assert " ".join(k._sentences(said)) == said
+
+
+class TestWarmup:
+    """The load happens at startup or it happens in front of the user."""
+
+    def test_warmup_is_a_no_op_without_the_weights(self, monkeypatch):
+        """It must never be the thing that downloads 338 MB, and never break startup."""
+        monkeypatch.setattr(k, "available", lambda: False)
+        called = []
+        monkeypatch.setattr(k, "_get_pipeline", lambda v: called.append(v))
+        assert k.warmup() is False
+        assert called == []
+
+    def test_a_voice_that_will_not_load_does_not_stop_startup(self, monkeypatch):
+        monkeypatch.setattr(k, "available", lambda: True)
+
+        def boom(_voice):
+            raise RuntimeError("corrupt weights")
+
+        monkeypatch.setattr(k, "_get_pipeline", boom)
+        assert k.warmup() is False
+
+    def test_the_voice_that_will_speak_is_the_one_warmed(self, monkeypatch):
+        """Warming Piper on a Kokoro machine pays 1.6 s and leaves the real delay unpaid."""
+        from jarvis.audio import local_tts
+
+        monkeypatch.setattr(local_tts, "_better_voice_available", lambda: True)
+        monkeypatch.setattr(k, "available", lambda: True)
+        loaded = []
+        monkeypatch.setattr(k, "_get_pipeline", lambda v: loaded.append(v))
+        monkeypatch.setattr(local_tts, "_get_voice",
+                            lambda _p: pytest.fail("Piper was warmed instead of Kokoro"))
+        assert local_tts.warmup("/nonexistent.onnx") is True
+        assert loaded == [k.DEFAULT_VOICE]
+
+    def test_piper_is_warmed_when_kokoro_would_not_load(self, monkeypatch):
+        from jarvis.audio import local_tts
+
+        monkeypatch.setattr(local_tts, "_better_voice_available", lambda: True)
+        monkeypatch.setattr(k, "warmup", lambda *_a, **_k: False)
+        monkeypatch.setattr(local_tts, "_get_voice", lambda _p: object())
+        assert local_tts.warmup("/nonexistent.onnx") is True
