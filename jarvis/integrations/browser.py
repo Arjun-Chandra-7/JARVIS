@@ -158,7 +158,7 @@ def control_ready(timeout: float = 1.5) -> bool:
     The port is preferred when both are available: it is the browser's own, it needs no third
     process, and it can see targets an extension cannot.
     """
-    return native_ready(timeout) or relay_ready()
+    return native_ready(timeout) or relay_ready() or _firefox_now()
 
 
 def launch(url: str = "", wait_s: float = 12.0, restore: bool = False) -> bool:
@@ -247,6 +247,30 @@ def ensure(url: str = "", allow_restart: bool = False) -> dict:
 
 
 # --------------------------------------------------------------------------- CDP plumbing
+# --------------------------------------------------------------------------- the other family
+#
+# Everything above and below this point speaks CDP. A Firefox-family browser does not, so these
+# four route to Marionette instead — see `marionette` and `firefox_page`. The decision is made
+# per call rather than cached, because a browser can be restarted into automation halfway
+# through a session and nothing should have to be told.
+def _firefox_now() -> bool:
+    """Whether the browser in front of us is a driveable Firefox."""
+    from . import marionette, web_browser
+
+    return web_browser.family() == "firefox" and marionette.reachable()
+
+
+async def _through_marionette(fn):
+    """Run `fn(connection)` on a worker thread, since Marionette is a blocking socket."""
+    from . import marionette
+
+    def work():
+        with marionette.Connection() as conn:
+            return fn(conn)
+
+    return await asyncio.to_thread(work)
+
+
 async def close_tab(target: "dict | str") -> bool:
     """Close one tab, by whichever route that tab actually came from.
 
@@ -299,6 +323,8 @@ async def _targets() -> list[dict]:
     """
     import httpx
 
+    if _firefox_now():
+        return await _through_marionette(lambda conn: conn.tabs())
     try:
         async with httpx.AsyncClient(timeout=4) as client:
             r = await client.get(f"http://127.0.0.1:{DEBUG_PORT}/json")
@@ -652,6 +678,10 @@ def _closest_site(spoken: str) -> Optional[str]:
 
 
 async def current_page() -> dict:
+    if _firefox_now():
+        return await _through_marionette(
+            lambda conn: {"ok": True, "url": conn.url(), "title": conn.title()})
+
     """Where the browser is right now, or {} when nothing is open."""
 
     async def do(session: _Session):
@@ -1035,6 +1065,15 @@ async def search_here(query: str, newest: bool = False) -> dict:
 
 async def click_text(phrase: str, nth: int = 1) -> dict:
     """Click the element that best matches `phrase`."""
+    if _firefox_now():
+        from . import firefox_page
+
+        got = await _through_marionette(lambda conn: firefox_page.click_text(conn, phrase))
+        if got.get("ok"):
+            return {"ok": True, "clicked": got.get("clicked", phrase)}
+        # The same shape the CDP path returns, so the caller reads one field either way.
+        return {"ok": False, "error": got.get("why") or "could not click that",
+                "choices": got.get("choices") or []}
 
     async def do(session: _Session):
         found = await session.js(_FIND_JS % _js_string(phrase))
@@ -1127,6 +1166,14 @@ async def type_into(field: str, text: str, submit: bool = True) -> dict:
     so typing without focusing first silently goes nowhere. Search boxes are usually labelled only
     by their placeholder ("Titles, people, genres"), which is why the finder matches that too.
     """
+    if _firefox_now():
+        from . import firefox_page
+
+        got = await _through_marionette(
+            lambda conn: firefox_page.type_into(conn, field, text, submit))
+        if got.get("ok"):
+            return {"ok": True, "typed": text[:60]}
+        return {"ok": False, "error": got.get("why") or "could not type that"}
     clicked = await click_text(field)
     if not clicked.get("ok"):
         return {"ok": False, "error": f"Could not find a field matching “{field}”. "
@@ -1236,6 +1283,15 @@ async def press_key(key: str) -> dict:
 
 async def read_page() -> dict:
     """What is on the current page and what can be clicked — so Jarvis can answer, not guess."""
+    if _firefox_now():
+        from . import firefox_page
+
+        def work(conn):
+            return {"ok": True, "text": firefox_page.read_text(conn),
+                    "clickable": firefox_page.clickable(conn),
+                    "url": conn.url(), "title": conn.title()}
+
+        return await _through_marionette(work)
 
     async def do(session: _Session):
         info = await session.js(_LIST_JS)
