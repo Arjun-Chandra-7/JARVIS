@@ -488,6 +488,39 @@ def broken_without_anyone_speaking(heard: Heard) -> bool:
     return verdict(heard) == "saturated"
 
 
+def is_muted() -> Optional[bool]:
+    """Whether the default capture source is muted. None when it cannot be determined.
+
+    Checked through wireplumber rather than ALSA: on a PipeWire desktop the mute a person
+    actually toggles — the keyboard key, the slider in Settings — lives there, and ALSA can
+    report a perfectly open capture chain underneath one.
+    """
+    import subprocess
+
+    try:
+        out = subprocess.run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SOURCE@"],
+                             capture_output=True, text=True, timeout=5)
+    except Exception:  # noqa: BLE001
+        return None
+    if out.returncode != 0:
+        return None
+    return "MUTED" in out.stdout.upper()
+
+
+def unmute() -> bool:
+    """Open the capture source back up. True when the mute was actually lifted."""
+    import subprocess
+
+    if not is_muted():
+        return False
+    try:
+        done = subprocess.run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SOURCE@", "0"],
+                              capture_output=True, timeout=5)
+    except Exception:  # noqa: BLE001
+        return False
+    return done.returncode == 0 and is_muted() is False
+
+
 def recover(device_index: int = -1, note=None) -> tuple[bool, str]:
     """Try to get a usable microphone back. Returns (healthy, what was done).
 
@@ -500,6 +533,20 @@ def recover(device_index: int = -1, note=None) -> tuple[bool, str]:
             note(message)
 
     import time
+
+    # Before anything else, because a muted microphone is silent in a way that no amount of
+    # reopening or gain-fiddling can fix — and because it is the one cause the person can see.
+    # Found live: the mic had been muted, so every rung below ran, none helped, and the user got
+    # "sorry sir, I didn't catch that" instead of the one sentence that would have solved it.
+    if is_muted():
+        say("your microphone is muted")
+        if unmute():
+            time.sleep(0.3)
+            if not broken_without_anyone_speaking(sample(device_index)):
+                return True, "your microphone was muted — I've unmuted it"
+        else:
+            return False, ("your microphone is muted and I could not unmute it — "
+                           "the mute key or Settings will do it")
 
     say("microphone is unusable — reopening it")
     refresh_devices()
