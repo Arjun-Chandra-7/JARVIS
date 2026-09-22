@@ -46,6 +46,7 @@ async def lifespan(app: FastAPI):
 
     _unsub = coding_jobs.subscribe(_on_coding)
     watch = asyncio.create_task(_coding_watch())
+    study_watch = asyncio.create_task(_study_watch())
     contacts_task = asyncio.create_task(_contacts_ingest())
     from .presence import service as presence
     try:
@@ -64,6 +65,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         watch.cancel()
+        study_watch.cancel()
         contacts_task.cancel()
         _unsub()
         try:
@@ -116,6 +118,19 @@ async def _coding_watch() -> None:
                     await _emit("coding_job", json.dumps(job))
         except Exception:  # noqa: BLE001 - a HUD feed must never crash the server
             pass
+        await asyncio.sleep(3)
+
+
+async def _study_watch() -> None:
+    """Enforce study mode even when the separate voice process is not running."""
+    from .modes import study
+
+    while True:
+        if study.on():
+            try:
+                await study.enforce()
+            except Exception:  # noqa: BLE001
+                pass
         await asyncio.sleep(3)
 
 

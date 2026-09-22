@@ -16,6 +16,7 @@ REPO = Path(SPECPATH).resolve()
 datas = [
     (str(REPO / "webui"), "webui"),
     (str(REPO / "assets"), "assets"),
+    (str(REPO / "jarvis" / "modes" / "study_prompt.txt"), "jarvis/modes"),
 ]
 
 hidden_imports = [

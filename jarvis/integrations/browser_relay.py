@@ -114,6 +114,7 @@ class Relay:
         kind = msg.get("type")
         if kind == "tabs":
             self._tabs = [t for t in msg.get("tabs", []) if drivable(t)]
+            await self._enforce_study_mode()
         elif kind == "result":
             fut = self._pending.pop(msg.get("id"), None)
             if fut and not fut.done():
@@ -131,6 +132,31 @@ class Relay:
             except Exception:  # noqa: BLE001
                 listeners.discard(ws)
 
+    async def _enforce_study_mode(self) -> None:
+        """Close what obviously does not belong, the moment a tab reports itself.
+
+        Tab updates arrive as a page navigates, which is well before the next sweep — so a Short
+        closes as it opens rather than after somebody has watched most of it.
+
+        Only the decisions that are certain from the URL and title are made here: Shorts,
+        Instagram, an unmistakable vlog. Anything needing a judgement is left for the sweep,
+        because this runs inside the relay's message loop and that is no place to wait on a model.
+        """
+        if self._extension is None:
+            return
+        try:
+            from ..modes import study, watching
+
+            if not study.on():
+                return
+            for tab in list(self._tabs):
+                verdict = watching.verdict_for(tab.get("url", ""), tab.get("title", ""))
+                if verdict.close and verdict.certain:
+                    await self._extension.send(
+                        json.dumps({"type": "close-tab", "tabId": tab["id"]}))
+        except Exception:  # noqa: BLE001 — study mode must never break tab listing
+            return
+
     async def _ask_for_tabs(self) -> None:
         if self._extension is not None:
             await self._extension.send(json.dumps({"type": "list-tabs"}))
@@ -138,7 +164,7 @@ class Relay:
     async def close_tab(self, tab_id: int) -> bool:
         """Close a tab. Not a CDP command — see the extension for why it is not."""
         try:
-            reply = await self._to_extension({"type": "close", "tabId": int(tab_id)})
+            reply = await self._to_extension({"type": "close-tab", "tabId": int(tab_id)})
         except Exception:  # noqa: BLE001
             return False
         if reply.get("error"):
@@ -231,6 +257,18 @@ class Relay:
             })
         if path.rstrip("/") == "/json" or path.startswith("/json/list"):
             return _json_response(self.targets())
+        if path.startswith("/json/close/"):
+            # A web page can issue a cross-origin GET even when it cannot read the reply.
+            # The custom header forces a browser preflight, so arbitrary sites cannot use
+            # this local endpoint to close the user's tabs.
+            if request.headers.get("X-Jarvis-Study") != "close":
+                return _json_response({"closed": False})
+            try:
+                tab_id = int(path.removeprefix("/json/close/").split("?", 1)[0])
+                reply = await self._to_extension({"type": "close-tab", "tabId": tab_id})
+                return _json_response({"closed": not bool(reply.get("error"))})
+            except (ValueError, ConnectionError, asyncio.TimeoutError):
+                return _json_response({"closed": False})
         return None                                  # anything else continues to the websocket
 
     async def stop(self) -> None:

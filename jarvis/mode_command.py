@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Optional
 
-from .modes import ironman, study
+from .modes import coding_setup, ironman, study
 
 
 async def _tell_the_overlay(shape: str) -> None:
@@ -27,9 +27,8 @@ async def handle(text: str, config=None) -> Optional[str]:
 
     # ---- study mode
     if study.asked_to_stop(said):
-        from .modes import exam_tutor
-
-        exam_tutor.forget()
+        # The per-video judgements belong to the session that made them: next time is a new
+        # timetable and possibly a different opinion about what counts as studying.
         study.forget_judgements()
         was = study.stop()
         if was is None:
@@ -44,25 +43,21 @@ async def handle(text: str, config=None) -> Optional[str]:
             return "Already in study mode, sir."
         study.start()
         apps, tabs = await study.enforce()
+        from .modes import study_chat
+        chat = await study_chat.open_and_prime()
         shut = len(apps) + len(tabs)
+        return ("Study mode, sir. " +
+                (f"Closed {shut} distraction{'s' if shut != 1 else ''}, and I'll keep them closed. "
+                 if shut else "Nothing to close. ") +
+                ("Opened ChatGPT in Opera with the exam tutor prompt. " if chat else
+                 "I couldn't set the exam tutor prompt in Opera. ") +
+                "Say “exit study mode” when you're done.")
 
-        # The tutor comes up with the mode, so the brief is already in place before the first
-        # question rather than being pasted in again every session.
-        from .modes import exam_tutor
-
-        tutor_said = ""
-        try:
-            _opened, tutor_said = await exam_tutor.open_with_brief()
-        except Exception:  # noqa: BLE001 — study mode's job is closing things; this is extra
-            tutor_said = ""
-
-        return " ".join(p for p in (
-            "Study mode, sir.",
-            (f"Closed {shut} distraction{'s' if shut != 1 else ''}, and I'll keep them closed."
-             if shut else "Nothing to close."),
-            tutor_said,
-            "Say “exit study mode” when you're done.",
-        ) if p)
+    if coding_setup.asked_to_start(said):
+        result = await asyncio.to_thread(coding_setup.open_setup)
+        opened = ", ".join(result["opened"])
+        return (f"Coding setup ready, sir. Opened {opened}." if opened else
+                "I closed the other windows, but couldn't open the coding apps.")
 
     # ---- Iron Man mode
     if ironman.asked_to_stop(said):

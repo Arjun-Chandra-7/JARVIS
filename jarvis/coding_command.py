@@ -18,7 +18,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from .coding import handover, prompts, quota, roster, session, vscode, watch
+from .coding import handover, prompts, quota, roster, session, vscode
 
 # How the next piece of work gets asked for, once you are already working.
 _ASK = re.compile(
@@ -172,10 +172,11 @@ async def run(work: str, text: str) -> str:
     if not await asyncio.to_thread(vscode.send_prompt, work):
         return opening + "But I couldn't type the prompt."
     live.touch()
-    # The answer takes anywhere from seconds to minutes; it is announced when it lands rather
-    # than waited for here.
-    watch.expect(live.spoken, work)
-    return opening + f"Asked it to {work[:90]}. I'll tell you what it says."
+    # Claude's Stop hook is the only reliable turn-completion signal for an interactive
+    # session. The other terminal agents do not expose one, so do not promise an alert.
+    ending = ("I'll tell you when Claude's turn ends." if live.agent == "claude" else
+              "You can follow its progress in VS Code.")
+    return opening + f"Asked it to {work[:90]}. {ending}"
 
 
 async def handle(text: str, config=None) -> Optional[str]:

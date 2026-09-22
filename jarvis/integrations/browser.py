@@ -247,26 +247,42 @@ def ensure(url: str = "", allow_restart: bool = False) -> dict:
 
 
 # --------------------------------------------------------------------------- CDP plumbing
-async def close_tab(target_id: str) -> bool:
-    """Close one tab, by whichever route is driving the browser.
+async def close_tab(target: "dict | str") -> bool:
+    """Close one tab, by whichever route that tab actually came from.
 
-    Kept here rather than in the caller because the two routes close a tab differently — the port
-    has an HTTP endpoint for it, the extension has `chrome.tabs.remove` — and study mode should
-    not have to know which one it is talking to.
+    Given the whole target record, the route is not guessed: the tab's own
+    `webSocketDebuggerUrl` names the port it is reachable on, so a tab listed by the relay is
+    closed through the relay and one listed by the debug port through the port. Guessing from
+    which route happens to be up is wrong the moment both are.
+
+    The relay's close endpoint wants an `X-Jarvis-Study` header. That is not ceremony: a web page
+    can issue a cross-origin GET even when it cannot read the reply, and a custom header forces a
+    preflight, so a random site cannot use a loopback endpoint to shut your tabs.
     """
+    if isinstance(target, str):
+        target = {"id": target}
+    target_id = target.get("id", "")
     if not target_id:
         return False
     import httpx
 
-    if native_ready():
-        try:
-            async with httpx.AsyncClient(timeout=4) as client:
-                reply = await client.get(
-                    f"http://127.0.0.1:{DEBUG_PORT}/json/close/{target_id}")
-            if reply.status_code == 200:
-                return True
-        except Exception:  # noqa: BLE001
-            pass
+    debugger = target.get("webSocketDebuggerUrl", "")
+    relay_port = relay().port
+    through_relay = f":{relay_port}/" in debugger
+    port = relay_port if through_relay else DEBUG_PORT
+
+    try:
+        async with httpx.AsyncClient(timeout=4) as client:
+            reply = await client.get(
+                f"http://127.0.0.1:{port}/json/close/{target_id}",
+                headers={"X-Jarvis-Study": "close"} if through_relay else None)
+        if reply.status_code != 200:
+            return False
+        return bool(reply.json().get("closed")) if through_relay else True
+    except Exception:  # noqa: BLE001
+        pass
+
+    # No listing to route by — fall back to asking the relay directly.
     if relay_ready():
         try:
             return await relay().close_tab(int(target_id))

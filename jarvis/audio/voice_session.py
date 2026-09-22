@@ -720,57 +720,47 @@ class VoiceSession:
                 self.on_event("study", f"closed again: {came_back}")
 
     async def _watch_coding_agents(self) -> None:
-        """Watch Claude, Codex and Antigravity, however they were started.
+        """Show process activity on the HUD without claiming a task has finished.
 
-        The dot on the pill follows them — orange working, green just finished, nothing when none
-        is open — and a finished turn is said out loud. Nothing is announced on the first look, or
-        every restart would greet you with the state of a session you have been watching for an
-        hour.
+        This colours the dot and says nothing. CPU going quiet is not a completion signal —
+        Claude waits on tools and thinks between bursts, and calling any of that "finished" is
+        what produced the repeated false alerts. Turn endings are announced from Claude's own
+        Stop hook in `_watch_claude_stops`, which fires once, exactly when a turn ends.
 
-        Nothing here reads the terminal. It used to, to tell a finished turn from a waiting one,
-        and the way it did that was to open the command palette, run Terminal: Select All, copy,
-        and press escape — every few seconds, while you were typing into it. The agents write
-        their own state to a transcript; `presence` reads that instead, and the clipboard is left
-        alone.
+        Nothing here reads the terminal either. It used to, to tell a finished turn from a
+        waiting one, and the way it did that was to open the command palette, run Terminal:
+        Select All, copy and press escape — every few seconds, while you were typing into it.
+        `presence` now reads the agents' own transcripts instead, so the dot is better informed
+        and the clipboard is left alone.
         """
-        from ..coding import presence, roster, watch
+        from ..coding import presence
 
-        first_look = True
-        announced = set()
         while True:
             await asyncio.sleep(4.0)
             try:
                 now = await asyncio.to_thread(presence.look)
-                events = presence.drain_events()
+                # Drained and discarded: the dot is this watcher's job, the announcement is the
+                # Stop hook's. Left undrained they would pile up for ever.
+                presence.drain_events()
             except Exception:  # noqa: BLE001 — a failed look must not end the watcher
                 continue
-
-            # Announcements come from the per-session events, not from the dot. The dot can only
-            # show one thing at a time, so watching it for changes meant a session finishing
-            # while another was still working was never mentioned — and with three terminals
-            # open, another one is nearly always working.
-            for event in events:
-                if first_look:
-                    # Whatever was already on screen when Jarvis started is not news.
-                    announced.add(event.completion_id)
-                    continue
-                if event.completion_id in announced:
-                    continue
-                announced.add(event.completion_id)
-                who = roster.spoken_name(event.agent)
-                if event.kind == "asking":
-                    self._speak(f"{who} is waiting on you, sir.")
-                    continue
-                # A prompt sent through coding_command has its own output-based watcher. The
-                # process watcher is useful for agents started by hand, but speaking here as
-                # well turns one prompt into two completion announcements.
-                expected_c = roster.canonical_name(watch.waiting_for())
-                if ((not expected_c or expected_c != roster.canonical_name(event.agent))
-                        and not watch.recently_finished(event.agent)):
-                    self._speak(f"{who} has finished, sir.")
-
             self.on_event("agent", f"{now.kind}:{now.agent}")
-            first_look = False
+
+    async def _watch_claude_stops(self) -> None:
+        """Announce actual Claude turn endings from its Stop hook, once per message."""
+        from ..coding import claude_stop
+
+        offset = claude_stop.end_offset()  # old events on restart are not new completions
+        seen: set[str] = set()
+        while True:
+            await asyncio.sleep(3.0)
+            events, offset = await asyncio.to_thread(claude_stop.read_since, offset)
+            for event in events:
+                key = event.get("id", "")
+                if key and key not in seen:
+                    seen.add(key)
+                    self.on_event("coding", "Claude finished a turn")
+                    self._speak("Claude has finished, sir.")
 
     async def _watch_coding_terminal(self) -> None:
         """Say what the agent in the editor concluded, once it has stopped writing.
@@ -932,9 +922,11 @@ class VoiceSession:
         asyncio.create_task(self._watch_coding_jobs())  # speak coding-job completions + chime
         asyncio.create_task(self._watch_meet())  # announce when a joined Meet ends, with summary
         asyncio.create_task(self._watch_power())  # "laptop charging, battery N%" on plug/unplug
-        asyncio.create_task(self._watch_coding_terminal())  # speak what the editor's agent concluded
+        # Terminal scraping steals the clipboard and a quiet screen is not proof of completion.
+        # Managed coding jobs provide an explicit completion state instead.
         asyncio.create_task(self._keep_study_mode())  # re-close distractions while studying
-        asyncio.create_task(self._watch_coding_agents())  # colour the dot, announce done/asking
+        asyncio.create_task(self._watch_coding_agents())  # process activity on the HUD only
+        asyncio.create_task(self._watch_claude_stops())  # only a real Claude Stop hook speaks
 
         if self.config.screen_always:  # keep screen vision on from the start
             from ..vision import live

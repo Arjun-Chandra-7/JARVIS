@@ -63,7 +63,8 @@ function connect() {
       case "cdp":
         await forward(msg);
         break;
-      case "close":
+      // "close-tab" is the name the relay and its tests already use.
+      case "close-tab":
         await closeTab(msg);
         break;
       default:
