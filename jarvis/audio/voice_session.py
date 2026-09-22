@@ -717,30 +717,25 @@ class VoiceSession:
     async def _watch_coding_agents(self) -> None:
         """Watch Claude, Codex and Antigravity, however they were started.
 
-        The dot on the pill follows them — orange working, red waiting on you, green just
-        finished, nothing when none is open — and the two states worth interrupting for are said
-        out loud. Nothing is announced on the first look, or every restart would greet you with
-        the state of a session you have been watching for an hour.
-        """
-        from ..coding import presence, roster, terminal, vscode, watch
+        The dot on the pill follows them — orange working, green just finished, nothing when none
+        is open — and a finished turn is said out loud. Nothing is announced on the first look, or
+        every restart would greet you with the state of a session you have been watching for an
+        hour.
 
-        def read_if_already_there():
-            # Only when the editor already has the keyboard. Reading the terminal focuses a
-            # window and borrows the clipboard, and doing that to someone working in another
-            # application, to colour a dot, is not a trade worth making.
-            try:
-                if vscode.active_window() != vscode.window():
-                    return ""
-                return terminal.tail(30) or ""
-            except Exception:  # noqa: BLE001
-                return ""
+        Nothing here reads the terminal. It used to, to tell a finished turn from a waiting one,
+        and the way it did that was to open the command palette, run Terminal: Select All, copy,
+        and press escape — every few seconds, while you were typing into it. The agents write
+        their own state to a transcript; `presence` reads that instead, and the clipboard is left
+        alone.
+        """
+        from ..coding import presence, roster, watch
 
         first_look = True
         announced = set()
         while True:
             await asyncio.sleep(4.0)
             try:
-                now = await asyncio.to_thread(presence.look, read_if_already_there)
+                now = await asyncio.to_thread(presence.look)
                 events = presence.drain_events()
             except Exception:  # noqa: BLE001 — a failed look must not end the watcher
                 continue

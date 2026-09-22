@@ -59,10 +59,17 @@ PROJECTS = os.path.expanduser(os.environ.get("JARVIS_CLAUDE_PROJECTS", "~/.claud
 # expensive thing this program does.
 TAIL_BYTES = 512 * 1024
 
-# A turn that stopped on tool_use and then went quiet is blocked on something — nearly always a
-# permission prompt, because that is the only thing that stops an agent mid-tool. Long enough not
-# to fire during an ordinary slow tool call.
-ASKING_AFTER_S = 45.0
+# Why there is no "it has gone quiet, so it must be asking" rule here.
+#
+# It was tried, at forty-five seconds, and it was wrong within two minutes of running: a session
+# mid-tool-call went quiet for seventy-five seconds because the tool itself was slow, and the
+# rule announced a permission prompt that did not exist. Silence after `tool_use` means the tool
+# is running. It does not mean anybody is waiting on you, and there is no length of silence that
+# separates the two — a long build and a permission prompt look identical from out here.
+#
+# So a blocked turn reads as `working`: an orange dot and nothing said. That is the right way to
+# be wrong. Guessing produces exactly the false announcement this whole change exists to remove,
+# and going red for a prompt that is not there is worse than not going red at all.
 
 # A transcript nobody has written to in this long belongs to a session that is over, whatever its
 # last message said. Without this, every stale project directory on the disk reports a finished
@@ -149,11 +156,9 @@ def read(path: str, now: Optional[float] = None) -> Optional[Turn]:
         uuid = str(record.get("uuid") or "")
         if reason == "end_turn":
             return Turn(kind="done", completion_id=uuid, at=written)
-        # Stopped to use a tool. Still working — unless nothing has been written since, in which
-        # case it is waiting on somebody, and that somebody is you.
-        quiet_for = moment - written
-        kind = "asking" if quiet_for > ASKING_AFTER_S else "working"
-        return Turn(kind=kind, completion_id="", at=written)
+        # Stopped to use a tool, so the tool is running. However long it has been quiet — see the
+        # note above ASKING_AFTER_S's absence.
+        return Turn(kind="working", completion_id="", at=written)
     return None
 
 

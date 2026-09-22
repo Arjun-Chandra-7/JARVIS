@@ -28,6 +28,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
+from . import transcripts
+
 # What each state means to the eye. The dot on the pill takes these directly.
 COLOURS = {
     "idle": "blue",         # nothing open
@@ -310,7 +312,8 @@ def look(read_terminal=None) -> State:
 
     # The terminal is read at most once per look, on the first session that has something new to
     # say. Reading it borrows the clipboard, and three sessions stopping together is no reason to
-    # borrow it three times.
+    # borrow it three times. Nothing in Jarvis passes a reader any more — see `_from_transcript`
+    # — but the argument stays for callers that want to, and for the tests.
     read_already = False
     words = ""
 
@@ -318,6 +321,12 @@ def look(read_terminal=None) -> State:
         s = _sessions.setdefault(pid, Session(name=agent.name, pid=pid))
         s.cpu = _busy(pid)
         s.last_seen = now
+
+        # The agent's own transcript outranks anything inferred from processor load, because it
+        # is a record rather than an inference. Only when there is no transcript does the CPU
+        # ladder below get a say.
+        if _from_transcript(s, now):
+            continue
 
         if s.cpu > WORKING_ABOVE:
             if not s.busy_since:
@@ -357,6 +366,42 @@ def look(read_terminal=None) -> State:
 
     _state = _summarise()
     return _state
+
+
+def _from_transcript(s: "Session", now: float) -> bool:
+    """Set this session's state from what the agent wrote down. True when it could.
+
+    The completion identity is the uuid of the message that ended the turn, so a finished turn is
+    announced exactly once and can never be announced twice — however often this is called, and
+    whatever the process does between calls. That is the fix for the spam, and it is structural
+    rather than bookkeeping.
+    """
+    cwd = _working_directory(s.pid)
+    if not cwd:
+        return False
+    turn = transcripts.state_for(cwd, now=now)
+    if turn is None:
+        return False
+
+    if turn.kind == "done":
+        if s.completion_id != turn.completion_id:
+            # A turn we have not seen end before.
+            s.completion_id = turn.completion_id
+            s.cycles += 1
+            s.stopped_at = now
+            _events.append(Event(kind="done", agent=s.name, completion_id=turn.completion_id))
+        s.busy_since = 0.0
+        # Green means "just finished". After that it is only a window that happens to be open.
+        s.kind = "done" if now - s.stopped_at <= DONE_FOR_S else "idle"
+        return True
+
+    # Anything that is not a finished turn is a running one. The transcript deliberately does not
+    # try to tell "blocked on a permission prompt" from "running a slow tool" — see the note in
+    # transcripts.py about why that guess is worse than not making it.
+    s.kind = "running"
+    s.busy_since = s.busy_since or now
+    s.stopped_at = 0.0
+    return True
 
 
 def _summarise() -> State:
