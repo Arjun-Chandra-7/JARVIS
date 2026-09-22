@@ -28,7 +28,11 @@ _ASK = re.compile(
             (?:we|i)\s+(?:need\s+to|have\s+to|should|want\s+to)\s+ |
             (?:let'?s|lets)\s+ |
             (?:can\s+you|could\s+you|please)\s+ |
-            (?:tell|ask|get)\s+(?:claude|codex|antigravity|agy|gemini)\s+to\s+
+            (?:tell|ask|get)\s+(?:claude|codex|antigravity|agy|gemini|an?\s+agent)\s+to\s+ |
+            # "claude, refactor the auth module" — an agent addressed by name, comma or not.
+            # This is how people actually talk to them, and without it the whole orchestration
+            # was unreachable for the commonest phrasing there is.
+            (?:claude|codex|antigravity|agy|gemini)[,:]?\s+
         )
         (?P<work>.{4,400})$""")
 
@@ -39,6 +43,20 @@ _IMPERATIVE = re.compile(
         remove | move | update | change | test | debug | explain | review | optimi[sz]e |
         install | run | commit | revert | undo
     )\b.{3,400}$""")
+
+
+# The nouns, on their own. A bare imperative with no agent in conversation needs one of these
+# before it counts as coding work: "delete the migration" is for an agent, "delete all my
+# screenshots" is not, and the verb cannot tell them apart. Requiring a noun that belongs to
+# software is what separates them.
+_CODE_NOUN = re.compile(
+    r"""(?ix)\b(?: function | method | class | module | file | folder | directory | component |
+          endpoint | route | api | schema | database | table | query | migration | test | tests |
+          bug | error | exception | crash | build | deploy | commit | branch | merge | repo |
+          css | html | json | yaml | config | server | client | frontend | backend | ui |
+          button | form | page | script | package | dependency | import | type | interface |
+          code | function | variable | handler | parser | model | endpoint | cli | log | logs )\b
+    """)
 
 
 # "We should add a retry to the upload" and "we should go out for dinner" have the same shape,
@@ -73,9 +91,20 @@ def parse(text: str) -> Optional[str]:
         if work and (looks_like_software(work) or roster.named_in(said)):
             return work
         return None
-    # A bare imperative only counts when an agent is mid-conversation; otherwise "open netflix"
-    # and "delete all my screenshots" would both look like coding work.
+    # A bare imperative, said to an agent already in conversation: anything goes, because the
+    # conversation establishes what it is about.
     if session.current() and _IMPERATIVE.match(said):
+        return said.strip(" ,.")
+
+    # A bare imperative with no conversation running — "fix the bug in voice_session", "build me
+    # a login page". This is how the work is nearly always phrased, and requiring a polite
+    # lead-in meant none of it ever reached the orchestration.
+    #
+    # The guard is the noun, not the verb. "delete the migration" and "delete all my
+    # screenshots" share a verb and only one is for a coding agent, so a word that belongs to
+    # software has to appear. `_should_take_it` has already established that the editor is the
+    # window in front of you.
+    if _IMPERATIVE.match(said) and _CODE_NOUN.search(said):
         return said.strip(" ,.")
     return None
 
