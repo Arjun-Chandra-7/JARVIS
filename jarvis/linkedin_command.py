@@ -34,7 +34,15 @@ SCREENS: tuple[tuple[str, str], ...] = (
 
 DEFAULT_SCREEN = "dashboard"
 
-_LINKEDIN = re.compile(r"(?i)\b(?:linked\s*in|linkedin|linked-in)\b")
+# The mishearings matter more than the spelling. Taken from the real transcript: "open my
+# lindin" was heard, missed by a pattern that only knew "linkedin", handed to the brain, and
+# answered with "Opened Feed | LinkedIn" — the site, not the dashboard. The user's own checkout
+# of the copilot is called "Linkdin", which is a fair indication of how the word arrives.
+_LINKEDIN = re.compile(
+    r"""(?ix)\b(?:
+        linked\s*[-]?\s*in | linkedin | lin[kg]?d[ie]n | lind[ie]n | linkd?in |
+        link\s*din | linked\s*din
+    )\b""")
 
 # Asking to look at it.
 _WANTS_TO_SEE = re.compile(
