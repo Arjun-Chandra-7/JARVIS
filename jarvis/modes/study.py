@@ -117,8 +117,76 @@ def _looks_distracting(url: str, title: str) -> bool:
     return any(bad in haystack for bad in DISTRACTING_SITES)
 
 
+# One judgement per video, remembered for as long as the session lasts. Without this the sweep
+# asks the brain about the same lecture every few seconds for an hour.
+_judged: dict[str, bool] = {}
+
+
+def forget_judgements() -> None:
+    _judged.clear()
+
+
+async def _should_close(url: str, title: str) -> tuple[bool, str]:
+    """Whether this tab goes, and the reason — asking the brain only when the words do not say."""
+    from . import watching
+
+    verdict = watching.verdict_for(url, title)
+    if verdict.certain:
+        return verdict.close, verdict.reason
+
+    key = watching.video_id(url) or url
+    if key in _judged:
+        return _judged[key], "as judged earlier"
+
+    educational = await _ask_the_brain(title)
+    if educational is None:
+        # No answer, so keep the bias the classifier already has: leave it open. Closing a
+        # lecture somebody is midway through is the worse mistake.
+        return False, "could not tell, so left alone"
+    _judged[key] = not educational
+    return (not educational), ("looks like a lecture" if educational else "not educational")
+
+
+async def _ask_the_brain(title: str) -> Optional[bool]:
+    """One yes-or-no about a video title. None when there is no answer to be had.
+
+    Deliberately not a conversation: a single constrained question, answered in one word, so a
+    model cannot talk itself into an essay about whether learning is subjective.
+    """
+    from ..modes import watching
+
+    clean = watching._clean_title(title)
+    if not clean:
+        return None
+    question = (
+        "A student is in study mode. Is this YouTube video educational — a lecture, tutorial, "
+        "explanation, documentary or exam preparation — rather than entertainment?\n"
+        f"Title: {clean}\n"
+        "Answer with exactly one word: YES or NO."
+    )
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=12) as client:
+            reply = await client.post("http://127.0.0.1:8770/chat",
+                                      json={"message": question, "session_id": "study"})
+        said = (reply.json() or {}).get("reply", "")
+    except Exception:  # noqa: BLE001
+        return None
+    said = said.strip().upper()
+    if said.startswith("YES"):
+        return True
+    if said.startswith("NO"):
+        return False
+    return None
+
+
 async def close_tabs() -> list[str]:
-    """Close distracting tabs in whichever browser Jarvis can talk to."""
+    """Close distracting tabs in whichever browser Jarvis can talk to.
+
+    YouTube is judged rather than blanket-closed — see `watching` — because study mode that
+    closes the lecture is study mode nobody turns on.
+    """
     from ..integrations import browser
 
     closed: list[str] = []
@@ -130,29 +198,13 @@ async def close_tabs() -> list[str]:
         if target.get("type") != "page":
             continue
         url, title = target.get("url", ""), target.get("title", "")
-        if not _looks_distracting(url, title):
+        close, _why = await _should_close(url, title)
+        if not close:
             continue
-        if not await _close_tab(target.get("id", "")):
+        if not await browser.close_tab(target.get("id", "")):
             continue
         closed.append(title[:50] or url[:50])
     return closed
-
-
-async def _close_tab(target_id: str) -> bool:
-    """Close one tab through the debugging port, which is how Jarvis reaches the browser."""
-    if not target_id:
-        return False
-    import httpx
-
-    from ..integrations import browser
-
-    try:
-        async with httpx.AsyncClient(timeout=4) as client:
-            reply = await client.get(
-                f"http://127.0.0.1:{browser.DEBUG_PORT}/json/close/{target_id}")
-        return reply.status_code == 200
-    except Exception:  # noqa: BLE001
-        return False
 
 
 async def enforce() -> tuple[list[str], list[str]]:
