@@ -140,6 +140,26 @@ Claude completion alerts come from Claude's Stop hook. Install it once with
 `.venv/bin/python scripts/install-claude-stop-hook.py`. The passive coding activity display never
 reads the terminal or clipboard and never announces a completion based on CPU use.
 
+## Which browser, and whether it can be driven
+
+Pages open in whatever you actually browse with: `JARVIS_BROWSER` if you set it, otherwise the
+desktop default, otherwise whatever is installed. No favourite is baked in.
+
+*Driving* a page — clicking inside it, reading it, typing into it — needs an automation protocol,
+and the two browser families have different ones:
+
+    Chromium (Chrome, Brave, Opera, Vivaldi)   the DevTools protocol
+    Firefox  (Zen, Floorp, LibreWolf, Firefox) Marionette
+
+Both are supported. Neither is switched on by default, and Jarvis will tell you which one it
+needs rather than silently failing to click:
+
+- **Chromium** — load `browser-extension/` once (see below), or start the browser with its debug
+  port.
+- **Firefox and Zen** — the browser has to be started with `--marionette`. Say *"restart the
+  browser with control"* and Jarvis will do it. Firefox restores your session, so it costs a few
+  seconds of flicker rather than your tabs.
+
 ## Driving the browser you already have open
 
 Control normally needs the browser started with `--remote-debugging-port`, and restarting it to
