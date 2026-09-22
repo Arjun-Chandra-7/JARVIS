@@ -1,58 +1,75 @@
 /* JARVIS design tokens — shared by the Electron overlay and the browser HUD.
  *
- * Restrained cinematic: obsidian and graphite surfaces, off-white type, and a single controlled
- * ice-blue accent that is spent only on state and focus. Semantic colours stay distinct from the
- * accent so "working" never reads as "succeeded".
+ * Soft daylight. The overlay used to be obsidian and graphite with an ice-blue accent: cinematic,
+ * and heavy. It now reads the way a small system utility reads on a Mac — white surfaces, a lot
+ * of air, hairline separators, shadows that suggest a millimetre of lift rather than a spotlight.
  *
- * Everything is defined once here. If a colour is needed twice, it belongs in this file. */
+ * The rules that keep it feeling like one object:
+ *
+ *   - Light is the default and the design. Dark exists, under [data-appearance="dark"], and is a
+ *     translation of the same design rather than an inversion of it.
+ *   - Depth comes from shadow and hairline, never from a heavier fill. Stacked greys are what
+ *     makes a light interface look muddy.
+ *   - The accent is spent on state and focus only. Semantic colours stay separate, so "working"
+ *     can never read as "succeeded".
+ *   - Every colour is defined once, here. If a value is needed twice it belongs in this file.
+ */
 
 :root {
-  /* --- surfaces: darkest at the back, each step forward is lighter --- */
-  --surface-void: #06080a; /* behind everything; the transparent window's own ground */
-  --surface-base: #0b0d10; /* obsidian — the pill and panel body */
-  --surface-raised: #14171c; /* graphite — cards, input wells */
-  --surface-overlay: #1b1f26; /* menus, hovered cards */
-  --surface-hover: #22262e;
+  /* --- surfaces: the page, then each step closer to the reader ---
+   * Not pure white: a paper-white ground with a trace of blue keeps it from glaring beside the
+   * accent, and gives the white cards something to sit on. */
+  --surface-void: #eef0f4;   /* behind everything; the transparent window's own ground */
+  --surface-base: #ffffff;   /* the pill and the panel body */
+  --surface-raised: #f6f7f9; /* cards, input wells */
+  --surface-overlay: #eef0f4;/* menus, hovered cards */
+  --surface-hover: #e6e9ee;
 
-  /* --- type --- */
-  --text-primary: #e9ecef; /* soft off-white; never pure #fff, it glares on a dark ground */
-  --text-secondary: #9aa4b0;
-  --text-muted: #6b7482;
-  --text-faint: #4a525e;
+  /* --- type: near-black, never pure, because #000 on white is a glare at small sizes --- */
+  --text-primary: #1c1f24;
+  --text-secondary: #5b626d;
+  --text-muted: #868d98;
+  --text-faint: #aeb4bd;
 
   /* --- the one accent --- */
-  --accent: #7ec8e3; /* ice blue */
-  --accent-bright: #a9dff2; /* hover / active only */
-  --accent-dim: #40616f;
-  --accent-glow: rgba(126, 200, 227, 0.18);
-  --accent-line: rgba(126, 200, 227, 0.35);
+  --accent: #0071e3;         /* a calm system blue */
+  --accent-bright: #0a84ff;  /* hover / active only */
+  --accent-dim: #a8c9f0;
+  --accent-glow: rgba(0, 113, 227, 0.12);
+  --accent-line: rgba(0, 113, 227, 0.32);
 
   /* --- semantic: distinct hues, never the accent --- */
-  --success: #6ee7a8;
-  --success-dim: rgba(110, 231, 168, 0.16);
-  --warning: #f5c86b;
-  --warning-dim: rgba(245, 200, 107, 0.16);
-  --error: #f2777a;
-  --error-dim: rgba(242, 119, 122, 0.16);
+  --success: #1d9d5c;
+  --success-dim: rgba(29, 157, 92, 0.13);
+  --warning: #b7791f;
+  --warning-dim: rgba(183, 121, 31, 0.14);
+  --error: #d64545;
+  --error-dim: rgba(214, 69, 69, 0.12);
 
-  /* --- lines and edges --- */
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.14);
+  /* --- lines and edges: hairlines, not borders --- */
+  --border: rgba(20, 24, 31, 0.09);
+  --border-strong: rgba(20, 24, 31, 0.16);
   --border-focus: var(--accent);
 
-  /* --- elevation --- */
-  --shadow-pill: 0 6px 24px rgba(0, 0, 0, 0.55), 0 1px 0 rgba(255, 255, 255, 0.05) inset;
-  --shadow-panel: 0 18px 60px rgba(0, 0, 0, 0.65), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
-  /* A raised surface inside the panel — a card, a gauge — needs to lift off it without a border
-   * heavy enough to compete with the text it contains. */
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.03);
-  --shadow-lifted: 0 4px 14px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  /* --- elevation ---
+   * Layered and short. One tight shadow for contact, one wide and faint for lift; that pairing
+   * is what reads as a millimetre off the desk instead of a drop shadow. */
+  --shadow-pill:
+    0 1px 2px rgba(16, 20, 27, 0.07),
+    0 6px 20px rgba(16, 20, 27, 0.10),
+    0 0 0 0.5px rgba(16, 20, 27, 0.06);
+  --shadow-panel:
+    0 2px 6px rgba(16, 20, 27, 0.06),
+    0 18px 48px rgba(16, 20, 27, 0.14),
+    0 0 0 0.5px rgba(16, 20, 27, 0.07);
+  --shadow-card: 0 1px 2px rgba(16, 20, 27, 0.05), 0 0 0 0.5px rgba(16, 20, 27, 0.05);
+  --shadow-lifted: 0 2px 4px rgba(16, 20, 27, 0.06), 0 8px 24px rgba(16, 20, 27, 0.10);
 
-  /* --- shape --- */
-  --radius-pill: 26px;
-  --radius-panel: 16px;
-  --radius-card: 10px;
-  --radius-chip: 6px;
+  /* --- shape: generous, because soft corners are most of the feeling --- */
+  --radius-pill: 28px;
+  --radius-panel: 18px;
+  --radius-card: 12px;
+  --radius-chip: 8px;
 
   /* --- spacing scale --- */
   --space-0: 2px;
@@ -64,9 +81,11 @@
   --space-6: 32px;
   --space-7: 48px;
 
-  /* --- type scale --- */
-  --font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, "Ubuntu", sans-serif;
-  --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", "Cascadia Code", Menlo, monospace;
+  /* --- type scale ---
+   * The system stack first, so it is the desktop's own face rather than a webfont pretending. */
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", ui-sans-serif, system-ui,
+             "Segoe UI", Inter, "Ubuntu", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, monospace;
   --text-xs: 11px;
   --text-sm: 12px;
   --text-base: 13px;
@@ -74,21 +93,61 @@
   --text-lg: 17px;
   --text-xl: 22px;      /* a figure that is the answer, not a label on one */
 
-  /* --- motion: 160-280ms, and a spring-ish curve for anything that grows --- */
-  --ease-out: cubic-bezier(0.22, 0.85, 0.24, 1);
-  --ease-in: cubic-bezier(0.4, 0, 0.9, 0.3);
-  --ease-spring: cubic-bezier(0.18, 0.95, 0.24, 1.02);
-  --dur-fast: 160ms;
-  --dur-base: 220ms;
-  --dur-slow: 280ms;
-
-  /* Translucency is deliberate and limited: enough to sit on a desktop, never enough to make text
-   * fight what is behind it. Verified against a full-screen video — at 0.94 the picture showed
-   * through the transcript, so the panel is near-opaque and only the pill stays airy. Backdrop
-   * blur is expensive and unreliable under XWayland, so legibility never depends on it. */
+  /* Translucency is deliberate and limited: enough to sit on a desktop, never enough to make
+   * text fight what is behind it. Verified against a full-screen video — at 0.94 the picture
+   * showed through the transcript, so the panel is near-opaque and only the pill stays airy.
+   * Backdrop blur is expensive and unreliable under XWayland, so legibility never depends on it. */
   --panel-alpha: 0.985;
-  --pill-alpha: 0.93;
-  --blur: 18px;
+  --pill-alpha: 0.94;
+  --blur: 20px;
+}
+
+/* Dark, as a translation rather than an inversion: the same hierarchy, the same accent
+ * behaviour, the same restraint about depth. Set data-appearance="dark" on <body>. */
+body[data-appearance="dark"] {
+  --surface-void: #06080a;
+  --surface-base: #0f1216;
+  --surface-raised: #181c22;
+  --surface-overlay: #1f242b;
+  --surface-hover: #262c34;
+
+  --text-primary: #e9ecef;
+  --text-secondary: #9aa4b0;
+  --text-muted: #6b7482;
+  --text-faint: #4a525e;
+
+  --accent: #4da3ff;
+  --accent-bright: #7ec8e3;
+  --accent-dim: #3a5f80;
+  --accent-glow: rgba(77, 163, 255, 0.18);
+  --accent-line: rgba(77, 163, 255, 0.36);
+
+  --success: #6ee7a8;
+  --success-dim: rgba(110, 231, 168, 0.16);
+  --warning: #f5c86b;
+  --warning-dim: rgba(245, 200, 107, 0.16);
+  --error: #f2777a;
+  --error-dim: rgba(242, 119, 122, 0.16);
+
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  --shadow-pill: 0 6px 24px rgba(0, 0, 0, 0.55), 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+  --shadow-panel: 0 18px 60px rgba(0, 0, 0, 0.65), 0 0 0 0.5px rgba(255, 255, 255, 0.05);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(255, 255, 255, 0.05);
+  --shadow-lifted: 0 4px 14px rgba(0, 0, 0, 0.45), 0 0 0 0.5px rgba(255, 255, 255, 0.07);
+}
+
+/* --- motion ---
+ * Slower and softer than before, and on a curve that decelerates hard at the end. That single
+ * easing is most of what "smooth" means: things arrive, they do not stop. */
+:root {
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.44, 1);
+  --dur-fast: 180ms;
+  --dur-base: 260ms;
+  --dur-slow: 380ms;
 }
 
 /* Someone who asks for less motion gets none of the decorative kind — transitions collapse to

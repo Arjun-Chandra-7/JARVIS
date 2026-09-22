@@ -118,7 +118,7 @@ body[data-form="pill"] .pillbar { padding: var(--space-2) var(--space-3); }
   width: 17px;
   height: 17px;
   fill: none;
-  stroke: var(--surface-base);
+  stroke: #ffffff;
   stroke-width: 2;
   stroke-linecap: round;
   opacity: 0;
@@ -387,7 +387,7 @@ body[data-form="conversation"] #tab-system { display: none; }
   margin-left: var(--space-1);
   border-radius: 9px;
   background: var(--accent);
-  color: var(--surface-void);
+  color: #ffffff;
   font-size: var(--text-xs);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -1005,7 +1005,7 @@ body[data-form="conversation"] #tab-system { display: none; }
   border-radius: 2px;
   background: var(--surface-void);
   overflow: hidden;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 .gauge-fill {
   height: 100%;
@@ -1041,7 +1041,7 @@ body[data-form="conversation"] #tab-system { display: none; }
   font-size: var(--text-sm);
   color: var(--text-secondary);
 }
-.past-row:nth-child(even) { background: rgba(255, 255, 255, 0.015); }
+.past-row:nth-child(even) { background: rgba(20, 24, 31, 0.022); }
 .past-row:hover { background: var(--surface-raised); }
 .past-title { flex: 1 1 auto; min-width: 0; overflow: hidden;
               text-overflow: ellipsis; white-space: nowrap; }
@@ -1097,7 +1097,7 @@ body[data-state="idle"][data-settled] .orb-core {
 body[data-state="listening"] .orb {
   box-shadow:
     0 0 0 calc(1px + var(--level) * 3px) var(--accent-line),
-    0 0 calc(8px + var(--level) * 22px) rgba(126, 200, 227, calc(0.15 + var(--level) * 0.5));
+    0 0 calc(8px + var(--level) * 22px) color-mix(in srgb, var(--accent) calc(15% + var(--level) * 50%), transparent);
 }
 
 /* Speaking: rings travel outward, which is a different motion from the inward pulse of
@@ -1120,7 +1120,7 @@ body[data-state="speaking"] .orb::before { animation-delay: 0.9s; }
 
 /* Thinking: no level to show, so the ring turns instead of pulsing. */
 body[data-state="thinking"] .orb {
-  box-shadow: 0 0 0 1px var(--accent-dim), 0 0 14px rgba(126, 200, 227, 0.12);
+  box-shadow: 0 0 0 1px var(--accent-dim), 0 0 14px var(--accent-glow);
 }
 
 /* The panel edge picks up the state too — peripheral, never competing with the text. */
@@ -1157,7 +1157,7 @@ body[data-state="speaking"] .panel::before { opacity: 1; }
 .input:focus-visible {
   outline: none;
   border-color: var(--accent-line);
-  box-shadow: 0 0 0 1px var(--accent-line), 0 0 18px rgba(126, 200, 227, 0.10);
+  box-shadow: 0 0 0 1px var(--accent-line), 0 0 18px var(--accent-glow);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1397,7 +1397,8 @@ body[data-form="pill"] .icon-btn { cursor: pointer; }
   align-items: flex-start;
   padding: var(--space-6) var(--space-4) var(--space-4);
   /* Dimmed, not blurred: one blurred surface in the window, and the shell already spent it. */
-  background: rgba(6, 8, 10, 0.55);
+  background: color-mix(in srgb, var(--surface-void) 70%, transparent);
+  backdrop-filter: saturate(140%) blur(2px);
   animation: palette-scrim var(--dur-fast) var(--ease-out);
 }
 @keyframes palette-scrim { from { opacity: 0; } to { opacity: 1; } }
@@ -1624,9 +1625,9 @@ kbd {
   z-index: 1;
   background: linear-gradient(
     180deg,
-    rgba(255, 255, 255, 0.055) 0,
-    rgba(255, 255, 255, 0.018) 26px,
-    rgba(255, 255, 255, 0) 64px
+    rgba(255, 255, 255, 0.55) 0,
+    rgba(255, 255, 255, 0.16) 22px,
+    rgba(255, 255, 255, 0) 56px
   );
 }
 
@@ -1676,14 +1677,14 @@ body[data-state="offline"] .shell { border-color: var(--border); }
   box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 .orb:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-hover);
   box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 body[data-state="idle"] .orb:hover { box-shadow: inset 0 0 0 1px var(--accent-dim); }
 
 .orb-core { width: 9px; height: 9px; }
 .orb-ring { inset: -4px; }
-.orb-mic { width: 15px; height: 15px; stroke: var(--surface-void); }
+.orb-mic { width: 15px; height: 15px; stroke: #ffffff; }
 
 /* The halo while listening was drawn on the disc; with no disc it goes on the ring, so the
  * pill's own ground shows through the middle of it. */
@@ -1692,11 +1693,11 @@ body[data-state="listening"] .orb {
   box-shadow:
     inset 0 0 0 1px var(--accent-line),
     0 0 0 calc(1px + var(--level) * 3px) var(--accent-line),
-    0 0 calc(8px + var(--level) * 22px) rgba(126, 200, 227, calc(0.15 + var(--level) * 0.5));
+    0 0 calc(8px + var(--level) * 22px) color-mix(in srgb, var(--accent) calc(15% + var(--level) * 50%), transparent);
 }
 body[data-state="thinking"] .orb {
   background: transparent;
-  box-shadow: inset 0 0 0 1px var(--accent-dim), 0 0 14px rgba(126, 200, 227, 0.12);
+  box-shadow: inset 0 0 0 1px var(--accent-dim), 0 0 14px var(--accent-glow);
 }
 body[data-state="speaking"] .orb { background: transparent; }
 
@@ -1747,3 +1748,54 @@ body[data-form="pill"][data-state="thinking"] .shell::before {
  * it is the state you most want to be able to read from across the room. The accent now means
  * one thing on the pill, audio is flowing, and the travelling line carries "working" instead. */
 body[data-form="pill"][data-state="thinking"] .pill-state { color: var(--text-secondary); }
+
+
+/* ===================== daylight corrections =====================
+ * Things that were right on obsidian and wrong on white. Each one was visible in a screenshot
+ * before it was changed here.
+ */
+
+/* The idle ring was drawn at --border-strong, which on a dark pill was a hint and on a white one
+ * is a grey circle sitting in the middle of the design. */
+.orb { box-shadow: inset 0 0 0 1px var(--border); }
+.orb:hover { box-shadow: inset 0 0 0 1px var(--border-strong); }
+
+/* A white sheen over a white surface is nothing at all. It earns its place on the dark
+ * appearance and only there, so it is switched off rather than left to cost a paint. */
+.shell::after { display: none; }
+body[data-appearance="dark"] .shell::after { display: block; }
+
+/* The agent dot was a hot orange chosen against near-black. Beside a soft blue on white it is
+ * the loudest thing on screen, which is not what a background job deserves. Same hue, taken
+ * down to something that belongs in this palette. */
+.work-dot[data-agent="running"] {
+  background: #e8880c;
+  box-shadow: 0 0 0 3px rgba(232, 136, 12, 0.16);
+}
+
+/* Hairlines, not borders. At the old weight every card on a white ground read as a box. */
+.card,
+.system,
+.activity,
+.input,
+.send-btn,
+.chip { border-color: var(--border); }
+
+/* The transcript's own bubbles: the two speakers separate by side and by weight, and on white
+ * the incoming one wants a tint rather than a fill. */
+.msg.jarvis .msg-body {
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface-base));
+  border-color: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.msg.you .msg-body {
+  background: var(--surface-raised);
+  border-color: var(--border);
+}
+
+/* Inline code on a light ground: the accent at full strength is legible where accent-bright is
+ * not. */
+.msg-body code {
+  background: var(--surface-raised);
+  color: var(--accent);
+  border: 1px solid var(--border);
+}
