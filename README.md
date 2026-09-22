@@ -36,6 +36,34 @@ need their own account, device, or desktop service configured before use.
   range only, and paired devices give names. See `docs/HUMAN_RADAR.md`.
 - Makes pictures. "Generate an image of a samurai in bamboo" writes a file and opens it.
 
+## Study mode
+
+"Jarvis, study mode." It closes the distracting apps and tabs and keeps them closed — a sweep
+every eight seconds, because a YouTube Short is often over in twenty.
+
+YouTube is judged rather than blanket-closed, since study mode that shuts the lecture is study
+mode nobody turns on:
+
+    Shorts          closed, always, before the title is even read
+    a lecture       left alone — "Class 10 One Shot", "NCERT solutions", a derivation
+    a vlog          closed
+    unclear         left alone, and asked about once
+
+Instagram, Netflix, Twitch and the rest close on sight. Ordinary sites are untouched; this is not
+a firewall.
+
+The bias is deliberate and it runs through every layer: when nothing is confident, the tab stays
+open. Closing a lecture somebody is midway through is a much worse failure than leaving one
+distraction up.
+
+Entering study mode also opens ChatGPT with a standing exam brief — answer as an NCERT-grounded
+CBSE examiner would, sized to the marks, in the textbook's terminology. The brief is
+`jarvis/modes/exam_tutor_prompt.md`, a plain markdown document: edit it to change how the tutor
+behaves. It is sent once per session and forgotten on the way out, so the next session starts a
+fresh conversation with the brief at the top.
+
+Say "exit study mode" to stop.
+
 ## Finding your own files
 
 `read_file` and `list_dir` want you to already know where something is. `find_document` searches
