@@ -79,3 +79,35 @@ def test_the_agent_name_is_not_left_in_the_work():
     work = cc.parse("claude, fix the failing tests")
     assert work is not None
     assert not work.lower().startswith("claude")
+
+
+class TestNamingTheEditor:
+    """Saying "in VS Code" is an instruction, not small talk.
+
+    When it did not count as one, the request fell past this orchestration into the old job
+    manager, whose answer was to ask which provider, which model and what effort. Two systems
+    were listening for the same sentence and the wrong one kept winning.
+    """
+
+    def test_the_editor_named_is_enough_without_it_being_in_front(self, monkeypatch):
+        from jarvis.coding import session, vscode
+
+        monkeypatch.setattr(session, "current", lambda: None)
+        monkeypatch.setattr(vscode, "window", lambda: None)
+        monkeypatch.setattr(vscode, "active_window", lambda: None)
+        for said in ("fix the login bug in VS Code",
+                     "refactor the parser in vscode",
+                     "add a test in the VS Code editor",
+                     "debug the login flow with the editor"):
+            assert cc._should_take_it(said), said
+
+    def test_talking_about_the_editor_is_still_not_a_request(self, monkeypatch):
+        """"Explain how VS Code extensions work" is a question, and belongs to the model."""
+        from jarvis.coding import session, vscode
+
+        monkeypatch.setattr(session, "current", lambda: None)
+        monkeypatch.setattr(vscode, "window", lambda: None)
+        monkeypatch.setattr(vscode, "active_window", lambda: None)
+        for said in ("explain how vs code extensions work",
+                     "what do you think of vs code"):
+            assert not cc._should_take_it(said), said

@@ -360,52 +360,14 @@ class CodingJobManager:
             self._dirty_sessions.add(session_id)
             self._save()
             return "Coding request cancelled."
-        if isinstance(pending, str):  # migrate short-lived first implementation state
-            pending = {"stage": pending}
-            self.pending[session_id] = pending
-        if isinstance(pending, dict):
-            stage = pending.get("stage")
-            if stage == "provider":
-                choice = normalize_selection(spoken)
-                if choice["provider"]:
-                    pending["provider"] = choice["provider"]
-                    pending["stage"] = "model"
-                    self._dirty_sessions.add(session_id)
-                    self._save()
-                    return "Which model should I use? Say default to use the provider default."
-                return "Choose Codex, Claude, or agy."
-            if stage == "model":
-                if low in {"default", "provider default", "no preference"}:
-                    pending["model"] = None
-                else:
-                    model_match = re.search(r"(?:model\s+)?([a-z0-9][a-z0-9._/-]{1,80})", low)
-                    if not model_match:
-                        return "Name a model, or say default."
-                    pending["model"] = model_match.group(1)
-                pending["stage"] = "effort"
-                self._dirty_sessions.add(session_id)
-                self._save()
-                return "What effort: low, medium, high, xhigh, or max?"
-            if stage == "effort":
-                choice = normalize_selection(spoken)
-                if not choice["effort"]:
-                    return "Choose low, medium, high, xhigh, or max effort."
-                pending["effort"] = choice["effort"]
-                self._dirty_sessions.add(session_id)
-                self._save()
-                try:
-                    job = await self.start(pending["task"], pending["workspace"], pending["provider"],
-                                           pending.get("model"), pending["effort"])
-                except Exception as exc:
-                    return f"I couldn't start that coding job: {exc}"
-                choice = {key: pending.get(key) for key in ("provider", "model", "effort")}
-                self.selections[session_id] = choice
-                self.ws_selections[str(pending["workspace"])] = choice  # remember per folder — no re-asking
-                self.pending.pop(session_id, None)
-                self._dirty_sessions.add(session_id)
-                self._save()
-                return (f"Prompt given, sir. {job['provider'].title()} job {job['id']} is running. "
-                        "I'll use these settings for this folder from now on.")
+        if pending:
+            # Left over from the three-question dialogue this used to run. Nothing asks those
+            # questions any more, so an old pending must not be able to swallow the next thing
+            # said — which is what it did: every message after it went into the stage machine
+            # and came back "Choose Codex, Claude, or agy."
+            self.pending.pop(session_id, None)
+            self._dirty_sessions.add(session_id)
+            self._save()
         selection_request = bool(re.search(r"\b(?:use|switch|set)\s+(?:the\s+)?(?:coding\s+)?(?:provider|agent)?\s*(codex|claude|agy)\b", low))
         if "which" in low and ("coding provider" in low or "coding agent" in low):
             self.pending[session_id] = {"stage": "provider"}
@@ -454,13 +416,31 @@ class CodingJobManager:
                     bits += f", {remembered['effort']} effort"
                 return f"Prompt given, sir. {bits} on {Path(workspace).name}, job {job['id']}."
 
-            self.pending[session_id] = {
-                "stage": "provider", "task": spoken, "workspace": workspace,
-                "context": context, "snapshot": workspace_snapshot(workspace), "created_at": _now(),
-            }
+            # A folder nobody has run a job in before. This used to ask which provider, then
+            # which model, then what effort — three questions before any work started, and the
+            # answers were nearly always the ones the roster would have chosen anyway. It picks
+            # them instead, from what the request needs and what has quota left, and says what
+            # it chose so an override is one sentence away.
+            from ..coding import quota, roster
+
+            chosen = roster.pick(spoken, quota.usable(), roster.named_in(spoken))
+            if chosen is None:
+                skipped = [quota.why_not(name) for name in roster.PREFERENCE]
+                return ("None of the coding agents have quota left, sir — "
+                        + ", ".join(why for why in skipped if why) + ".")
+            agent, model, effort = chosen
+            try:
+                job = await self.start(spoken, workspace, agent.name, model, effort)
+            except Exception as exc:  # noqa: BLE001
+                return f"I couldn't start that coding job: {exc}"
+            picked = {"provider": agent.name, "model": model, "effort": effort}
+            self.selections[session_id] = picked
+            self.ws_selections[str(workspace)] = picked
             self._dirty_sessions.add(session_id)
             self._save()
-            return f"New folder ({Path(workspace).name}). Which coding provider: Codex, Claude, or agy?"
+            return (f"Prompt given, sir. {agent.spoken} on {model} at {effort} effort, "
+                    f"{Path(workspace).name}, job {job['id']}. Say use Claude, or use Codex, "
+                    f"to change it.")
         return None
 
     def selection(self, session_id: str = "local") -> dict[str, str | None]:

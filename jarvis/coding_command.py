@@ -109,12 +109,23 @@ def parse(text: str) -> Optional[str]:
     return None
 
 
+# "…in VS Code", "…in the editor". Naming the editor is as plain an instruction as naming an
+# agent, and when this did not count the request fell past here into the old job manager, which
+# answered it by asking which provider, which model and what effort — the three questions this
+# orchestration exists to not ask.
+_NAMES_THE_EDITOR = re.compile(
+    r"(?i)\b(?:in|on|with|inside|within|using)\s+(?:the\s+|my\s+|this\s+)?"
+    r"(?:vs\s?code|vscode|code\s+editor|editor)\b")
+
+
 def _should_take_it(text: str) -> bool:
     """Whether this turn is really about the code in front of you."""
     if session.current():
         return True                       # a conversation is already running
     if roster.named_in(text):
         return True                       # an agent was asked for by name
+    if _NAMES_THE_EDITOR.search(text or ""):
+        return True                       # the editor was asked for by name
     return vscode.window() is not None and vscode.active_window() == vscode.window()
 
 

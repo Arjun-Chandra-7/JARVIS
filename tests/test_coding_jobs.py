@@ -46,19 +46,18 @@ class CodingJobsTest(unittest.TestCase):
                 manager = CodingJobManager(state, runner=fake_runner)
                 ctx = {"folder": str(workspace), "file": "app.py"}
                 with patch("jarvis.integrations.coding.active_context", return_value=ctx):
+                    # One turn. The agent, model and effort are chosen, not asked about.
                     first = await manager.handle_message("fix the login bug in VS Code", "voice")
-                    self.assertIn("provider", first.lower())
-                    self.assertIn("model", (await manager.handle_message("codex", "voice")).lower())
-                    self.assertIn("effort", (await manager.handle_message("default", "voice")).lower())
-                    final = await manager.handle_message("xhigh", "voice")
-                    self.assertIn("Prompt given, sir", final)
+                    self.assertIn("Prompt given, sir", first)
+                    self.assertIn("effort", first.lower())   # it says what it picked
+                    self.assertFalse(manager.pending)        # nothing waiting on an answer
                     job_id = manager.list_jobs()[0]["id"]
                     await manager._tasks[job_id]
 
-                    # Same folder again -> no provider/model/effort dialogue, launches straight away.
+                    # Same folder again: the remembered choice, still without a dialogue.
                     again = await manager.handle_message("also add a test in VS Code", "voice")
                 self.assertIn("Prompt given, sir", again)
-                self.assertNotIn("provider", again.lower())
+                self.assertFalse(manager.pending)
                 self.assertEqual(len(manager.list_jobs()), 2)
                 for jid in list(manager._tasks):
                     await manager._tasks[jid]

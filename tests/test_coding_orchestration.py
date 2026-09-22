@@ -72,14 +72,41 @@ def test_sync_external_registers_then_completes(tmp_path, monkeypatch):
     "add a test in the VS Code editor",
     "debug the login flow in VS Code",
 ])
-def test_vscode_task_is_intercepted(tmp_path, monkeypatch, phrase):
-    mgr = CodingJobManager(tmp_path / "s.json")
+def test_a_vscode_task_starts_without_being_asked_anything(tmp_path, monkeypatch, phrase):
+    """The whole point of the orchestration: work starts, nothing is asked.
+
+    This used to answer with "Which coding provider: Codex, Claude, or agy?", then a question
+    about the model, then one about effort — three turns before a line of code was written, and
+    the answers were the ones the roster would have picked anyway.
+    """
+    async def fake_runner(command, cwd):
+        return 0, "done", ""
+
+    # It really launches now, so it needs somewhere harmless to launch into. Before this change
+    # the request stopped at a question and no runner was ever reached.
+    mgr = CodingJobManager(tmp_path / "s.json", runner=fake_runner)
     monkeypatch.setattr("jarvis.integrations.coding.active_context",
                         lambda: {"folder": str(tmp_path), "file": "x.py"})
     reply = asyncio.run(mgr.handle_message(phrase, "voice"))
-    assert reply and ("provider" in reply.lower() or "codex" in reply.lower())
-    assert mgr.pending["voice"]["stage"] == "provider"
-    assert mgr.pending["voice"]["workspace"] == str(tmp_path)
+    assert reply and "Prompt given" in reply
+    assert "?" not in reply.rstrip("?") + ""      # nothing was asked back
+    assert not mgr.pending                        # and nothing is waiting on an answer
+    # It says what it chose, because an override has to be possible without a menu.
+    assert mgr.selections["voice"]["provider"] in {"codex", "claude", "agy"}
+    assert mgr.ws_selections[str(tmp_path)]["effort"] in {"low", "medium", "high", "xhigh", "max"}
+
+
+def test_an_old_pending_cannot_swallow_the_next_thing_said(tmp_path, monkeypatch):
+    """The state was saved to disk, so a half-finished dialogue outlived the restart that ended
+    it — and every message afterwards came back "Choose Codex, Claude, or agy."
+    """
+    mgr = CodingJobManager(tmp_path / "s.json")
+    mgr.pending["voice"] = {"stage": "provider", "task": "old", "workspace": str(tmp_path)}
+    monkeypatch.setattr("jarvis.integrations.coding.active_context",
+                        lambda: {"folder": str(tmp_path), "file": "x.py"})
+    reply = asyncio.run(mgr.handle_message("what's the weather", "voice"))
+    assert reply is None              # not a coding request, so it passes through
+    assert not mgr.pending            # and the stale dialogue is gone
 
 
 @pytest.mark.parametrize("phrase", [
