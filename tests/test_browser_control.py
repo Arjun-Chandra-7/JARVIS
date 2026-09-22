@@ -91,6 +91,12 @@ def test_single_letter_key_is_accepted(monkeypatch):
 
 # ----------------------------------------------------------------- readiness reporting
 def test_ensure_reports_missing_browser(monkeypatch):
+    # These exercise the Chromium path. Without pinning the family they measure whichever
+    # browser the developer happens to use — and on a machine defaulting to Zen, ensure() takes
+    # the Firefox branch and none of the monkeypatches below apply.
+    from jarvis.integrations import web_browser
+
+    monkeypatch.setattr(web_browser, "family", lambda *_a, **_k: "chromium")
     monkeypatch.setattr(browser, "control_ready", lambda timeout=1.5: False)
     monkeypatch.setattr(browser, "_exe", lambda: None)
     state = browser.ensure()
@@ -99,6 +105,12 @@ def test_ensure_reports_missing_browser(monkeypatch):
 
 def test_ensure_asks_before_restarting_a_running_browser(monkeypatch):
     """Restarting loses the user's tabs, so it must never happen without being asked."""
+    # These exercise the Chromium path. Without pinning the family they measure whichever
+    # browser the developer happens to use — and on a machine defaulting to Zen, ensure() takes
+    # the Firefox branch and none of the monkeypatches below apply.
+    from jarvis.integrations import web_browser
+
+    monkeypatch.setattr(web_browser, "family", lambda *_a, **_k: "chromium")
     monkeypatch.setattr(browser, "control_ready", lambda timeout=1.5: False)
     monkeypatch.setattr(browser, "_exe", lambda: "/usr/bin/opera-gx")
     monkeypatch.setattr(browser, "is_running", lambda: True)
@@ -111,6 +123,12 @@ def test_ensure_asks_before_restarting_a_running_browser(monkeypatch):
 
 
 def test_ensure_restarts_when_allowed(monkeypatch):
+    # These exercise the Chromium path. Without pinning the family they measure whichever
+    # browser the developer happens to use — and on a machine defaulting to Zen, ensure() takes
+    # the Firefox branch and none of the monkeypatches below apply.
+    from jarvis.integrations import web_browser
+
+    monkeypatch.setattr(web_browser, "family", lambda *_a, **_k: "chromium")
     monkeypatch.setattr(browser, "control_ready", lambda timeout=1.5: False)
     monkeypatch.setattr(browser, "_exe", lambda: "/usr/bin/opera-gx")
     monkeypatch.setattr(browser, "is_running", lambda: True)

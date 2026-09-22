@@ -17,11 +17,11 @@ from typing import Optional
 
 _ASK = re.compile(
     r"""^(?:please\s+)?(?:
-        (?:restart|relaunch|reopen)\s+(?:the\s+)?(?:opera(?:\s*gx)?|browser|chrome)
+        (?:restart|relaunch|reopen)\s+(?:the\s+)?(?:opera(?:\s*gx)?|browser|chrome|zen|firefox)
             (?:\s+(?:with|and\s+enable)\s+control)?|
         (?:enable|turn\s+on|give\s+yourself)\s+(?:browser\s+)?control
-            (?:\s+of\s+(?:the\s+)?(?:browser|opera(?:\s*gx)?))?|
-        take\s+control\s+of\s+(?:the\s+)?(?:browser|opera(?:\s*gx)?)
+            (?:\s+of\s+(?:the\s+)?(?:browser|opera(?:\s*gx)?|zen|firefox))?|
+        take\s+control\s+of\s+(?:the\s+)?(?:browser|opera(?:\s*gx)?|zen|firefox)
     )\s*$""",
     re.IGNORECASE | re.VERBOSE,
 )

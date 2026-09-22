@@ -213,6 +213,15 @@ def ensure(url: str = "", allow_restart: bool = False) -> dict:
 
     Returns {ok, state, message}. `state` is one of ready | launched | needs_restart | missing.
     """
+    # A Firefox-family browser has its own answer, its own remedy and its own wording, so it is
+    # handed over whole rather than threaded through the Chromium logic below.
+    from . import web_browser
+
+    if web_browser.family() == "firefox":
+        from . import firefox_launch
+
+        return firefox_launch.ensure(url, allow_restart=allow_restart)
+
     if native_ready():
         return {"ok": True, "state": "ready", "message": "Opera GX is under control."}
     if relay_ready():
