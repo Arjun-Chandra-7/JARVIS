@@ -1,4 +1,4 @@
-"""Precise browser control for Opera GX, over the DevTools protocol.
+"""Precise browser control, whichever browser you use.
 
 Why not vision
 --------------
@@ -26,6 +26,20 @@ nobody accepts it. The answer is `browser_relay`: an extension inside the browse
 protocol with no port and no restart. Everything below prefers the native port when it is there
 and falls back to the relay when it is not, and neither the CDP plumbing nor anything above it
 can tell the difference.
+
+Two families, one set of verbs
+------------------------------
+The DevTools protocol is a Chromium thing. A Firefox-family browser — Zen, Floorp, LibreWolf,
+Firefox itself — does not have it, so moving to one used to end browser control entirely.
+
+It speaks Marionette instead: Firefox's own automation protocol, the one geckodriver is built on.
+`marionette` is the wire and `firefox_page` is the four things Jarvis does to a page, following
+the same rules the CDP versions follow — match visible text, ignore what is not on screen, refuse
+when two things match equally well.
+
+Every entry point below picks its protocol per call, from the browser actually in front of it, so
+nothing above this file knows there are two. `web_browser` decides which browser that is, and
+`firefox_launch` is the Firefox equivalent of `launch` and `ensure`.
 """
 
 from __future__ import annotations
