@@ -4,6 +4,7 @@ import asyncio
 import pytest
 
 from jarvis import video_command as vc
+from jarvis.screen_context import _PAGE as _PAGE_SCRIPT
 from jarvis.screen import model as sm
 from jarvis.screen import providers as pv
 from jarvis.screen import youtube as yt
@@ -155,6 +156,9 @@ class FakePage:
 
     async def run(self, body, args=None, timeout=20.0):
         self.calls.append(body)
+        if body is _PAGE_SCRIPT:
+            return {"url": "https://example.com", "title": "Example", "selection": "",
+                    "in_view": "Example page text", "body": "Example page text", "video": None}
         if body is yt._STATE:
             if not self.youtube:
                 return {"youtube": False, "url": "https://example.com", "title": "Example"}
@@ -316,10 +320,13 @@ def test_no_drivable_browser_says_how_to_fix_it(wired, monkeypatch):
     assert "restart the browser with control" in reply
 
 
-def test_not_youtube_leaves_on_screen_to_the_screen_reader(wired):
+def test_any_other_page_is_read_not_refused(wired):
+    # Once: "not YouTube" meant "not mine". Now any page is explained from its own text, and a
+    # question about a video on a page without one says so.
     wired["use"](FakePage(youtube=False))
-    assert _run(vc.handle("explain what is on screen", None)) is None
-    assert "isn't a YouTube video" in _run(vc.handle("explain what he just said", None))
+    assert _run(vc.handle("explain what is on screen", None)).startswith("Because the squares")
+    assert "Example page text" in wired["prompt"]
+    assert "no video on this page" in _run(vc.handle("explain what he just said", None))
 
 
 def test_play_that_does_not_advance_is_not_verified():

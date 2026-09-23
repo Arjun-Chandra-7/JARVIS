@@ -13,6 +13,7 @@ from jarvis.audio.conversation import ACT, ConversationSession
 from jarvis.config import CONFIG
 from jarvis.dedupe import Deduper
 from jarvis.screen import youtube as yt
+from jarvis.screen_context import _PAGE as _PAGE_SCRIPT
 
 TRANSCRIPT = [
     {"start": 50.0, "dur": 6.0, "text": "take a right angled triangle"},
@@ -47,6 +48,9 @@ class Page:
     async def run(self, body, args=None, timeout=20.0):
         if self.broken:
             raise ConnectionError("tab went away")
+        if body is _PAGE_SCRIPT:
+            return {"url": "https://docs.example/notes", "title": "Notes", "selection": "",
+                    "in_view": "Notes about photosynthesis", "body": "Notes about photosynthesis", "video": None}
         if body is yt._STATE:
             if not self.youtube:
                 return {"youtube": False, "url": "https://docs.example", "title": "Notes"}
@@ -181,12 +185,19 @@ def test_captions_off_in_english_too(screen):
     assert "Turn captions on" in reply and screen["prompts"] == []
 
 
-def test_wrong_tab(screen):
+def test_a_page_without_a_video(screen):
     screen["use"](Page(youtube=False))
     reply = screen["ask"]("अभी क्या कहा?")
-    assert "YouTube video नहीं है" in reply
+    assert "कोई video नहीं है" in reply
     assert screen["prompts"] == [] and screen["brain"].model_turns == []
-    assert _last_screen_event()["context"] == "wrong_tab"
+    assert _last_screen_event()["context"] == "page_no_video"
+
+
+def test_explain_this_on_any_page_uses_that_page(screen):
+    screen["use"](Page(youtube=False))
+    screen["ask"]("इसे समझाओ")
+    assert "Notes about photosynthesis" in screen["prompts"][-1]
+    assert _last_screen_event()["context"] == "page_view" and screen["brain"].model_turns == []
 
 
 def test_stale_player_is_not_explained(screen):

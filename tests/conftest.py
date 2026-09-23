@@ -14,10 +14,14 @@ def _no_leftover_approvals():
 def _no_real_youtube(monkeypatch):
     """No test fetches captions from YouTube or finds a real browser tab, and no transcript is
     remembered from one test to the next."""
+    from jarvis import screen_context
     from jarvis.screen import page, youtube
     youtube._CACHE.clear()
     monkeypatch.setattr(youtube, "ytdlp_transcript", lambda *_a, **_k: ([], ""))
     monkeypatch.setattr(page, "video_page", lambda: page.active_page())
+    monkeypatch.setattr(screen_context, "active_window", lambda: ("", ""))
+    monkeypatch.setattr(screen_context, "front_tab", lambda *_a, **_k: None)
+    monkeypatch.setattr(screen_context, "read_app", lambda *_a, **_k: ("", ""))
     yield
     youtube._CACHE.clear()
 
