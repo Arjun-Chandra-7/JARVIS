@@ -12,12 +12,15 @@ import shutil
 import sys
 from dataclasses import dataclass, field
 
+from . import providers as _DEFAULTS  # model defaults live in one place
+
 
 def _preferred_browser() -> str:
     from .integrations.web_browser import preferred
 
     return preferred() or "firefox"
 from pathlib import Path
+
 
 try:
     from dotenv import load_dotenv
@@ -71,7 +74,7 @@ class Config:
     # --- Groq (OpenAI-compatible) ---
     groq_api_key: str = field(default_factory=lambda: os.environ.get("GROQ_API_KEY", ""))
     groq_model: str = field(
-        default_factory=lambda: os.environ.get("JARVIS_GROQ_MODEL", "qwen/qwen3.6-27b")
+        default_factory=lambda: os.environ.get("JARVIS_GROQ_MODEL", _DEFAULTS.DEFAULT_GROQ_MODEL)
     )
     # Set true only if the chosen Groq model accepts images (e.g. a llama-4 vision model). The
     # default text model can't see screenshots, so we skip image injection to avoid API errors.
@@ -79,12 +82,12 @@ class Config:
 
     # --- Gemini (OpenAI-compatible endpoint; generous free tier + native vision) ---
     gemini_api_key: str = field(default_factory=lambda: os.environ.get("GEMINI_API_KEY", ""))
-    gemini_model: str = field(default_factory=lambda: os.environ.get("JARVIS_GEMINI_MODEL", "gemini-3.6-flash"))
+    gemini_model: str = field(default_factory=lambda: os.environ.get("JARVIS_GEMINI_MODEL", _DEFAULTS.DEFAULT_GEMINI_MODEL))
 
     # --- Ollama (LOCAL, OpenAI-compatible, no rate limits) — also the auto-fallback when a
     # cloud brain is rate-limited. Needs `ollama serve` + a tool-capable model pulled. ---
     ollama_base: str = field(default_factory=lambda: os.environ.get("JARVIS_OLLAMA_BASE", "http://localhost:11434/v1"))
-    ollama_model: str = field(default_factory=lambda: os.environ.get("JARVIS_OLLAMA_MODEL", "qwen2.5:3b"))
+    ollama_model: str = field(default_factory=lambda: os.environ.get("JARVIS_OLLAMA_MODEL", _DEFAULTS.DEFAULT_OLLAMA_MODEL))
 
     # --- image understanding (screen vision; optional) ---
     # "auto"/"gemini" use Gemini (needs GEMINI_API_KEY); the local moondream path stays as a

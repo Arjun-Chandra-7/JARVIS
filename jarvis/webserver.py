@@ -26,11 +26,29 @@ else:
 
 _agent: dict = {"a": None}
 _lock = asyncio.Lock()
+_providers: dict = {"summary": "not checked yet", "strong": None}
+
+
+async def _provider_health() -> None:
+    """Which models answer, checked once at startup (model lists only — no tokens). A retired
+    model or a denied project is said here, once, instead of being discovered on every request."""
+    from . import providers
+    try:
+        results = await asyncio.to_thread(providers.health_check, CONFIG, 8.0)
+    except Exception as exc:  # noqa: BLE001 — a health check must never stop the server starting
+        _providers.update(summary=f"provider check failed: {type(exc).__name__}", strong=None)
+        return
+    _providers.update(summary=providers.summary(results),
+                      strong=any(h.ok and h.provider.quality == "strong" for h in results))
+    print("providers:\n  " + _providers["summary"].replace("\n", "\n  "), flush=True)
+    if not _providers["strong"]:
+        await _emit("error", "No strong model available — explanations are off. See /providers.")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_vault(CONFIG.vault_path, CONFIG.user_name)
+    provider_check = asyncio.create_task(_provider_health())
     from .agent import ai_researcher
     ai_researcher.start_research_agent()
     agent = make_agent(CONFIG, mode="text", confirm_fn=None, on_tool=None)
@@ -173,6 +191,15 @@ async def chat(c: Chat):
     hud_state.log_turn("jarvis", reply)
     await _emit("reply", reply)
     return {"reply": reply}
+
+
+@app.get("/providers")
+async def provider_status():
+    """The startup provider check, and which breakers are open now."""
+    from . import providers
+    open_now = {p.id: providers.blocked(p) for p in providers.configured(CONFIG)}
+    return {"summary": _providers["summary"], "strong_available": _providers["strong"],
+            "paused": {k: {"kind": v["kind"], "until": v["until"]} for k, v in open_now.items() if v}}
 
 
 @app.get("/approvals")

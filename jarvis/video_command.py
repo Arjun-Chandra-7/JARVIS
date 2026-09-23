@@ -16,6 +16,7 @@ is told that too, so it says so rather than inventing what the teacher said.
 """
 from __future__ import annotations
 
+import os
 import re
 from typing import Optional
 
@@ -157,19 +158,26 @@ async def _answer(kind: str, text: str, state: yt.PlayerState, player: yt.YouTub
     excerpt = yt.window(segments, span[1], before=span[1] - span[0], after=0)
 
     if not excerpt and not state.live_caption and kind == "on_screen":
-        # No words to explain: this is what the screenshot is for.
+        # No words to explain: this is what the screenshot is for — but only with a vision model
+        # good enough to trust. The small local one describes a frame, it does not teach it.
+        from .vision import analyze
+        from .config import CONFIG
+        if analyze.available(config or CONFIG) != "gemini" and \
+                os.environ.get("JARVIS_ALLOW_WEAK_TEACHING", "") not in {"1", "true", "yes"}:
+            return paused_note + ("This video has no captions, and the only vision model available is the "
+                                  "small local one, which isn't reliable for explaining a frame.")
         from .integrations import lens
         import asyncio
         described = await asyncio.to_thread(lens.screen, f"Explain for a Class 10 student what this video frame "
                                                           f"from '{state.title}' shows: {text}")
         return paused_note + (described or "This video has no captions and I couldn't read the frame.")
 
-    from .llm import complete
-    answer = await complete(_TUTOR, build_prompt(kind, text, state, excerpt, source, span), config,
-                            temperature=0.3, strength="strong")
-    if not answer:
-        if excerpt:
-            return paused_note + "I have the transcript but no model to explain it. Here's what was said: " + \
-                " ".join(s.text for s in excerpt[-6:])
-        return paused_note + "I couldn't reach the model to explain it."
-    return paused_note + answer
+    from .llm import complete_detailed
+    done = await complete_detailed(_TUTOR, build_prompt(kind, text, state, excerpt, source, span), config,
+                                   temperature=0.3, strength="strong")
+    if done.ok:
+        return paused_note + done.text
+    # No strong model: say so, and give what the video actually said — the words need no model.
+    said = " ".join(s.text for s in excerpt[-6:]) or state.live_caption
+    heard = f" Here's what was said: {said}" if said else ""
+    return paused_note + done.unavailable_message() + heard

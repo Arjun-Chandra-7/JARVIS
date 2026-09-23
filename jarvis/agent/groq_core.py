@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 from ..config import Config
+from ..providers import DEFAULT_GROQ_FALLBACK
 from ..jobs.runner import JobRunner
 from ..memory import vault as vaultmod
 from . import action_claims, spoken, tool_contract, tool_router
@@ -271,7 +272,7 @@ class GroqAgent:
         base_url, api_key, self.model = config.llm_params()
         # When the primary model is rate-limited (429), fall back to a high-limit fast model so Jarvis
         # keeps answering instead of erroring. Only applies to Groq (llama models on the free tier).
-        self.fallback_model = os.environ.get("JARVIS_GROQ_FALLBACK", "openai/gpt-oss-20b")
+        self.fallback_model = os.environ.get("JARVIS_GROQ_FALLBACK", DEFAULT_GROQ_FALLBACK)
         self._on_fallback = False
         self._on_local = False  # switched to local Ollama after a cloud rate-limit
         # A local Ollama endpoint needs no key, and the SDK refuses to build a client with an empty

@@ -178,6 +178,9 @@ async def _run_voice() -> None:
 # --------------------------------------------------------------------------- diagnostics
 def _preflight() -> None:
     print("Jarvis preflight\n")
+    from . import providers
+    print("model providers (model lists only, no tokens):")
+    print("  " + providers.summary(providers.health_check(CONFIG)).replace("\n", "\n  ") + "\n")
     print(f"brain: {CONFIG.brain}", end="")
     if CONFIG.brain == "chatgpt":
         from .integrations.chatgpt import PROFILE

@@ -150,8 +150,21 @@ screenshot, pitched at a CBSE Class 10 student and in the language you asked in.
 told to say when the excerpt does not cover something and to mark its own explanation as such.
 Pausing is checked on the player; playing counts only when the clock moves.
 
-This needs a drivable browser (see below) and uses the "strong" model tier: `JARVIS_STRONG_MODEL`
-if set, then your Groq model, then a current Groq model, then Gemini, then the local brain.
+This needs a drivable browser (see below) and a strong model: `JARVIS_STRONG_MODEL` if set, your
+Groq model, the current default Groq model, then Gemini. The small local model is **not** used
+for explanations — it gets steps wrong — and when it is all that is left Jarvis says so and reads
+out the transcript lines instead. `JARVIS_ALLOW_WEAK_TEACHING=1` overrides that.
+
+## Model providers
+
+At startup (and on `python -m jarvis --check`) each configured provider is asked for its model
+list and a one-token reply, and the result is printed and served at `GET /providers`. Failures
+are classified — retired model, permission denied, bad key, rate limit, outage — and a provider
+that fails is paused rather than asked again on every request: hours for a retired model, a
+denied project or a rejected key; the provider's own `Retry-After` for a rate limit; 30 s
+doubling to 10 min for outages. The pauses are shared by every Jarvis process
+(`~/.local/share/jarvis/provider-health.json`; delete it to retry at once). Deterministic
+commands — messaging, notifications, sleep and wake, volume, opening things — need no model.
 
 ## Notifications
 

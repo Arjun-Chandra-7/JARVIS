@@ -250,11 +250,14 @@ def test_language_follows_the_question():
 def wired(monkeypatch):
     seen = {}
 
-    async def fake_complete(system, prompt, config=None, temperature=0.2, timeout=60.0, strength="default"):
-        seen["system"], seen["prompt"] = system, prompt
-        return "Because the squares on the two shorter sides add up to the square on the hypotenuse."
+    from jarvis.llm import Completion
 
-    monkeypatch.setattr("jarvis.llm.complete", fake_complete)
+    async def fake_complete(system, prompt, config=None, temperature=0.2, timeout=60.0, strength="default"):
+        seen["system"], seen["prompt"], seen["strength"] = system, prompt, strength
+        return Completion(text="Because the squares on the two shorter sides add up to the square on "
+                               "the hypotenuse.", provider="groq:test", quality="strong")
+
+    monkeypatch.setattr("jarvis.llm.complete_detailed", fake_complete)
 
     def use(page):
         monkeypatch.setattr("jarvis.screen.page.active_page", lambda: page)
@@ -338,14 +341,14 @@ def test_player_error_is_reported_not_explained(wired):
 
 
 def test_strong_tier_prefers_cloud_and_keeps_the_brain_last(monkeypatch):
-    from jarvis import llm
+    from jarvis import llm, providers
     from jarvis.config import Config
     c = Config()
     c.brain, c.groq_api_key, c.gemini_api_key, c.groq_model = "ollama", "g", "m", "retired/model"
     monkeypatch.delenv("JARVIS_STRONG_MODEL", raising=False)
-    models = [m for _, _, m in llm.candidates(c, "strong")]
-    assert models[:2] == ["retired/model", llm.FALLBACK_GROQ_MODEL]
-    assert models[-1] == c.ollama_model and c.gemini_model in models
-    assert [m for _, _, m in llm.candidates(c)] == [c.ollama_model]
+    ids = [p.id for p in llm.candidates(c, "strong")]
+    assert ids[:2] == ["groq:retired/model", f"groq:{providers.DEFAULT_GROQ_MODEL}"]
+    assert ids[-1] == f"ollama:{c.ollama_model}" and f"gemini:{c.gemini_model}" in ids
+    assert [p.id for p in llm.candidates(c)] == [f"ollama:{c.ollama_model}"]
     monkeypatch.setenv("JARVIS_STRONG_MODEL", "openai/gpt-oss-120b")
-    assert llm.candidates(c, "strong")[0][2] == "openai/gpt-oss-120b"
+    assert llm.candidates(c, "strong")[0].model == "openai/gpt-oss-120b"

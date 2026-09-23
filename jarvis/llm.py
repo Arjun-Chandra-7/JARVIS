@@ -4,64 +4,97 @@ For handlers that have already gathered everything the model needs and want only
 describing a project, explaining a transcript excerpt. Going through the full agent for this
 sends ninety-odd tool schemas and the whole system prompt alongside, which is slower and gives a
 small model the chance to decide to do something else instead.
+
+Two strengths. ``default`` is the configured brain. ``strong`` is for teaching and understanding,
+where a wrong step is worse than none: it tries the strong providers in order, skipping any whose
+circuit breaker is open (providers.py), and does **not** fall back to the weak local model unless
+``JARVIS_ALLOW_WEAK_TEACHING=1``. When it cannot answer it says why, so the caller can tell the
+person instead of reading out a confident mistake.
 """
 from __future__ import annotations
 
 import asyncio
 import os
+from dataclasses import dataclass, field
 
-# Measured 2026-09-23 on the tutor prompt: 0.6 s, correct, grounded, answered in Hinglish.
-FALLBACK_GROQ_MODEL = "qwen/qwen3.8-27b"
+from . import providers as pv
 
 
-def candidates(settings, strength: str = "default") -> list[tuple[str, str, str]]:
-    """(base_url, key, model) to try, in order.
+@dataclass
+class Completion:
+    text: str = ""
+    provider: str = ""                   # "groq:qwen/…" that answered
+    quality: str = ""                    # "strong" / "weak"
+    failures: list[str] = field(default_factory=list)   # "gemini:…: permission_denied"
+    weak_only: bool = False              # a weak model was available but not used
 
-    ``default`` is the configured brain. ``strong`` is for teaching and explanation, where a
-    wrong step is worse than a slow one: measured on this machine, the local 3B model explained
-    Pythagoras as "the sum of the sides" in 10.8 s. It prefers a configured cloud model and falls
-    back to the configured brain, so it never needs more setup than the brain already has.
-    """
-    configured = settings.llm_params()
+    @property
+    def ok(self) -> bool:
+        return bool(self.text)
+
+    def unavailable_message(self) -> str:
+        if self.weak_only:
+            return ("Only the local model is available right now, and it isn't reliable enough for "
+                    "explanations — it gets steps wrong. " + self._why())
+        return "No model is reachable right now. " + self._why()
+
+    def _why(self) -> str:
+        return f"({'; '.join(self.failures)})" if self.failures else ""
+
+
+def candidates(settings, strength: str = "default") -> list[pv.Provider]:
+    """The providers to try, in order."""
     if strength != "strong":
-        return [configured]
-    out: list[tuple[str, str, str]] = []
-    groq = "https://api.groq.com/openai/v1"
-    if settings.groq_api_key:
-        # JARVIS_STRONG_MODEL first when set; then the configured Groq model; then one known to be
-        # served today — the configured one had been retired (404) when this was written.
-        for model in (os.environ.get("JARVIS_STRONG_MODEL", ""), settings.groq_model, FALLBACK_GROQ_MODEL):
-            if model and (groq, settings.groq_api_key, model) not in out:
-                out.append((groq, settings.groq_api_key, model))
-    if settings.gemini_api_key:
-        out.append(("https://generativelanguage.googleapis.com/v1beta/openai/",
-                    settings.gemini_api_key, settings.gemini_model))
-    if configured not in out:
-        out.append(configured)
+        return [pv.for_brain(settings)]
+    return pv.configured(settings)
+
+
+def _ask(provider: pv.Provider, system: str, prompt: str, temperature: float, timeout: float) -> str:
+    from openai import OpenAI
+
+    client = OpenAI(base_url=provider.base_url, api_key=provider.key or "none", max_retries=0, timeout=timeout)
+    done = client.chat.completions.create(
+        model=provider.model, temperature=temperature,
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}])
+    return (done.choices[0].message.content or "").strip()
+
+
+def complete_sync(system: str, prompt: str, settings, temperature: float = 0.2, timeout: float = 60.0,
+                  strength: str = "default", ask=None) -> Completion:
+    ask = ask or _ask                    # looked up per call, so tests can stand in for the network
+    allow_weak = os.environ.get("JARVIS_ALLOW_WEAK_TEACHING", "") in {"1", "true", "yes"}
+    out = Completion()
+    for provider in candidates(settings, strength):
+        if strength == "strong" and provider.quality == "weak" and not allow_weak:
+            out.weak_only = True
+            continue
+        held = pv.blocked(provider)
+        if held:
+            out.failures.append(f"{provider.id}: {held['kind']} (paused)")
+            continue
+        try:
+            text = ask(provider, system, prompt, temperature, timeout)
+        except Exception as exc:  # noqa: BLE001 — classified, remembered, and the next one tried
+            failure = pv.classify(exc)
+            pv.record_failure(provider, failure)
+            out.failures.append(f"{provider.id}: {failure.kind}")
+            continue
+        pv.record_success(provider)
+        if text:
+            out.text, out.provider, out.quality = text, provider.id, provider.quality
+            out.weak_only = False
+            return out
     return out
+
+
+async def complete_detailed(system: str, prompt: str, config=None, temperature: float = 0.2,
+                            timeout: float = 60.0, strength: str = "default") -> Completion:
+    from .config import CONFIG
+    return await asyncio.to_thread(complete_sync, system, prompt, config or CONFIG, temperature,
+                                   timeout, strength)
 
 
 async def complete(system: str, prompt: str, config=None, temperature: float = 0.2,
                    timeout: float = 60.0, strength: str = "default") -> str:
     """The model's answer, or "" when there is no model to ask (never a traceback read aloud)."""
-    from .config import CONFIG
-
-    settings = config or CONFIG
-
-    def ask() -> str:
-        from openai import OpenAI
-
-        for base_url, api_key, model in candidates(settings, strength):
-            try:
-                client = OpenAI(base_url=base_url, api_key=api_key or "none", max_retries=0, timeout=timeout)
-                done = client.chat.completions.create(
-                    model=model, temperature=temperature,
-                    messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}])
-                text = (done.choices[0].message.content or "").strip()
-                if text:
-                    return text
-            except Exception:  # noqa: BLE001 — try the next one
-                continue
-        return ""
-
-    return await asyncio.to_thread(ask)
+    return (await complete_detailed(system, prompt, config, temperature, timeout, strength)).text
