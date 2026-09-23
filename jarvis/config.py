@@ -176,10 +176,13 @@ class Config:
     partial_every_ms: int = field(default_factory=lambda: _int("JARVIS_PARTIAL_EVERY_MS", 700))
     partial_model: str = field(default_factory=lambda: os.environ.get("JARVIS_PARTIAL_MODEL", "tiny.en"))
     max_utterance_s: int = field(default_factory=lambda: _int("JARVIS_MAX_UTTERANCE_S", 30))
-    follow_up_s: int = field(default_factory=lambda: _int("JARVIS_FOLLOW_UP_S", 6))
+    follow_up_s: int = field(default_factory=lambda: _int("JARVIS_FOLLOW_UP_S", 8))
     enable_barge_in: bool = field(default_factory=lambda: _bool("JARVIS_BARGE_IN", True))  # talk over him to cut him off
     screen_always: bool = field(default_factory=lambda: _bool("JARVIS_SCREEN_ALWAYS", False))  # keep screen vision on from start
-    enable_followup: bool = field(default_factory=lambda: _bool("JARVIS_FOLLOWUP", False))  # keep listening after a reply (no wake word)
+    # Keep the conversation open after a reply, so follow-ups need no wake word. On by default now
+    # that audio/conversation.py filters fillers, room noise and "that's all"; JARVIS_FOLLOWUP=0
+    # restores wake-word-per-turn.
+    enable_followup: bool = field(default_factory=lambda: _bool("JARVIS_FOLLOWUP", True))
     afk_minutes: int = field(default_factory=lambda: _int("JARVIS_AFK_MIN", 15))  # idle time before a welcome-back brief
     city: str = field(default_factory=lambda: os.environ.get("JARVIS_CITY", "Bangalore"))  # for weather
     # 0 = auto-calibrate from ambient noise at startup; else an explicit RMS threshold

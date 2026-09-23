@@ -1,19 +1,99 @@
 # Jarvis — where things stand
 
-This file used to describe a build from an early phase: Deepgram for speech, ElevenLabs for the
-voice, the brain running on a Claude subscription through the Agent SDK, a file map with modules
-that no longer exist. None of that is how it works now, and a stale handoff is worse than no
-handoff — it is the document people trust when they are new and have no way to check.
-
-So it has been replaced with what is true, and with what is *known* to be true, which is not the
-same list.
-
-`README.md` is the real documentation. This file only covers what changed most recently and how
-far each piece was actually taken.
+`README.md` is the real documentation. This file covers what changed most recently, how far each
+piece was actually taken, and what is next.
 
 ---
 
-## Verified by watching it work
+## Latest pass (2026-09-23): audit, security, messaging, notifications, conversations
+
+Suite: 1683 passing before, **1829 passing** after (146 new tests, none removed or loosened).
+
+### Security — fixed
+
+| Finding | Fix |
+|---|---|
+| `enable_full_laptop_autonomy` let the **model** switch off its own shell/file confirmation gate — one injected webpage or message away from an unconfirmed shell | enabling now requires the person's confirmation; disabling is always allowed |
+| `control_laptop_full` ran `shell=True` **outside the sandbox**, a second shell path around everything `run_bash` guards | it now goes through `run_bash` (same gate, same bubblewrap policy) |
+| `read_file` / `write_file` could reach `~/.ssh`, `.env`, tokens — read a key, then fetch a URL with it | `sandbox.is_secret_path` refuses the sandbox's masked paths and key/env files |
+| WhatsApp bridge accepted any origin **starting with** `http://127.0.0.1` — `http://127.0.0.1.attacker.example` could send messages cross-site | exact origin allow-list |
+| No `Host` check on the web server or the bridge — a DNS-rebound page could read `/whatsapp/inbox` and `/chats` | both reject a non-local `Host` |
+| Bridge wrote every message's text to a world-readable `/tmp/jarvis-wa-debug.log` | opt-in with `WA_DEBUG=1`, file mode 0600 |
+| A 3-second microphone recording (`74`, at the repo root) was committed in `1f846af` (2026-09-16) and **pushed to `origin/main`** | untracked; runtime audio patterns added to `.gitignore`. It remains in history on GitHub — removing it needs a history rewrite and force-push, which is a separate decision |
+
+### Known, not yet fixed
+
+- **The main voice path cannot confirm anything.** Voice uses the web server's agent, which is
+  built with `confirm_fn=None`, so every `_confirm(...)` there answers *no* — e-mail sending and
+  calendar creation can never be approved by voice. Messaging now uses a turn-based approval
+  ("send it") instead; the other confirmations need the same treatment.
+- `permissions._DESTRUCTIVE` is a denylist (it says so). The sandbox is the real boundary.
+
+### Messaging — the "Papa" failure, root-caused
+
+Three separate causes, each reproduced against the real address book (names only, no numbers
+printed):
+
+1. **The bridge named chats after the owner.** It recorded `pushName` on outgoing messages,
+   where it is the owner's own name, so every chat the owner wrote to was relabelled with it —
+   eleven chats carried one name. Fixed at the source, and existing mislabels are dropped on
+   connect (`forgetOwnName`).
+2. **Two "Papa"s.** The phone book and the bridge each had a "Papa" with a different number; the
+   bridge's was somebody's self-chosen profile name. The old code sent to whichever store it
+   checked first. The resolver now ranks owner-saved names over bridge-only profile names, and
+   the bridge no longer lets a profile name overwrite an address-book name.
+3. **Fuzzy auto-send.** A single substring or shared-word match was sent to without asking
+   ("man" → a stored "Pradyumna"). Now only one clear match above the threshold is sent to.
+
+Also: local numbers are sent with the country code (they were passed to WhatsApp bare), and
+"Sent" is reported only when the bridge returns a chat and a message id.
+
+Verified: real address book + live bridge in `JARVIS_DRY_RUN_SENDS=1`: "message Papa on WhatsApp:
+…", "papa ko bol dena …", "text dad: …" all resolve to the right Papa in 20–260 ms without a
+model call. **The running bridge service still has the old code until it is restarted**
+(`systemctl --user restart jarvis-whatsapp`).
+
+### Notifications
+
+`jarvis/notifications.py`: normalise → dedupe → policy → group. Wired into the voice session;
+a test drives the real `_handle_phone_event` with seven messages and checks one announcement.
+Not yet heard on real hardware.
+
+### Conversations
+
+`jarvis/audio/conversation.py`: the state machine (IDLE … FOLLOW_UP_WINDOW … SLEEPING) and the
+"is this for us" judgement. The follow-up window is **on by default now** (8 s). The voice loop
+itself still has no automatic test — it needs a microphone — so the rules are tested and the
+loop wiring was read, not run. Barge-in exists (`JARVIS_BARGE_IN`) but does not yet report into
+the state machine.
+
+Two voice-loop bugs fixed: "what is impulse" contained "pulse" and got a system status report;
+"open PhonePe" contained "open phone" and mirrored the phone.
+
+### Measured
+
+| | |
+|---|---|
+| "Message Papa on WhatsApp: …" → resolved + previewed (dry run, 2,850 contacts) | 22–260 ms |
+| Test suite | 1829 passed in 46 s |
+
+Not measured yet: wake → first word with the new follow-up window; the <200 ms target for
+deterministic actions end to end through the voice loop.
+
+## Next, in priority order
+
+1. Turn-based approval for the other confirm-gated tools (e-mail, calendar) on the voice path.
+2. Semantic screen model (`ScreenElement` over AT-SPI → CDP/Marionette → OCR → vision);
+   `integrations/accessibility.py` and `desktop_control.py` are the starting points.
+3. Screen-aware study questions (video transcript at the current time via CDP).
+4. Dictation rewrite (hold/toggle hotkey, raw vs polished transcript, clipboard restore).
+5. TTS clarity audit and benchmark; teaching overlay; away-mode hardening; self-repair.
+
+---
+
+# Earlier passes
+
+### Verified by watching it work
 
 Not "the tests pass" — these were each driven against the real thing and the result observed.
 
@@ -34,7 +114,7 @@ arguments to the existing instance, so `--profile` is silently dropped and a tes
 the real browser with all its tabs. Two defences: `--new-instance`, and a Marionette port of its
 own, because the real browser already holds 2828.
 
-## Measured
+### Measured
 
 | | before | after |
 |---|---|---|
@@ -44,7 +124,7 @@ own, because the real browser already holds 2828.
 | Microphone noise floor | 0.84 RMS (saturated) | 0.0052 |
 | Idle overlay CPU | 37.3% | 0.59% |
 
-## Known limits, stated plainly
+### Known limits, stated plainly
 
 - **Streaming is only measured against a local model.** The path is the same for the hosted
   brains, which are OpenAI-compatible, but the numbers above come from Ollama. A provider that
@@ -57,7 +137,7 @@ own, because the real browser already holds 2828.
 - **Tab closing needs a drivable browser.** An extension or the debug port for Chromium, a
   restart with automation for Firefox. Without it study mode can judge a tab and not close it.
 
-## If something looks wrong
+### If something looks wrong
 
 Start with `python -m jarvis --check` (dependencies, models, audio devices — no API calls), then
 `--selftest` for one live round trip through the microphone and speaker.

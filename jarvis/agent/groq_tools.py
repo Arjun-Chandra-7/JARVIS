@@ -104,6 +104,9 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
 
     @tool("read_file", "Read a text file.", {"path": {"type": "string"}}, ["path"])
     async def read_file(a):
+        from .sandbox import is_secret_path
+        if is_secret_path(a.get("path", "")):
+            return "refused: that file holds credentials, and file tools do not read those."
         try:
             return Path(a["path"]).expanduser().read_text(errors="ignore")[:8000]
         except Exception as exc:  # noqa: BLE001
@@ -112,6 +115,9 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     @tool("write_file", "Create or overwrite a text file.",
           {"path": {"type": "string"}, "content": {"type": "string"}}, ["path", "content"])
     async def write_file(a):
+        from .sandbox import is_secret_path
+        if is_secret_path(a.get("path", "")):
+            return "refused: that path holds credentials, and file tools do not write there."
         try:
             p = Path(a["path"]).expanduser().resolve()
             if p.exists() and not config.allow_unconfirmed_shell:
@@ -333,7 +339,7 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
           {"to": {"type": "string"}, "message": {"type": "string"}}, ["to", "message"])
     async def whatsapp_send(a):
         from ..integrations import whatsapp
-        return whatsapp.smart_send(a.get("to", ""), a.get("message", ""))["message"]
+        return (await asyncio.to_thread(whatsapp.smart_send, a.get("to", ""), a.get("message", "")))["message"]
 
     @tool("instagram_dms", "Read the user's recent Instagram direct-message threads (their account).", {})
     async def instagram_dms(a):
@@ -457,28 +463,34 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
             (a.get("category") or "BUILD_LOG").upper(),
         )
 
-    @tool("find_contact", "Look up a person's WhatsApp contact by name (before sending).",
+    @tool("find_contact", "Look up who a name or relationship (Papa, Mummy, a nickname) refers to, "
+          "before sending. Says whether it is certain or which people it could be.",
           {"name": {"type": "string"}}, ["name"])
     async def find_contact(a):
-        from ..integrations import contacts, phone_contacts, whatsapp
+        from ..integrations import contacts, whatsapp
         name = a.get("name", "")
-        out = []
-        local = contacts.lookup(name)
-        if local:
-            out.append(f"{local['name']}" + (f" ({local['number']})" if local.get("number") else "") + " [remembered]")
-        for c in phone_contacts.lookup(name)[:6]:
-            out.append(f"{c['name']} ({c['number']})")
-        out += [c["name"] for c in whatsapp.resolve(name)[:4]]
-        return "; ".join(out) if out else f"No contact matching '{name}'."
+        res = await asyncio.to_thread(contacts.resolve, name, whatsapp.resolve)
+        if res.ok:
+            c = res.best
+            return f"{c.name} ({contacts.mask_number(c.number or c.jid)}, {c.why}) — certain."
+        if res.status == "ambiguous":
+            return "Not certain. Could be: " + "; ".join(
+                f"{c.name} ({contacts.mask_number(c.number or c.jid)})" for c in res.candidates[:5])
+        return f"No contact matching '{name}'."
 
     @tool("remember_contact",
-          "Permanently remember a person's phone number (and optional note) in the vault, so you can "
-          "message/call them later. Use whenever the user tells you someone's number or who someone is.",
-          {"name": {"type": "string"}, "number": {"type": "string"}, "note": {"type": "string"}},
+          "Permanently remember a person: their number, a note, and what the user calls them "
+          "(aliases such as 'Papa' or a nickname). Use whenever the user tells you someone's number, "
+          "who someone is, or 'X means Y'.",
+          {"name": {"type": "string"}, "number": {"type": "string"}, "note": {"type": "string"},
+           "aliases": {"type": "string", "description": "comma-separated names the user uses for them"},
+           "relationship": {"type": "string"}},
           ["name"])
     async def remember_contact(a):
         from ..integrations import contacts
-        return contacts.remember(a.get("name", ""), a.get("number", ""), a.get("note", ""))["message"]
+        aliases = [x.strip() for x in str(a.get("aliases", "")).split(",") if x.strip()]
+        return contacts.remember(a.get("name", ""), a.get("number", ""), a.get("note", ""),
+                                 aliases=aliases, relationship=a.get("relationship", ""))["message"]
 
     @tool("wifi_scan",
           "List nearby Wi-Fi networks and reveal the passwords THIS computer has already "
@@ -546,9 +558,9 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         from ..integrations import whatsapp
         name, about = a.get("name", ""), a.get("about", "")
         text = await _compose_message(config, name, about)
-        res = whatsapp.smart_send(name, text)
-        if res.get("ok"):
-            return f'Sent to {name}: "{text}"'
+        res = await asyncio.to_thread(whatsapp.smart_send, name, text)
+        if res.get("status") == "sent":
+            return f'{res["message"]} It said: "{text}"'
         return res["message"]
 
     @tool("place_call", "Open the phone dialer for a number.", {"number": {"type": "string"}}, ["number"])
@@ -1029,6 +1041,13 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
           {"enable": {"type": "boolean"}})
     async def enable_full_laptop_autonomy(a):
         val = _b(a.get("enable", True))
+        # The model must not be able to lift its own confirmation gate: a webpage or an incoming
+        # message that talks it into calling this would otherwise be one tool call away from an
+        # unconfirmed shell. Turning the gate back on is always allowed; turning it off needs
+        # the person to say yes.
+        if val and not config.allow_unconfirmed_shell:
+            if not await _confirm("turn off confirmation for shell commands and file overwrites"):
+                return "Full laptop autonomy stays off — it needs your explicit confirmation."
         config.allow_unconfirmed_shell = val
         from . import omnicore
         omnicore.record_event("System Autonomy", "Jarvis", f"Full laptop autonomy set to: {val}", config=config)
@@ -1039,16 +1058,10 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     async def control_laptop_full(a):
         cmd = a.get("command_or_script", "")
         from . import omnicore
-        if is_destructive(cmd) and not config.allow_unconfirmed_shell:
-            if not await _confirm(f"run this system command:\n    {cmd}"):
-                return "User declined the command."
         omnicore.record_event("Laptop Control", "Jarvis", f"Executing: {cmd} ({a.get('explanation','')})", config=config)
-        try:
-            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
-            out = (r.stdout or "") + (r.stderr or "")
-            return f"[Omni-Control Execution Result] Return Code {r.returncode}:\n{out.strip()[:6000] or '(Command executed successfully, no terminal output)'}"
-        except Exception as exc:
-            return f"[Omni-Control Error]: {exc}"
+        # One shell path, not two: this used to run `shell=True` outside the sandbox, which made
+        # it the way around everything run_bash guards.
+        return await run_bash({"command": cmd})
 
     # ---------------- PA Guardian & Meet Bot ----------------
 

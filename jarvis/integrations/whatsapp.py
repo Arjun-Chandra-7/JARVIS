@@ -5,8 +5,10 @@ The Node service must be running and linked (scan the QR once). Jarvis talks to 
 
 from __future__ import annotations
 
-import os
 import json
+import os
+import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -114,69 +116,149 @@ def resolve(name: str) -> list[dict]:
         return []
 
 
-def smart_send(to: str, message: str) -> dict:
-    """Send safely. Resolves a NAME to the right contact; if unknown/ambiguous it refuses and asks,
-    rather than guessing a number (which is how messages went to strangers). Returns {ok, message}."""
-    to = (to or "").strip()
-    if not (message or "").strip():
-        return {"ok": False, "message": "There's no message text to send."}
+# --------------------------------------------------------------------------- sending
+#
+# Every outgoing WhatsApp message goes through here: resolve who, decide whether the owner has to
+# see it first, send, check the bridge actually accepted it, and write down that it happened.
+# "Sent" is said only after the bridge returns the chat it went to.
+
+_PENDING_TTL_S = 180
+_pending: dict = {}
+
+
+def _approval_mode() -> str:
+    """``new`` (default): preview the first message to someone not messaged before.
+    ``always``: preview every message. ``never``: send once the recipient is certain."""
+    mode = os.environ.get("JARVIS_SEND_APPROVAL", "new").strip().lower()
+    return mode if mode in {"new", "always", "never"} else "new"
+
+
+def _dry_run_forced() -> bool:
+    return os.environ.get("JARVIS_DRY_RUN_SENDS", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _audit_path() -> Path:
+    from ..config import CONFIG
+    return Path(CONFIG.vault_path) / "Jarvis" / "private" / "outbox.jsonl"
+
+
+def _audit(status: str, name: str, address: str, message: str, error: str = "") -> None:
+    """A record that a send happened, without the message in it: a hash and a length are enough
+    to answer "did that go out?" and not enough to leak what it said."""
+    import hashlib
+
+    from .contacts import mask_number
+    row = {"ts": datetime.now(timezone.utc).isoformat(), "platform": "whatsapp", "status": status,
+           "to": name, "address": mask_number(address.split("@", 1)[0]),
+           "key": hashlib.sha256(address.split("@", 1)[0].encode()).hexdigest()[:16],
+           "sha256": hashlib.sha256(message.encode()).hexdigest()[:16], "chars": len(message)}
+    if error:
+        row["error"] = error[:200]
+    try:
+        path = _audit_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def _messaged_before(address: str) -> bool:
+    import hashlib
+
+    key = hashlib.sha256(address.split("@", 1)[0].encode()).hexdigest()[:16]
+    try:
+        with open(_audit_path(), encoding="utf-8") as fh:
+            return any(f'"key": "{key}"' in line and '"status": "sent"' in line for line in fh)
+    except OSError:
+        return False
+
+
+def _is_known(cand) -> bool:
+    # Someone the owner saved, has an existing WhatsApp chat with, or has messaged through Jarvis.
+    return cand.source == "saved" or bool(cand.jid) or _messaged_before(cand.address)
+
+
+def preview(cand, message: str) -> dict:
+    from .contacts import mask_number
+    return {"recipient": cand.name, "platform": "WhatsApp", "address": mask_number(cand.number or cand.jid),
+            "message": message, "connector": "local WhatsApp bridge (Baileys)",
+            "side_effect": f"sends one WhatsApp message to {cand.name}"}
+
+
+def _deliver(cand, message: str) -> dict:
+    if _dry_run_forced():
+        _audit("dry_run", cand.name, cand.address, message)
+        return {"ok": True, "status": "dry_run", "preview": preview(cand, message),
+                "message": f'Dry run: would send to {cand.name} on WhatsApp: "{message}"'}
     if not status():
-        return {"ok": False, "message": "WhatsApp bridge isn't running."}
+        return {"ok": False, "status": "failed",
+                "message": "WhatsApp bridge isn't connected. Start it with: systemctl --user start jarvis-whatsapp"}
+    r = send(cand.address, message)
+    if r.get("ok") and r.get("jid"):
+        _audit("sent", cand.name, cand.address, message)
+        return {"ok": True, "status": "sent", "jid": r["jid"], "message": f"Sent to {cand.name} on WhatsApp."}
+    error = str(r.get("error") or "the bridge did not confirm the send")
+    _audit("failed", cand.name, cand.address, message, error)
+    return {"ok": False, "status": "failed", "message": f"Couldn't send to {cand.name}: {error}"}
 
-    # 1) already a JID
-    if "@" in to:
-        r = send(to, message)
-        return {"ok": bool(r.get("ok")), "message": "Sent." if r.get("ok") else f"Failed: {r.get('error')}"}
 
-    # 2) a phone number (digits only, no letters)
-    digits = "".join(c for c in to if c.isdigit() or c == "+")
-    if digits and len(digits) >= 7 and not any(c.isalpha() for c in to):
-        r = send(digits, message)
-        return {"ok": bool(r.get("ok")), "message": "Sent." if r.get("ok") else f"Failed: {r.get('error')}"}
+def smart_send(to: str, message: str, *, dry_run: bool = False, approved: bool = False) -> dict:
+    """Send safely. Returns {ok, status, message, ...}.
 
-    # 3) a name → resolve in priority order:
-    #    a) numbers Arjun explicitly told Jarvis (durable vault memory)
-    #    b) the phone address book synced by KDE Connect (thousands of real contacts)
-    #    c) the WhatsApp bridge's own learned contacts
-    try:
-        from . import contacts
+    ``status`` is one of sent, dry_run, needs_approval, ambiguous, not_found, failed. A name is
+    resolved through contacts.resolve and sent to only when one person clearly matches; anything
+    less is a question back, because guessing is how messages went to strangers.
+    """
+    from . import contacts
 
-        remembered = contacts.lookup(to)
-        if remembered and remembered.get("number"):
-            r = send(remembered["number"], message)
-            if r.get("ok"):
-                return {"ok": True, "message": f"Sent to {remembered['name']}."}
-            return {"ok": False, "message": f"Couldn't send to {remembered['name']}: {r.get('error')}"}
-    except Exception:  # noqa: BLE001
-        pass
+    to = (to or "").strip()
+    message = (message or "").strip()
+    if not message:
+        return {"ok": False, "status": "failed", "message": "There's no message text to send."}
 
-    try:
-        from . import phone_contacts
+    if "@" in to:                                                   # a JID, e.g. from the inbox
+        cand = contacts.Candidate(name=to.split("@", 1)[0], jid=to, score=1.0, source="whatsapp")
+    elif re.fullmatch(r"[+\d][\d\s()+-]{6,}", to):                   # a number
+        cand = contacts.Candidate(name=contacts.mask_number(to), number=contacts.dialable(to),
+                                  score=1.0, source="number")
+    else:
+        res = contacts.resolve(to, whatsapp_candidates=resolve)
+        if not res.ok:
+            return {"ok": False, "status": res.status, "message": res.question(),
+                    "candidates": [c.name for c in res.candidates[:5]]}
+        cand = res.best
 
-        pcs = phone_contacts.lookup(to)
-        exact = [c for c in pcs if c["name"].lower() == to.lower()]
-        if len(pcs) == 1 or exact:
-            target = exact[0] if exact else pcs[0]
-            r = send(target["number"], message)
-            if r.get("ok"):
-                return {"ok": True, "message": f"Sent to {target['name']}."}
-            return {"ok": False, "message": f"Couldn't send to {target['name']}: {r.get('error')}"}
-        if len(pcs) > 1:
-            names = ", ".join(c["name"] for c in pcs[:5])
-            return {"ok": False, "message": f"Several contacts match '{to}': {names}. Which one?"}
-    except Exception:  # noqa: BLE001
-        pass
+    if dry_run:
+        return {"ok": True, "status": "dry_run", "preview": preview(cand, message),
+                "message": f'Dry run: would send to {cand.name} on WhatsApp: "{message}"'}
+    mode = _approval_mode()
+    if not approved and (mode == "always" or (mode == "new" and not _is_known(cand))):
+        _pending.clear()
+        _pending.update(cand=cand, message=message, at=time.monotonic())
+        why = "" if mode == "always" else " You haven't messaged them through me before."
+        return {"ok": False, "status": "needs_approval", "preview": preview(cand, message),
+                "message": f'Ready to send to {cand.name} on WhatsApp: "{message}".{why} Say "send it" to confirm.'}
+    return _deliver(cand, message)
 
-    cands = resolve(to)
-    if not cands:
-        return {"ok": False, "message": f"I don't have '{to}' in your contacts. Tell me their number "
-                                        "(with country code) and I'll remember it."}
-    exact = [c for c in cands if c.get("name", "").lower() == to.lower()]
-    if len(cands) > 1 and not exact:
-        names = ", ".join(c["name"] for c in cands[:5])
-        return {"ok": False, "message": f"A few contacts match '{to}': {names}. Which one, or give me the number?"}
-    target = exact[0] if exact else cands[0]
-    r = send(target["jid"], message)
-    if r.get("ok"):
-        return {"ok": True, "message": f"Sent to {target['name']}."}
-    return {"ok": False, "message": f"Couldn't send to {target['name']}: {r.get('error')}"}
+
+def pending_send() -> dict | None:
+    if _pending and time.monotonic() - _pending["at"] > _PENDING_TTL_S:
+        _pending.clear()
+    return dict(_pending) if _pending else None
+
+
+def confirm_pending() -> dict:
+    held = pending_send()
+    _pending.clear()
+    if not held:
+        return {"ok": False, "status": "failed", "message": "There's no message waiting to be sent."}
+    return _deliver(held["cand"], held["message"])
+
+
+def cancel_pending() -> dict:
+    held = pending_send()
+    _pending.clear()
+    return {"ok": True, "status": "cancelled",
+            "message": f"Cancelled the message to {held['cand'].name}." if held else "Nothing was waiting to be sent."}

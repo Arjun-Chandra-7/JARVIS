@@ -99,6 +99,58 @@ worth experimenting with — the one controlled study in this area found swappin
 embedding model moved accuracy 6.2 points — and `tests/test_tool_routing.py` is the instrument to
 judge a change with.
 
+## Messaging people
+
+"Message Papa on WhatsApp: I'll be home by eight" is parsed deterministically — recipient, platform
+and message are separated by the shape of the sentence, and the message goes out exactly as
+spoken. Hinglish works the same way: "papa ko bol dena late aaunga".
+
+Who "Papa" is comes from one resolver (`jarvis/integrations/contacts.py`) over three address
+books: people you told Jarvis about (with aliases such as "Papa" or a nickname), the phone's
+contacts synced by KDE Connect, and the names the WhatsApp bridge has learned. It sends only
+when exactly one person clearly matches. A contact that merely *contains* the word ("Papa Johns
+Atlanta") never matches, "dad" finds a contact saved as "Papa", two different numbers saved
+under one name is a question, and a WhatsApp profile name somebody chose for themselves never
+outranks a name you saved. Local numbers get the home country code
+(`JARVIS_DEFAULT_COUNTRY_CODE`, default 91) before WhatsApp is asked about them.
+
+"Sent" is said only after the bridge returns the chat the message went to. Each send is logged
+to `Jarvis/private/outbox.jsonl` with a masked number and a hash — never the text.
+
+    JARVIS_SEND_APPROVAL=new     preview the first message to someone new (default)
+                         always  preview every message
+                         never   send once the recipient is certain
+    JARVIS_DRY_RUN_SENDS=1       resolve and preview, never send (for development)
+
+A held message goes out on "send it" / "haan bhej do" and is dropped on "cancel" / "rehne do".
+A bare "ok" does neither.
+
+## Notifications
+
+Incoming messages are grouped before they are spoken: a conversation is announced once it has
+been quiet for five seconds (at most twenty), so seven Instagram messages from one person are
+"Seven new Instagram messages from Arjun. The latest says: …". Senders are said as names:
+numbers become the saved contact or "an unknown number", handles like `arjun.chandra_07` become
+"arjun chandra", and links, order numbers and tracking codes are left out of what is read.
+The same message arriving from two sources is said once.
+
+    "Don't announce Instagram for two hours"      "Only interrupt me for family"
+    "Stop reading messages from this group"       "Summarise my notifications"
+    "Stop reading messages from Rohit"            "Read that again"
+
+Muted things are not lost; they go to the summary. Messages with "urgent", "call me",
+"emergency" and the like are never held back.
+
+## Conversations
+
+Say the wake word once; after each reply Jarvis keeps listening for eight seconds
+(`JARVIS_FOLLOW_UP_S`) without it, so "open YouTube" → "search Pythagoras theorem" → "play the
+first video" is one conversation. In that window a transcript made only of fillers ("hmm",
+"okay"), Whisper's silence hallucinations ("thanks for watching") or a single non-command word is
+treated as the room and ignored — unless Jarvis just asked a question, in which case "yes" or
+"Painter" is the answer. "That's all", "thanks Jarvis" or "bas" ends it; so does silence.
+`JARVIS_FOLLOWUP=0` goes back to one wake word per turn.
+
 ## The voice
 
 Kokoro, 82M parameters, Apache-2.0, on the processor. Measured here: the model loads in 1.0s and

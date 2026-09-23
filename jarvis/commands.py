@@ -48,6 +48,13 @@ def deterministic_handlers():
         from .chain_command import handle as run_chain
         return await run_chain(text, config)
 
+    async def message(text, config):
+        # "Message Papa on WhatsApp: I'll be home by eight" and the "send it" that approves one.
+        # Early, because the message text can say anything — "open YouTube tonight" is a message
+        # here, not an instruction to open YouTube.
+        from .message_command import handle as f
+        return await f(text, config)
+
     async def modes(text, config):
         # "Study mode" and "Iron Man mode" change what the whole machine is for, so they are
         # recognised before anything that might read "close everything" as a request to close
@@ -142,6 +149,7 @@ def deterministic_handlers():
 
     return [
         ("chain", chain),
+        ("message", message),
         ("modes", modes),
         ("system", system),
         ("screen_click", screen_click),
@@ -190,6 +198,13 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
     # While asleep, ignore everything except the wake phrase above (voice also enforces this).
     if asleep():
         return "I'm asleep, sir. Say “Jarvis, wake up” to bring me back."
+
+    # Finer control over announcements first: "don't announce Instagram for two hours" also has
+    # the words the all-or-nothing switch below looks for.
+    from .notification_command import handle as notification_rules
+    answer = notification_rules(raw)
+    if answer is not None:
+        return answer
 
     from .preferences import set_notifications
     if re.search(r"\bnotifications?\b", command) and re.search(

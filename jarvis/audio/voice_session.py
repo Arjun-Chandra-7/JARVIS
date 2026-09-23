@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import os
 import queue
+import re
 import threading
 import time
 from pathlib import Path
@@ -19,6 +20,8 @@ from typing import Callable, Optional
 
 from ..config import Config
 from . import endpoint, hotkey, inputs, levels, speech_control, stt, tts, vad
+from .conversation import END, IGNORE, ConversationSession
+from .conversation import State as ConvState
 from .mic import Microphone
 from .wake import WakeWord
 
@@ -28,6 +31,28 @@ POST_WAKE_WAIT_S = 4.0  # how long to wait for you to start speaking after the w
 
 # KDE Connect announces these (WhatsApp comes from the Baileys bridge instead — see _watch_whatsapp)
 _MESSAGING_APPS = ("instagram", "messenger", "telegram", "signal", "messages", "sms")
+
+
+# Requests the voice loop answers itself, before the brain. Whole-sentence matches only: these
+# were substring tests, so "what is impulse" contained "pulse" and got a system status report, and
+# "open phonepe" contained "open phone" and mirrored the phone instead of opening PhonePe.
+_INSTANT = (
+    ("status", re.compile(r"(?:wake up(?: jarvis)?|(?:give me a |run a )?(?:status|system) report|"
+                          r"(?:protocol )?system pulse|run diagnostics(?: sequence)?|"
+                          r"subsystems?(?: status| check| report)?)")),
+    ("mirror_phone", re.compile(r"(?:open|mirror|show|screen)(?: my)? phone(?: screen)?(?: on (?:the )?screen)?")),
+    ("ring_phone", re.compile(r"(?:ring|find|call)(?: my)? phone|where(?:'s| is) my phone")),
+)
+
+
+def instant_intercept(command: str) -> Optional[str]:
+    """Which instant request this whole sentence is, if any. ``command`` is already cleaned."""
+    said = (command or "").lower().strip().rstrip(".!?")
+    said = re.sub(r"\s+please$|^please\s+", "", said)
+    for name, pattern in _INSTANT:
+        if pattern.fullmatch(said):
+            return name
+    return None
 
 
 def _is_messaging_app(app: str) -> bool:
@@ -176,11 +201,19 @@ class VoiceSession:
         if not notifications_enabled() and not away_now:
             return
 
+        if event.get("type") == "announce":
+            # A grouped announcement from the notification aggregator, spoken here so speech
+            # stays on the main loop. Rechecked, because muting can happen while it waited.
+            if not away_now and notifications_enabled():
+                self._speak(event.get("text", ""))
+            return
+
         if event.get("type") == "call":
-            who = event.get("name") or event.get("number") or "an unknown number"
+            from ..notifications import call_announcement, speakable_sender
+            who = speakable_sender(event.get("name") or event.get("number") or "")
             number = event.get("number")
             if "missed" in (event.get("event") or "").lower():
-                self._speak(f"You missed a call from {who}.")
+                self._speak(call_announcement(event.get("name", ""), number or "", "missed"))
             elif away_now and number:
                 # Auto-attendant: text the caller that the user is unavailable.
                 try:
@@ -190,13 +223,14 @@ class VoiceSession:
                     pass
                 self._speak(f"{who} is calling. You're away, so I texted them you're unavailable.")
             else:
-                self._speak(f"Incoming call from {who}.")
+                self._speak(call_announcement(event.get("name", ""), number or "", "ringing"))
             return
 
+        from ..notifications import NotificationEvent
         app = event.get("app", "phone")
-        who = event.get("title", "someone")
-        if "@" in str(who) or str(who).replace("+", "").isdigit():
-            who = "someone"  # never speak a raw JID/number as the sender name
+        notice = NotificationEvent(app=app, sender=str(event.get("title", "") or ""),
+                                   text=event.get("text", ""), thread=str(event.get("id", "") or ""))
+        who = notice.who            # a name, never a raw JID or number
         msg = event.get("text", "")
         self.on_event("phone", f"{app} from {who}: {msg}")
         # Auto-attendant for repliable notifications (Instagram/SMS), unless already handled (WhatsApp).
@@ -216,7 +250,19 @@ class VoiceSession:
             "id": event.get("id"), "repliable": event.get("repliable"),
         }
         if not away_now and notifications_enabled():  # while away, handle silently; muted = no readout
-            self._speak(f"{app} message from {who}. {msg}.")
+            # Not spoken yet: held until the conversation goes quiet, so a burst is said once.
+            # _flush_notices speaks it. While dictating, ordinary messages wait for the summary.
+            self._notices.add(notice, busy=self._dictating)
+
+    async def _flush_notices(self) -> None:
+        """Hand grouped announcements to the main loop as they come due."""
+        while True:
+            await asyncio.sleep(1.0)
+            try:
+                for announcement in self._notices.due():
+                    await self._events.put({"type": "announce", "text": announcement.text})
+            except Exception:  # noqa: BLE001 — a bad notification must not stop the watcher
+                pass
 
     def _recover_and_listen(self, wait_s: float) -> Optional[str]:
         """Mend the microphone and take one more listen. Never recurses — one attempt per turn."""
@@ -1012,6 +1058,10 @@ class VoiceSession:
         self.mic.start()
         self._last_message = None
         self._events: asyncio.Queue = asyncio.Queue()
+        self._conversation = ConversationSession(window_s=float(self.config.follow_up_s))
+        from ..notifications import Aggregator
+        self._notices = Aggregator(shared=True)
+        asyncio.create_task(self._flush_notices())
         from .. import power
         power.set_asleep(False)  # a fresh voice start means Jarvis is on
         await self._setup_phone()
@@ -1086,6 +1136,7 @@ class VoiceSession:
                     await self._handle_phone_event(payload, agent)
                     continue
                 self.on_event("wake")
+                self._conversation.wake()
                 # Clear the tail of the wake phrase before recording, or it lands inside the
                 # command. Three frames is ~240ms — enough for "…Jarvis", short enough that a
                 # command spoken straight afterwards is not clipped.
@@ -1152,6 +1203,19 @@ class VoiceSession:
                         transcript = self._record_transcript(wait_s=max(12, self.config.follow_up_s))
                         continue
 
+                    # --- is this for us? In the follow-up window nobody said "Jarvis", so a
+                    # cough, a "hmm" or a line from the TV must not become a command.
+                    verdict = self._conversation.judge(transcript)
+                    if verdict == END:
+                        self.on_event("reply", "Alright.")
+                        self._speak("Alright, sir.")
+                        break
+                    if verdict == IGNORE:
+                        self.on_event("timing", f"ignored in follow-up: {transcript!r}")
+                        transcript = self._record_transcript(wait_s=self._conversation.window_s)
+                        continue
+                    self._conversation.thinking()
+
                     # --- soft on/off: while asleep, only a wake phrase gets through ---
                     from .. import power as _power
                     from ..commands import clean_text as _clean, _WAKE_RE, _SLEEP_RE
@@ -1172,8 +1236,9 @@ class VoiceSession:
                         self.on_event("sleep")
                         break
 
-                    # Executive Wake Briefing: "wake up jarvis", "wake up", "clap", "status report", "system pulse", "subsystems"
-                    if any(phrase in t_lower for phrase in ("wake up", "wake up jarvis", "clapped", "clap", "status report", "subsystems", "system report", "pulse")):
+                    _instant = instant_intercept(_cmd)
+                    # Executive Wake Briefing: "wake up", "status report", "system pulse", "subsystems"
+                    if _instant == "status":
                         from ..integrations import system_stats
                         from ..agent import ai_researcher
                         from .. import hud_state
@@ -1235,7 +1300,7 @@ class VoiceSession:
                         break
 
                     # Instant Phone Command Intercept: "open my phone", "open phone", "mirror phone", "show my phone"
-                    if any(phrase in t_lower for phrase in ("open my phone", "open phone", "mirror my phone", "mirror phone", "show my phone", "show phone", "screen my phone")):
+                    if _instant == "mirror_phone":
                         from ..integrations import apps
                         ok, msg = apps.phone_mirror()
                         reply = "Opening your phone on screen now, sir." if ok else msg
@@ -1244,7 +1309,7 @@ class VoiceSession:
                         break
 
                     # Instant Ring Phone Intercept: "ring my phone", "find my phone", "where is my phone"
-                    if any(phrase in t_lower for phrase in ("ring my phone", "find my phone", "where is my phone", "call my phone")):
+                    if _instant == "ring_phone":
                         from ..integrations import apps
                         ok = apps.phone_ring(self.config.kde_device_id or None)
                         reply = "Ringing your phone now, sir." if ok else "Couldn't reach your phone over KDE Connect."
@@ -1302,7 +1367,12 @@ class VoiceSession:
                     # reply). Set JARVIS_FOLLOWUP=1 to keep the conversational follow-up window.
                     if not self.config.enable_followup:
                         break
-                    transcript = self._record_transcript(wait_s=self.config.follow_up_s)
+                    if self._conversation.replied(reply) is not ConvState.FOLLOW_UP_WINDOW:
+                        break
+                    self.on_event("listening", "follow-up — no wake word needed")
+                    self._flush_mic(frames=3)   # the tail of our own voice, not the person
+                    transcript = self._record_transcript(wait_s=self._conversation.window_s)
+                self._conversation.end()
                 self.on_event("sleep")
         finally:
             self.mic.stop()

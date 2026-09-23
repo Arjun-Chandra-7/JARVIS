@@ -18,3 +18,15 @@ mobile/android/*.apk
 .git_backup/
 .claude/
 .ruff_cache/
+
+# Runtime audio: microphone captures and debug recordings must never be committed.
+# (Tracked assets under assets/sounds/ are unaffected.)
+/74
+/*.wav
+/*.raw
+/*.pcm
+/*.flac
+/*.ogg
+recordings/
+*.rec.wav
+jarvis-wa-debug.log

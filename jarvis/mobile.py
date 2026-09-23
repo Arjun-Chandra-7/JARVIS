@@ -54,6 +54,15 @@ def _rate_limited(client: str) -> bool:
     return len(hits) >= 10
 
 
+def _local_host_header(host: str) -> bool:
+    host = (host or "").strip().lower()
+    if host.startswith("["):                       # [::1]:8770
+        name = host[1:].split("]", 1)[0]
+    else:
+        name = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+    return name in {"127.0.0.1", "localhost", "::1", "testserver", ""}
+
+
 async def authorize(request: Request, call_next):
     host = (request.client.host if request.client else "") or ""
     local = host in {"127.0.0.1", "::1", "testclient"}
@@ -67,6 +76,11 @@ async def authorize(request: Request, call_next):
         if not expected or not supplied or not hmac.compare_digest(supplied, expected):
             _fail_times.setdefault(host, []).append(time.monotonic())
             return JSONResponse({"detail": "Phone token required"}, status_code=401)
+    elif not _local_host_header(request.headers.get("host", "")):
+        # DNS rebinding: a page on attacker.example re-resolves its name to 127.0.0.1 and is then
+        # "same origin" with us, so it can read GET routes such as the WhatsApp inbox. Its Host
+        # header still names attacker.example.
+        return JSONResponse({"detail": "Untrusted host"}, status_code=403)
     elif request.method not in {"GET", "HEAD", "OPTIONS"}:
         origin = request.headers.get("origin")
         if origin and origin not in _TRUSTED_ORIGINS:
