@@ -20,7 +20,7 @@ from typing import Callable, Optional
 
 from ..config import Config
 from . import endpoint, hotkey, inputs, levels, speech_control, stt, tts, vad
-from .conversation import END, IGNORE, ConversationSession
+from .conversation import END, IGNORE, ConversationSession, split_closing
 from .conversation import State as ConvState
 from .mic import Microphone
 from .wake import WakeWord
@@ -43,6 +43,33 @@ _INSTANT = (
     ("mirror_phone", re.compile(r"(?:open|mirror|show|screen)(?: my)? phone(?: screen)?(?: on (?:the )?screen)?")),
     ("ring_phone", re.compile(r"(?:ring|find|call)(?: my)? phone|where(?:'s| is) my phone")),
 )
+
+
+# Asking for the coding agent by name. This used to be substring matching on phrases including
+# "code " — and "message 98… with the country code plus 91" contains "code ", so a WhatsApp
+# request went to the coding dialogue and came back as "Yes.". Whole words now, and the codes
+# that are not source code are named so they can never count.
+_CODE_EXPLICIT = re.compile(
+    r"(?ix)^code\s+\w|\b(?:code\s+(?:this|that|it|for\s+me|up)|write\s+(?:the\s+|some\s+)?code|"
+    r"(?:in|on|open|launch)\s+vs\s?code|vs\s?code|antigravity|agy|"
+    r"(?:fix|refactor|change|debug|review)\s+(?:the|this|my)\s+code)\b")
+_NOT_SOURCE_CODE = re.compile(
+    r"(?i)\b(?:country|area|pin|zip|postal|std|isd|dial(?:ling)?|otp|verification|promo|coupon|"
+    r"discount|qr|dress|access|security|login|sms)\s*codes?\b|\bcode\s+word\b")
+_CODING_VERB = re.compile(
+    r"(?i)^(?:fix|implement|refactor|create|add|debug|build|write\s+a\s+test|change\s+the\s+code)\b")
+
+
+def wants_coding_agent(transcript: str, editor_in_front: bool = False) -> bool:
+    """Is this a request for the coding agent? Never a message request, never a phone code."""
+    said = re.sub(r"^(?:hey\s+)?jarvis[,.!:\s]*", "", (transcript or "").strip(), flags=re.I)
+    from ..message_command import looks_like_message
+    if looks_like_message(said):
+        return False
+    probe = _NOT_SOURCE_CODE.sub(" ", said)
+    if _CODE_EXPLICIT.search(probe):
+        return True
+    return editor_in_front and bool(_CODING_VERB.match(said))
 
 
 def instant_intercept(command: str) -> Optional[str]:
@@ -1320,24 +1347,9 @@ class VoiceSession:
                     # Instant Coding / Antigravity Voice Intercept
                     from ..integrations import coding
                     v_ctx = coding.active_context()
-                    is_code_explicit = any(
-                        phrase in t_lower
-                        for phrase in (
-                            "code this", "code for me", "code ", "in vs code", "in vscode",
-                            "on vs code", "on vscode", "antigravity", "agy", "fix the code",
-                            "refactor the code", "open antigravity", "launch antigravity",
-                        )
-                    )
                     is_vs_active = v_ctx.get("is_vscode_active", False)
-                    has_coding_intent = any(
-                        t_lower.startswith(verb) or f" {verb}" in t_lower
-                        for verb in (
-                            "fix ", "implement ", "refactor ", "create ", "add ", "debug ",
-                            "write a test", "change the code", "build "
-                        )
-                    )
 
-                    if is_code_explicit or (is_vs_active and has_coding_intent):
+                    if wants_coding_agent(transcript, is_vs_active):
                         # The shared backend owns the provider/model/effort dialogue and job.
                         reply = await agent.send(transcript)
                         self.on_event("reply", reply)
@@ -1346,13 +1358,22 @@ class VoiceSession:
                         continue
 
                     start = time.monotonic()
+                    # "…, then bye": do the request, then close. The goodbye is not sent on —
+                    # to a messaging request it is not the message, and to the model it is
+                    # small talk that swallows the request.
+                    request, closing = split_closing(transcript)
+                    if not closing or not request:
+                        request = transcript
+                    # One id per utterance: however it reaches the brain, it is acted on once.
+                    import uuid as _uuid
+                    agent.event_id = _uuid.uuid4().hex
                     # `handled` means the answer has already been spoken and shown, sentence by
                     # sentence, while the brain was still writing it. Saying it again here would
                     # repeat the whole reply aloud and print it twice.
                     handled = False
                     try:
                         reply, handled = await self._ask_and_say(
-                            agent, self._augment(transcript))
+                            agent, self._augment(request))
                     except Exception as exc:  # noqa: BLE001 - never let one bad turn kill the loop
                         reply = "Something went wrong on that one, sir."
                         self.on_event("error", f"brain: {exc}")
@@ -1368,6 +1389,12 @@ class VoiceSession:
                     if not self.config.enable_followup:
                         break
                     if self._conversation.replied(reply) is not ConvState.FOLLOW_UP_WINDOW:
+                        break
+                    # They said goodbye after the request. Anything it created — a message held
+                    # for a yes — lives in the approval manager, not in this conversation, so it
+                    # survives the close. Only a real question ("What should I send?") keeps
+                    # the window open, because closing on it would strand the answer.
+                    if closing and not (reply or "").rstrip().endswith("?"):
                         break
                     self.on_event("listening", "follow-up — no wake word needed")
                     self._flush_mic(frames=3)   # the tail of our own voice, not the person

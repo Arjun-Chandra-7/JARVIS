@@ -200,8 +200,12 @@ def _deliver(cand, message: str) -> dict:
     return {"ok": False, "status": "failed", "message": f"Couldn't send to {cand.name}: {error}"}
 
 
-def smart_send(to: str, message: str, *, dry_run: bool = False, approved: bool = False) -> dict:
+def smart_send(to: str, message: str, *, dry_run: bool = False, approved: bool = False,
+               confirm: bool = False) -> dict:
     """Send safely. Returns {ok, status, message, ...}.
+
+    ``confirm`` holds the message for a yes whatever the approval mode — used when the text was
+    collected over two turns, so a stray sentence can never go out on its own.
 
     ``status`` is one of sent, dry_run, needs_approval, ambiguous, not_found, failed. A name is
     resolved through contacts.resolve and sent to only when one person clearly matches; anything
@@ -217,8 +221,13 @@ def smart_send(to: str, message: str, *, dry_run: bool = False, approved: bool =
     if "@" in to:                                                   # a JID, e.g. from the inbox
         cand = contacts.Candidate(name=to.split("@", 1)[0], jid=to, score=1.0, source="whatsapp")
     elif re.fullmatch(r"[+\d][\d\s()+-]{6,}", to):                   # a number
-        cand = contacts.Candidate(name=contacts.mask_number(to), number=contacts.dialable(to),
-                                  score=1.0, source="number")
+        from ..phone_numbers import normalize
+        parsed = normalize(to)
+        if not parsed.ok:
+            return {"ok": False, "status": "failed",
+                    "message": f"That isn't a valid phone number ({contacts.mask_number(to)}). Say it again with all the digits."}
+        cand = contacts.Candidate(name=f"the number {contacts.mask_number(to)}",
+                                  number=parsed.e164.lstrip("+"), score=1.0, source="number")
     else:
         res = contacts.resolve(to, whatsapp_candidates=resolve)
         if not res.ok:
@@ -230,10 +239,10 @@ def smart_send(to: str, message: str, *, dry_run: bool = False, approved: bool =
         return {"ok": True, "status": "dry_run", "preview": preview(cand, message),
                 "message": f'Dry run: would send to {cand.name} on WhatsApp: "{message}"'}
     mode = _approval_mode()
-    if not approved and (mode == "always" or (mode == "new" and not _is_known(cand))):
+    if not approved and (confirm or mode == "always" or (mode == "new" and not _is_known(cand))):
         from .. import context
         from ..approvals import MANAGER
-        why = "" if mode == "always" else " (you haven't messaged them through me before)"
+        why = "" if (mode == "always" or confirm or _is_known(cand)) else " (you haven't messaged them through me before)"
         action = MANAGER.propose(
             "message", f'send a WhatsApp to {cand.name}{why}: "{message}"',
             {"recipient": cand.name, "platform": "WhatsApp", "action": "send message",

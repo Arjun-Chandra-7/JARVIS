@@ -44,8 +44,52 @@ ACT, IGNORE, END = "act", "ignore", "end"
 _END = re.compile(
     r"(?i)^(?:(?:ok(?:ay)?|thanks?|thank you)[,\s]*)*(?:that'?s all|that'?s it|that will be all|"
     r"that'?ll be all|nothing(?: else)?|no(?:,)? thanks?|no thank you|never ?mind|we'?re done|"
-    r"i'?m done|done|bas|bas itna|bas ho gaya|ho gaya|theek hai bas|chalo bye|bye|goodbye|"
+    r"i'?m done|done|bas|bas itna|bas ho gaya|ho gaya|theek hai bas|chalo bye|bye|bye bye|goodbye|"
+    r"ok(?:ay)? bye|stop listening|you can stop listening|rehne do|rehne de|"
     r"thanks?(?: jarvis)?|thank you(?: jarvis)?|shukriya)[.!]?$")
+
+# The same words at the END of a longer sentence: "message Papa that I'll be late, then bye".
+# The request is the sentence; the goodbye only says what to do after it. Anchored to the end and
+# separated from what precedes it, so "send 'bye' to Papa" and "say goodbye to her" keep their
+# words. Deliberately narrower than _END: "done", "nothing" and "rehne do" at the end of a
+# sentence are usually part of it.
+_TRAILING_CLOSE = re.compile(
+    r"(?i)(?:[.!?,;]\s*|\s+(?:and|then|and then)\s+|[.!?,;]\s*(?:and\s+|then\s+|and then\s+)?)"
+    r"(?:ok(?:ay)?[,\s]+)?(?:thanks?[,\s]+|thank you[,\s]+)?"
+    r"(?:bye(?:\s*bye)?|goodbye|that'?s all|that'?s it|stop listening|bas|chalo bye|"
+    r"thanks?(?: jarvis)?|thank you(?: jarvis)?|shukriya)[.!\s]*$")
+
+# When the last reply is waiting on a yes or no, these are answers to it — "never mind" cancels
+# the held message — not a goodbye. The approval manager decides; the conversation only listens.
+_ANSWER_NOT_GOODBYE = re.compile(
+    r"(?i)^(?:no(?:,)? thanks?|no thank you|never ?mind|rehne d[oe]|nothing(?: else)?|nahi|no)[.!]?$")
+
+
+def is_session_end(text: str) -> bool:
+    """The whole utterance is a goodbye and nothing else."""
+    return bool(_END.match((text or "").strip()))
+
+
+def split_closing(text: str) -> tuple[str, bool]:
+    """(the request, whether the person also said goodbye).
+
+    "ok now message 98… with country code plus 91. Bye." → ("ok now message 98… with country
+    code plus 91", True). A sentence that is only a goodbye comes back as ("", True); one
+    without a goodbye comes back unchanged with False. Quoted words are never taken:
+    "send 'bye' to Papa" is a message whose text is bye.
+    """
+    said = (text or "").strip()
+    if not said:
+        return "", False
+    if _END.match(said):
+        return "", True
+    m = _TRAILING_CLOSE.search(said)
+    if not m:
+        return said, False
+    head = said[:m.start()].rstrip(" ,;")
+    if not head or head.count("'") % 2 or head.count('"') % 2 or head.count("‘") != head.count("’"):
+        return said, False       # the goodbye sits inside a quotation
+    return head, True
 
 # Sounds and fillers that are not requests. In the follow-up window nobody has addressed Jarvis
 # by name, so a transcript made only of these is the room, not the person.
@@ -151,6 +195,8 @@ class ConversationSession:
         if not said or not words or _PHANTOM.match(said):
             return IGNORE if self.state is State.FOLLOW_UP_WINDOW else ACT
         if _END.match(said):
+            if self.expecting_answer and _ANSWER_NOT_GOODBYE.match(said):
+                return ACT
             return END
         if self.state is not State.FOLLOW_UP_WINDOW or self.expecting_answer:
             return ACT

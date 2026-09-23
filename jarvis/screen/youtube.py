@@ -12,6 +12,7 @@ runs automation scripts behind X-ray wrappers that hide page-defined globals lik
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -154,6 +155,8 @@ class PlayerState:
     ad: bool = False
     player_error: str = ""
     tracks: list[dict] = field(default_factory=list)
+    fresh: bool = True        # the player's details belong to the video in the address bar
+    read_at: float = 0.0      # when this was read from the page (time.time())
 
     @classmethod
     def from_page(cls, raw: dict) -> "PlayerState":
@@ -164,7 +167,8 @@ class PlayerState:
                    paused=raw.get("paused"), chapter=raw.get("chapter", ""),
                    live_caption=raw.get("liveCaption", ""), ad=bool(raw.get("ad")),
                    player_error=raw.get("playerError", "") or "",
-                   tracks=list(raw.get("tracks") or []))
+                   tracks=list(raw.get("tracks") or []),
+                   fresh=raw.get("fresh", True) is not False, read_at=time.time())
 
 
 def clock(seconds: Optional[float]) -> str:

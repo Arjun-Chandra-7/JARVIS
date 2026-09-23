@@ -171,6 +171,7 @@ app.add_middleware(
 class Chat(BaseModel):
     message: str = Field(min_length=1, max_length=30000)
     session_id: str = Field(default="local", max_length=80)
+    event_id: str = Field(default="", max_length=64)
 
 
 @app.post("/chat")
@@ -179,15 +180,23 @@ async def chat(c: Chat):
     if agent is None:
         return {"reply": "Brain still booting, sir — one moment."}
     from .commands import clean_text
+    from .dedupe import CHAT as dedupe
     shown = clean_text(c.message) or c.message.strip()[:400]
     hud_state.log_turn("you", shown)
     await _emit("heard", shown)          # every turn — typed, voice, phone, telegram — hits the HUD
     async with _lock:
+        # Checked inside the lock: a duplicate queued behind the original sees it finished.
+        again = dedupe.seen(c.message, c.event_id)
+        if again is not None:
+            from . import route_log
+            route_log.record(intent="duplicate", action="skipped")
+            return {"reply": again, "duplicate": True}
         try:
             agent.command_session = c.session_id
             reply = await agent.send(c.message)
         except Exception as exc:  # noqa: BLE001
             reply = f"[error] {exc}"
+        dedupe.done(c.message, reply, c.event_id)
     hud_state.log_turn("jarvis", reply)
     await _emit("reply", reply)
     return {"reply": reply}

@@ -58,6 +58,10 @@ _NO = re.compile(
     r"no|nah|nope|nahi|nhi|na|mat|cancel(?:\s+it)?|don'?t(?:\s+send(?:\s+it)?|\s+do\s+it)?|do\s+not(?:\s+send(?:\s+it)?)?|"
     r"abort|stop|never\s*mind|chhodo|choddo)"
     r"(?P<rest>(?:\s+.*)?)$")
+# Words that only ever answer a held action; everything else ("yes", "haan") can be conversation.
+_APPROVAL_ONLY = re.compile(
+    r"(?i)(?:(?:haan|han|yes|ok(?:ay)?)[,\s]+)?(?:send\s+it(?:\s+now)?|bhej\s+d[oe]|bhejo|confirm(?:ed)?|"
+    r"haan\s+bhej\s+d[oe])")
 # A bare "ok" is filler as often as it is consent; it approves nothing on its own.
 _BARE_FILLER = re.compile(r"(?i)^(?:ok(?:ay)?|sure|theek hai|thik hai|achha|acha|hmm)$")
 _COURTESY = {"it", "please", "the", "that", "this", "one", "ji", "do", "de", "karo", "yaar", "bhai",
@@ -258,9 +262,19 @@ class ApprovalManager:
                 self._expired.pop(action.id, None)
                 return Outcome("expired", f"That request to {action.summary} expired, so I didn't do "
                                           "it. Ask again if you still want it.", action)
+            # "Send it" with nothing held used to reach the model, which answered "Yes." — as
+            # if something had been sent. A bare "yes" or "haan" stays conversation: it is as
+            # often the answer to a question the model asked.
+            if _APPROVAL_ONLY.fullmatch(said):
+                return Outcome("none", "There's nothing waiting to be sent or confirmed right now.")
             return None
         said = re.sub(r"(?i)^(?:hey\s+)?jarvis[,.!\s]*", "", (text or "").strip()).rstrip(".!?").strip()
         if not said or _BARE_FILLER.fullmatch(said):
+            return None
+        if _is_a_new_request(said):
+            # "Send 'Bye' to this number on WhatsApp" starts with "send" and names WhatsApp, and
+            # was read as "yes, send the held one". A sentence that carries its own text or
+            # recipient is a new request, never an answer.
             return None
         m_yes, m_no = _YES.match(said), _NO.match(said)
         if not (m_yes or m_no):
@@ -287,6 +301,17 @@ class ApprovalManager:
             return Outcome("pending", action.prompt(), action)
         approved = await ask(summary)
         return await self.confirm(action.id) if approved else self.cancel(action.id)
+
+
+def _is_a_new_request(said: str) -> bool:
+    if re.search(r"[\"“‘]|(?:^|\s)'\S", said):
+        return True
+    try:
+        from .message_command import read
+        req = read(said)
+    except Exception:  # noqa: BLE001 — a parser failure must not approve anything either way
+        return False
+    return req is not None and bool(req.body or req.number)
 
 
 def _read_result(result: Any) -> tuple[bool, str]:

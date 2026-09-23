@@ -211,9 +211,23 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
     # "cancel". Matched on the words as said, before the Hinglish rewrite, and only when
     # something is actually waiting, so an ordinary "yes" in conversation is left alone.
     from .approvals import MANAGER
+    from . import route_log
     settled = await MANAGER.answer(clean_text(text), session_id)
     if settled is not None:
+        route_log.record(intent="approval.answer", action=settled.status,
+                         kind=settled.action.kind if settled.action else "")
         return settled.message
+
+    # "…, then bye": the goodbye says what to do after the request, it is not part of it. Only a
+    # sentence that is nothing but a goodbye is answered as one — "send 'bye' to Papa" keeps it.
+    from .audio.conversation import split_closing
+    request, closing = split_closing(raw)
+    if closing and not request:
+        route_log.record(intent="session.end", action="goodbye")
+        return "Alright, sir."
+    if closing and not re.search(r"[\"'“‘]", raw):
+        raw = request
+    command = raw.lower().rstrip(".!?")
 
     # Finer control over announcements first: "don't announce Instagram for two hours" also has
     # the words the all-or-nothing switch below looks for.
@@ -282,6 +296,15 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
         answer = await _handler(raw, config)
         if answer is not None:
             return answer
+
+    # A question about what is on screen right now that nothing above could answer from the
+    # screen. Passed on, the model reaches for its memory tool and answers from an old
+    # conversation; "I can't see it" is the true answer.
+    from . import video_command
+    if video_command.is_current_context(raw):
+        route_log.record(intent="screen.current", action="unavailable", context="none",
+                         lang=video_command.reply_language(raw), memory="not_consulted")
+        return video_command.unavailable(raw)
 
     from .integrations import coding_jobs
     return await coding_jobs.handle_message(raw, session_id=session_id)

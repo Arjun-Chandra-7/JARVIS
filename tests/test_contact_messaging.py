@@ -228,7 +228,8 @@ def test_held_message_can_be_cancelled(world, monkeypatch):
     monkeypatch.setenv("JARVIS_SEND_APPROVAL", "always")
     _say("Message Papa on WhatsApp: hi")
     assert "Cancelled" in _say("nhi rehne de")
-    assert _say("send it") is None
+    # Nothing is held any more: "send it" says so rather than reaching the model.
+    assert _say("send it") == "There's nothing waiting to be sent or confirmed right now."
     assert not world["sent"]
 
 

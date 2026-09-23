@@ -75,13 +75,17 @@ class RemoteAgent:
     async def __aexit__(self, *exc: Any) -> None:
         return None
 
-    async def send(self, user_text: str) -> str:
+    async def send(self, user_text: str, event_id: str = "") -> str:
         msg = user_text + (voice_note(user_text) if self.mode == "voice" else "")
+        # One id per utterance, so the server acts on it once however many times it arrives.
+        event_id = event_id or getattr(self, "event_id", "") or ""
+        self.event_id = ""
         # generous enough for a deep-research turn, but bounded so a hung call can't wedge the
         # voice loop (which can't listen while it's waiting on a reply).
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=5.0)) as client:
-                r = await client.post(f"{self.base}/chat", json={"message": msg, "session_id": self.mode})
+                r = await client.post(f"{self.base}/chat", json={"message": msg, "session_id": self.mode,
+                                                                 "event_id": event_id})
                 return (r.json() or {}).get("reply", "") or "(no reply)"
         except httpx.TimeoutException:
             return "That one took too long, sir — let me know if you'd like me to try again."
