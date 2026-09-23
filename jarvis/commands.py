@@ -232,6 +232,13 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
     if re.fullmatch(r"(?:what did i miss|(?:read|show|give me)(?: me)?(?: my| the)? (?:away )?(?:messages? summary|message summary|debrief|catch[- ]?up))", command):
         from .agent import pa_daemon
         return pa_daemon.debrief(config)
+    # "is my mic working" — a question that could only be answered by trying to talk and failing.
+    # Matched on meaning rather than a fixed phrase, because there is no one way people ask it.
+    from .audio import mic_report
+
+    if mic_report.asked(command):
+        return await asyncio.to_thread(mic_report.check, config.audio_input_device,
+                                       command)
     if re.fullmatch(r"(?:scan|list|show|check)(?: the| my| nearby| all)? wi[- ]?fi(?: networks?| passwords?)?"
                     r"|wi[- ]?fi(?: networks?| passwords?)|what wi[- ]?fi(?:s| networks?)?(?: are)?(?: around| near(?:by| me))?", command):
         from .integrations import wifi_scan
