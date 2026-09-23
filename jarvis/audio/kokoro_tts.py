@@ -271,7 +271,7 @@ _SENTENCE_SPLIT = re.compile(r"(?<=[.!?।])\s+")
 #
 # Only the first piece. Later ones are whole sentences, because a clause break mid-reply is
 # audible as a stumble and there is no latency left to buy by then.
-FIRST_PIECE_CHARS = 90
+FIRST_PIECE_CHARS = 48     # measured: ~0.8 s to synthesise 41 chars against 1.3 s for 76
 
 # Past this a piece is too long to synthesise in one go whatever its punctuation says.
 MAX_PIECE_CHARS = 320
@@ -285,9 +285,16 @@ def _split_on_a_clause(part: str, limit: int) -> tuple[str, str]:
     """
     if len(part) <= limit:
         return part, ""
+    # The last boundary before the limit; failing that, the first one soon after it — a
+    # 50-character opening clause is still far quicker to synthesise than the 100-character
+    # sentence it belongs to.
     for mark in (", ", "; ", ": ", " — ", " and ", " but "):
         cut = part.rfind(mark, 0, limit)
         if cut > limit // 3:
+            return part[:cut + (1 if mark == ", " else 0)].strip(), part[cut + len(mark):].strip()
+    for mark in (", ", "; ", ": ", " — "):
+        cut = part.find(mark, limit, limit * 2)
+        if cut > 0 and len(part) - cut > 12:
             return part[:cut + (1 if mark == ", " else 0)].strip(), part[cut + len(mark):].strip()
     return part, ""
 

@@ -94,6 +94,28 @@ def parse(text: str) -> Optional[str]:
     return target
 
 
+_HINT_EVERY_S = 30 * 60
+_hinted: dict[str, float] = {}
+
+
+def _once(hint: str) -> str:
+    """The same advice, said once and then not again for half an hour.
+
+    Found on the end-to-end voice run: every "open" and "play" reply carried the whole paragraph
+    about restarting the browser with automation — said aloud each time, thirty words after the
+    two that mattered.
+    """
+    import time
+
+    if not hint:
+        return ""
+    now = time.monotonic()
+    if now - _hinted.get(hint, -_HINT_EVERY_S) < _HINT_EVERY_S:
+        return ""
+    _hinted[hint] = now
+    return hint
+
+
 def _remember_site(target: str) -> None:
     from . import context
     context.note_opened(site=target, target=target)
@@ -159,7 +181,8 @@ async def run(target: str, config) -> str:
             if opened:
                 # Opened without automation is still opened: "search for X" next is about it.
                 _remember_site(target)
-            return (f"Opened {target}. {state['message']}" if opened
+            hint = _once(state["message"])
+            return (f"Opened {target}. {hint}".strip() if opened
                     else f"I couldn't open {target}. {state['message']}")
         return state["message"]
 

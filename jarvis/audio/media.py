@@ -63,35 +63,68 @@ def transport_command(text: str) -> Optional[str]:
 
 
 class Media:
-    def __init__(self, run=_run) -> None:
+    def __init__(self, run=_run, sleep=None) -> None:
+        import time
+
         self._run = run
+        self._sleep = sleep or time.sleep
         self.paused_by_us = False
+        self._paused_players: list[str] = []
         self._ducked: dict[int, float] = {}
         self._lock = threading.Lock()
 
     # -------------------------------------------------------------- transport
+    def players(self) -> dict[str, str]:
+        """{player: status} for every MPRIS player."""
+        names = [n.strip() for n in self._run(["playerctl", "-l"]).splitlines() if n.strip()]
+        return {n: (self._run(["playerctl", "-p", n, "status"]).strip().splitlines() or [""])[0]
+                for n in names}
+
     def status(self) -> str:
-        out = self._run(["playerctl", "status"]).strip()
-        return out.splitlines()[0] if out else ""
+        states = self.players().values()
+        return "Playing" if "Playing" in states else ("Paused" if "Paused" in states else "")
+
+    def _settle(self, names: list[str], wanted: str) -> bool:
+        """MPRIS reports a change a beat after it happens: look again for up to 0.6 s."""
+        for _ in range(6):
+            if all(self._run(["playerctl", "-p", n, "status"]).strip() == wanted for n in names):
+                return True
+            self._sleep(0.1)
+        return False
 
     def transport(self, name: str) -> tuple[bool, str]:
-        """Do it and check it. (done, what to say)."""
-        if not self._run(["playerctl", "-l"]).strip():
+        """Do it to the player that is actually playing, and check it. (done, what to say).
+
+        Found on the end-to-end run: "pause it" went to playerctl's default player — which was
+        not the one playing — and was checked before the player had reported the change.
+        """
+        players = self.players()
+        if not players:
             return False, "Nothing is playing that I can control, sir."
-        before = self.status()
-        verb = {"pause": "pause", "play": "play", "next": "next", "previous": "previous"}[name]
-        self._run(["playerctl", verb])
-        after = self.status()
+        playing = [n for n, st in players.items() if st == "Playing"]
         if name == "pause":
-            if after == "Paused" or before != "Playing":
-                self.paused_by_us = before == "Playing"
-                return True, "Paused, sir." if before == "Playing" else "It's already paused, sir."
+            if not playing:
+                return True, "Nothing I can control is playing, sir."
+            for n in playing:
+                self._run(["playerctl", "-p", n, "pause"])
+            if self._settle(playing, "Paused"):
+                self.paused_by_us, self._paused_players = True, playing
+                return True, "Paused, sir."
             return False, "I asked the player to pause, but it's still playing, sir."
         if name == "play":
-            self.paused_by_us = False
-            if after == "Playing":
+            targets = [n for n in self._paused_players if n in players] or \
+                [n for n, st in players.items() if st == "Paused"][:1]
+            if not targets:
+                return (True, "It's already playing, sir.") if playing else \
+                    (False, "There's nothing paused for me to play, sir.")
+            for n in targets:
+                self._run(["playerctl", "-p", n, "play"])
+            self.paused_by_us, self._paused_players = False, []
+            if self._settle(targets, "Playing"):
                 return True, "Playing, sir."
             return False, "I asked the player to play, but it didn't start, sir."
+        target = playing[:1] or list(players)[:1]
+        self._run(["playerctl", "-p", target[0], "next" if name == "next" else "previous"])
         return True, "Next, sir." if name == "next" else "Going back, sir."
 
     # -------------------------------------------------------------- ducking

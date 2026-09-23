@@ -723,8 +723,13 @@ class VoiceSession:
         """
         from . import bargein, voice_log
         media = self._media_on
-        detector = bargein.BargeInDetector(bargein.policy(self.aec_active, media),
-                                           frame_s=self.frame_length / self.sample_rate)
+        speaking_policy = bargein.policy(self.aec_active, media)
+        # Before the first audio a trigger cancels a request that is still being answered, which
+        # costs more than cutting a sentence short: two more frames of speech are wanted then.
+        from dataclasses import replace
+        detector = bargein.BargeInDetector(
+            replace(speaking_policy, frames_needed=speaking_policy.frames_needed + 2),
+            frame_s=self.frame_length / self.sample_rate)
         detector.arm()                      # the room before Jarvis says anything
         vad_ = self._barge_vad
         if vad_ is not None:
@@ -734,6 +739,7 @@ class VoiceSession:
         audio_armed = False
         while not stop.is_set():
             if first_audio is not None and first_audio.is_set() and not audio_armed:
+                detector.policy = speaking_policy
                 detector.arm()              # his echo arrives now: learn it before judging
                 audio_armed = True
             try:
@@ -1000,7 +1006,10 @@ class VoiceSession:
             barged = self._barge is not None
             if barged:
                 from .local_tts import PLAYBACK
-                self._barge["stopped_at"] = PLAYBACK["stopped_at"] or time.monotonic()
+                stopped_at = PLAYBACK["stopped_at"]
+                # A stop time from before this onset is a previous utterance's.
+                self._barge["stopped_at"] = stopped_at if stopped_at >= self._barge["onset_at"] \
+                    else time.monotonic()
                 self._handoff.set()     # the monitor stops listening; the frames are ours
             if monitor is not None:
                 monitor.join(timeout=1.0)
@@ -1745,7 +1754,8 @@ class VoiceSession:
                 request = transcript
             # One id per utterance: however it reaches the brain, it is acted on once.
             import uuid as _uuid
-            agent.event_id = _uuid.uuid4().hex
+            event_id = _uuid.uuid4().hex
+            agent.event_id = event_id
             # `handled` means the answer has already been spoken and shown, sentence by
             # sentence, while the brain was still writing it. Saying it again here would
             # repeat the whole reply aloud and print it twice.
@@ -1761,7 +1771,25 @@ class VoiceSession:
                              streamed=handled)
             if self._barge is not None:
                 # Talked over before or while answering: that is the next request.
+                abandoned = not (reply or "").strip()
                 transcript = await self._after_barge(reply)
+                if abandoned and (not transcript
+                                  or self._conversation.judge(transcript) == IGNORE):
+                    # It was not the person (the TV, a cough): the request stands. Asked again
+                    # with the same event id, so the backend hands back the answer to the first
+                    # asking instead of doing the work twice.
+                    voice_log.metric("barge_in_false", stage="thinking")
+                    self._conversation.take_interrupted()
+                    self._conversation.thinking()
+                    agent.event_id = event_id
+                    reply, handled = await self._ask_and_say(agent, self._augment(request))
+                    if self._barge is not None:
+                        transcript = await self._after_barge(reply)
+                        continue
+                    if not handled and (reply or "").strip():
+                        self._say(reply)
+                    transcript = await self._next(agent, reply)
+                    continue
                 if transcript is None:
                     transcript = self._record_transcript(wait_s=self._conversation.window_s)
                 continue

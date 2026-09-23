@@ -32,21 +32,23 @@ def test_requests_that_mention_media_are_not_media_keys(said):
 
 
 class Mixer:
-    """pw-dump / wpctl / playerctl, as far as Media uses them."""
+    """pw-dump / wpctl / playerctl, as far as Media uses them. Two players: the one playing, and
+    another that is not (the default player is the idle one, as it was on the live run)."""
 
-    def __init__(self, status="Playing"):
-        self.status = status
+    def __init__(self, status="Playing", obey=True):
+        self.players = {"chromium.instance1": "Paused", "firefox.instance2": status}
+        self.obey = obey
         self.volumes = {101: 0.8, 202: 1.0, 303: 0.5}
         self.commands = []
 
     def run(self, args, timeout=1.5):
         self.commands.append(args)
         if args[:2] == ["playerctl", "-l"]:
-            return "firefox.instance1\n"
-        if args[:2] == ["playerctl", "status"]:
-            return self.status + "\n"
-        if args[0] == "playerctl":
-            self.status = {"pause": "Paused", "play": "Playing"}.get(args[1], self.status)
+            return "\n".join(self.players) + "\n"
+        if args[:2] == ["playerctl", "-p"] and args[3] == "status":
+            return self.players[args[2]] + "\n"
+        if args[:2] == ["playerctl", "-p"] and self.obey:
+            self.players[args[2]] = {"pause": "Paused", "play": "Playing"}.get(args[3], self.players[args[2]])
             return ""
         if args[0] == "pw-dump":
             import os
@@ -78,22 +80,29 @@ def test_ducking_lowers_only_other_apps_and_restores_them_exactly():
     assert not m.ducked
 
 
-def test_pause_is_checked_on_the_player_and_remembered():
+def test_pause_goes_to_the_player_that_is_playing_and_play_resumes_that_one():
     mixer = Mixer("Playing")
-    m = media.Media(run=mixer.run)
+    m = media.Media(run=mixer.run, sleep=lambda s: None)
     ok, said = m.transport("pause")
     assert ok and said == "Paused, sir." and m.paused_by_us
+    assert ["playerctl", "-p", "chromium.instance1", "pause"] not in mixer.commands
+    assert mixer.players["firefox.instance2"] == "Paused"
     ok, said = m.transport("play")
-    assert ok and said == "Playing, sir." and not m.paused_by_us
+    assert ok and said == "Playing, sir." and mixer.players["firefox.instance2"] == "Playing"
+    assert mixer.players["chromium.instance1"] == "Paused"        # never touched
 
 
 def test_a_pause_the_player_ignored_is_not_reported_as_done():
-    mixer = Mixer("Playing")
-    mixer.run = (lambda real: (lambda args, timeout=1.5: "" if args[:2] == ["playerctl", "pause"]
-                               else real(args, timeout)))(mixer.run)
-    m = media.Media(run=mixer.run)
+    mixer = Mixer("Playing", obey=False)
+    m = media.Media(run=mixer.run, sleep=lambda s: None)
     ok, said = m.transport("pause")
     assert not ok and "still playing" in said
+
+
+def test_nothing_playing_is_already_paused():
+    mixer = Mixer("Paused")
+    m = media.Media(run=mixer.run, sleep=lambda s: None)
+    assert m.transport("pause") == (True, "Nothing I can control is playing, sir.")
 
 
 def test_no_player_is_said_plainly():

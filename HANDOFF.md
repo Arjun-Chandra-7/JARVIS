@@ -5,6 +5,66 @@ piece was actually taken, and what is next.
 
 ---
 
+## Fifth pass (2026-09-24): one conversation per wake word, barge-in, echo cancellation, the voice
+
+Branch `live-failure-repair`. Details in README → Conversations, Talking over him, Echo
+cancellation, Media, Hearing, Privacy, The voice.
+
+**Built:** `conversation.py` is the single state machine (published to
+`$XDG_RUNTIME_DIR/jarvis-conversation.json`; dictation suspends and resumes it). Barge-in
+(`bargein.py`) on Silero speech above a tracked background, 2–4 frames, running from the moment a
+request is sent; the interruption's onset is kept for the next capture; "go on" finishes the cut
+answer; a false interruption while thinking re-asks under the same event id. WebRTC AEC as a
+PipeWire client (`scripts/install-aec-service.sh`). Media ducking and verified MPRIS pause/play.
+Local fast path: stop, cancel everything, go on, media keys. `/chat/stream` (questions only).
+`speech_text.py` (numbers, links, secrets, maths, usernames, Hinglish → Devanagari for the Hindi
+voice), `loudness.py` (per-line loudness, peaks held under the sink's cubic gain), Piper fallback
+announced once, cached acknowledgements. Assistant STT is Groq first, local second.
+`youtube_command.py`: search → play the Nth result without browser automation. Journal redaction,
+`--voice-diagnostics N`, `--voice-report`.
+
+**Verified, and how.** The real voice process (this checkout) was driven over *virtual* PipeWire
+devices — synthetic speech (a different Kokoro voice) played into a virtual room, Jarvis speaking
+into the canceller's sink so his own voice echoed back — against the real backend and Groq:
+
+| | |
+|---|---|
+| The required flow, one wake word | open YouTube → search → play first → pause → Hinglish → barge-in → that's all: all handled, no second wake |
+| Barge-in, his echo in the room (AEC) | voice onset → speech stopped 192–196 ms (detector 160 ms) |
+| Barge-in, echo + lecture playing | 199 ms |
+| Lecture saying "Hey Jarvis" ×3 through the canceller | 0 wakes (1 without the reference) |
+| A person saying "Hey Jarvis" over the lecture at −10 dB | woke |
+| Local command routing (transcript → handler) | < 0.1 ms warm, 58 ms first call |
+| STT (Groq) | 0.25–0.43 s; Hinglish correct where local `small` took 13.7 s and garbled it |
+| End of speech → first audio | 1.5 s local media key; 2.4–3.0 s backend actions (STT + backend + synthesis) |
+| Suite | 2251 → 2360 passing |
+
+**Not verified — the microphone is muted** (it was muted when this pass began; left as found).
+Nothing here has heard a real voice in a real room: acoustic echo, speakers vs headphones, a real
+lecture from the speakers, your own Hindi/Hinglish. The AEC service is written and tested on the
+rig but **not installed**, and the running services still run the old checkout. To deploy:
+
+    git -C ~/Madara/Dev/Jarvis merge --ff-only origin/live-failure-repair   # or check the branch out
+    ~/Madara/Dev/Jarvis/scripts/install-aec-service.sh
+    systemctl --user restart jarvis-backend jarvis-voice
+
+**Found and fixed on the way:** the speaker volume at 153% (cubic gain 3.58) clipped 30% of voiced
+frames; Roman Hinglish went to the English phonemiser; `/chat` never streamed to the voice; the
+speaking flag was set while still thinking; an interruption between "give me a moment" and the
+answer waited 1.3 s; "pause" went to the default MPRIS player, not the playing one; "search for X"
+after "open YouTube" failed and "play the first video" became a web search for "first video";
+the automation hint was spoken on every reply; "the" counted as Hindi.
+
+**Side effects of this session, stated plainly:**
+* An existing test (`test_dead_microphone`) called the real `unmute()`; the suite unmuted your
+  microphone for about a minute. It was re-muted, and `tests/conftest.py` now refuses any test
+  command that changes the real mixer or players.
+* Early AEC measurements played ~1 minute of synthetic speech through the speakers (a test sink
+  that turned out not to exist fell back to them).
+* The end-to-end run's "wait, pause it" paused a Chromium MPRIS player that was reporting
+  Playing. It was left paused.
+* The runs opened YouTube and a Pythagoras video in Zen (silently — output was on a null sink).
+
 ## Fourth pass (2026-09-24): screen questions, teaching, long answers cut off
 
 From the journal after dictation went live:

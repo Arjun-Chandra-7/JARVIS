@@ -273,3 +273,28 @@ def test_a_false_wake_over_a_video_is_not_apologised_for(monkeypatch):
     s._capture_problem = ""
     asyncio.run(s._conversation_from_wake(Brain()))
     assert s.spoken == []
+
+
+def test_a_false_interruption_while_thinking_keeps_the_request(monkeypatch):
+    # The TV talked while the brain was still working, and the request was dropped on the spot.
+    # When nothing said turns out to be for Jarvis, it is asked again under the same event id —
+    # the backend then returns the first answer instead of doing the work twice.
+    s = make_session([None, None], monkeypatch)
+    ids = []
+
+    class ThinkingBrain(Brain):
+        async def send(self, text):
+            ids.append(self.event_id)
+            self.asked.append(text)
+            if len(self.asked) == 1:
+                s._barge = {"onset_at": 0.0, "triggered_at": 0.4, "stopped_at": 0.4,
+                            "frames": [[0] * 1280], "policy": "raw", "detector_ms": 400.0,
+                            "during": "thinking"}
+                return ""                      # dropped before an answer came back
+            return "Here is the answer, sir."
+
+    brain = ThinkingBrain()
+    run_conversation(s, brain, "research black holes")
+    assert brain.asked == ["research black holes", "research black holes"]
+    assert ids[0] and ids[0] == ids[1]
+    assert "Here is the answer, sir." in s.spoken

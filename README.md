@@ -212,19 +212,113 @@ Muted things are not lost; they go to the summary. Messages with "urgent", "call
 
 ## Conversations
 
-Say the wake word once; after each reply Jarvis keeps listening for eight seconds
-(`JARVIS_FOLLOW_UP_S`) without it, so "open YouTube" → "search Pythagoras theorem" → "play the
-first video" is one conversation. In that window a transcript made only of fillers ("hmm",
-"okay"), Whisper's silence hallucinations ("thanks for watching") or a single non-command word is
-treated as the room and ignored — unless Jarvis just asked a question, in which case "yes" or
-"Painter" is the answer. "That's all", "thanks Jarvis" or "bas" ends it; so does silence.
-`JARVIS_FOLLOWUP=0` goes back to one wake word per turn.
+Say the wake word once. After each reply Jarvis keeps listening for eight seconds
+(`JARVIS_FOLLOW_UP_S`) without it, so "open YouTube" → "search for Pythagoras theorem" → "play the
+first video" → "wait, pause it" → "ab ye step Hinglish mein samjhao" → "that's all" is one
+conversation. In that window a transcript made only of fillers ("hmm", "okay"), Whisper's silence
+hallucinations or a single non-command word is the room and is ignored — unless Jarvis just asked
+a question, in which case "yes" is the answer.
+
+* **"Stop"**, "wait", "ruko" cut what is being said or done; the conversation stays open.
+* **"That's all"**, "bas", "bye", "thanks Jarvis" end it, and forget what "it" and "the first one"
+  referred to. Silence also ends it; the references then expire on their own after 15 minutes.
+* **"Cancel everything"** stops speaking and cancels queued background work (`/tasks/cancel`).
+* **"Go on"** finishes an answer that was interrupted.
+* A held approval ("say send it to confirm") is kept by the approval manager, not the
+  conversation, so it survives every one of these.
+
+`jarvis/audio/conversation.py` is the one state machine — wake listening, active listening,
+endpointing, thinking, acting, speaking, interrupted, follow-up, dictation, sleeping, error — and
+the voice process publishes it to `$XDG_RUNTIME_DIR/jarvis-conversation.json`. The dictation key
+suspends a conversation and hands it back afterwards without the wake word.
+
+### Talking over him
+
+Barge-in listens from the moment a request is sent, not only while he speaks. It decides on
+Silero's speech probability above a continuously tracked background (his echo, the video), for
+two 80 ms frames with echo cancellation, three without, four with a video playing and nothing
+cancelling it; before his first word it wants two more. The words said over him are kept from
+their onset and become the next request, with the conversation's context. An interruption that
+turns out to be nothing (a cough, the TV) finishes the sentence, or — if he was still thinking —
+asks again under the same event id, so the backend hands back the first answer rather than doing
+the work twice.
+
+Measured through the real voice process over virtual audio devices, with the echo canceller in
+the loop and his own voice echoing into the "room": voice onset → speech stopped **192–199 ms**
+(160 ms of that is deciding it was a person). That is a digital echo path; a real room is
+untested while the microphone is muted.
+
+### Echo cancellation
+
+`scripts/install-aec-service.sh` installs `jarvis-aec`, a small PipeWire client running WebRTC
+echo cancellation (`scripts/pipewire/jarvis-aec.conf`). Its sink is made the default output, so
+everything played — his voice, the browser's video — is the reference; Jarvis listens on the
+cancelled microphone whenever the service is running (`JARVIS_AEC=auto|on|off`).
+`scripts/install-aec-service.sh --remove` undoes it and hands the default output back.
+
+Measured on a digital rig (no microphone): a lecture that says "Hey Jarvis" three times woke him
+**0 times** through the canceller and once without it; a person saying "Hey Jarvis" over the same
+lecture at −10 dB still woke him. Speech after the echo stops is untouched, Hindi included. While
+both play at once (double talk) the canceller does damage the person's words — which is one more
+reason barge-in stops him within a fifth of a second.
+
+Without the service: the wake word needs a longer, clearer match while a video plays, is ignored
+for a second after he stops speaking, and a false wake over a video goes back to sleep silently
+instead of apologising.
+
+### Media
+
+When a conversation starts over a playing video, other applications are turned down (not paused)
+and put back exactly when it ends. "Pause", "wait, pause it", "play", "next" go to the MPRIS player
+that is actually playing, locally, and are checked; "play" resumes only what he paused.
+"Search for X" with YouTube open opens the results page and reads the results with yt-dlp, so
+"play the first video" and "the second one" work without the browser under automation.
+
+### Hearing
+
+The assistant now transcribes with Groq's Whisper large-v3-turbo first and the local model if
+that fails (`JARVIS_ASSISTANT_STT`, default `groq,local`; `local` keeps it all on this machine).
+Measured on the end-to-end run: the local `small` model turned "Ab ye step Hinglish mein samjhao"
+into broken Devanagari in 13.7 s; Groq heard it in 0.26 s, and every English command in 0.25–0.43 s.
+
+### Privacy
+
+The journal gets word counts, not words: "you (voice)> (6 words)". Latencies, states, providers,
+interruptions and error categories go to `~/.local/state/jarvis/voice-metrics.jsonl` through an
+allow-list — a transcript passed as a metric is dropped, not written. `python -m jarvis
+--voice-diagnostics 20` shows the words (numbers, addresses and tokens still masked) for twenty
+minutes and then switches itself off; `python -m jarvis --voice-report` prints the latencies.
 
 ## The voice
 
-Kokoro, 82M parameters, Apache-2.0, on the processor. Measured here: the model loads in 1.0s and
-synthesises at about 2.4x realtime, 24 kHz. Fifty-four voices; the default is `bm_daniel`,
-British male. Set `JARVIS_KOKORO_VOICE` to another installed voice if you prefer it.
+Kokoro, 82M parameters, Apache-2.0, on the processor, 24 kHz. English is `bm_daniel`, British
+male (`JARVIS_KOKORO_VOICE`); Hindi, and Roman Hinglish once written in Devanagari, is
+`hm_omega` through the Hindi phonemiser (`JARVIS_KOKORO_HINDI_VOICE`).
+
+Why, measured (Whisper round trip through a 300–3400 Hz channel with noise at 5 dB SNR):
+
+    English WER, 9 sentences      bm_daniel 0.087   am_michael 0.112   hm_omega 0.126   bm_george 0.153
+    Hindi CER                     bm_daniel 0.46    hm_psi 0.37        hf_alpha 0.31    Piper 0.69
+
+Roman Hinglish used to go to the English phonemiser: "add karte hain" was read /ˈad kˈɑːt hˈeɪn/
+— "add cart hain". Now Hindi words are transliterated and English words kept in Latin letters,
+which the Hindi phonemiser hands to its English rules.
+
+The bigger problem was not the voice at all. The speakers were at 153%; PipeWire's volume is
+cubic, a gain of 3.58, and at that gain **30% of the voiced frames clipped**. Every line is now
+brought to one loudness and its peaks held under what the sink can pass at its current volume
+(`jarvis/audio/loudness.py`); the system volume is left alone.
+
+Before speech, `jarvis/audio/speech_text.py` rewrites what was written for the screen: phone
+numbers become "the number ending 32 10", links their site, `a² + b² = c²` "ay squared plus b
+squared equals c squared", `127.0.0.1:8770` "local port 8770", `arjun-chandra-7` "Arjun Chandra",
+code "the code is on screen"; tokens, keys and long ids are never spoken. Pronunciations come from
+the dictation dictionary's `pronunciation` field. `JARVIS_HONORIFIC` sets "sir" (default), "sire",
+or nothing.
+
+If Kokoro fails, Piper takes over and says so once ("My main voice isn't available…"); Piper is
+English-only here, so Hindi is then shown rather than mangled. Common acknowledgements are
+synthesised at start-up.
 
 Kokoro has no emotion conditioning, and nothing here pretends otherwise. What it has is a speed
 control, and that is enough for *delivery* — four of them, picked from the words before any model
@@ -253,6 +347,14 @@ so the silence contained the entire generation. Now the sentences are spoken as 
 written. Measured end to end against a local model: a three-sentence answer starts 0.76s sooner,
 an eight-sentence answer 3.20s sooner — 56% of the wait. The saving is the generation time of
 everything after the first sentence, so it grows with the answer, which is the right way round.
+
+Measured now, on Groq: the whole 327-character answer arrived 2.12 s after the question and its
+first fragment 2.11 s — generation is so fast that streaming the text buys almost nothing; what
+remains is synthesis. Kokoro costs ~0.45 s plus ~0.29 s per second of speech, so the opening is
+cut at the first clause after ~48 characters (~0.8 s) instead of ~90 (~1.3 s). A request that has
+said nothing after 1.4 s gets a cached "Give me a moment, sir. I'm working on it." Only questions
+are streamed (`/chat/stream`); an action's reply is spoken once it has been checked, because a
+claim to have done something is verified after the model writes it.
 
 A turn that calls a tool speaks nothing while it runs. A model that says "let me open that for
 you" and then calls a tool must not have said it out loud, and unlike a mistake on screen that

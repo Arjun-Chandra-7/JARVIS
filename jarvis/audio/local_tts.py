@@ -230,7 +230,8 @@ def synth_stream(
 # Short lines said often, synthesised once at start-up: "Done, sir." should not wait on a model.
 ACKNOWLEDGEMENTS = ("Done, sir.", "Give me a moment, sir. I'm working on it.",
                     "Give me a moment, sir. I'm checking.", "Alright, sir.", "Stopped, sir.",
-                    "Cancelled, sir.", "Sorry sir, I didn't catch that.")
+                    "Cancelled, sir.", "Sorry sir, I didn't catch that.", "Paused, sir.",
+                    "Playing, sir.", "Next, sir.", "Going back, sir.")
 _ACK_CACHE: dict[str, tuple[bytes, int]] = {}
 
 
@@ -263,7 +264,7 @@ def warm_acknowledgements(model_path: str) -> int:
 # Cut the opening on a clause as well, for the same reason kokoro_tts does: the first thing said
 # should be short, because nothing can be heard until it is synthesised.
 _CLAUSE_BREAK = re.compile(r",\s")
-_FIRST_PIECE_CHARS = 90
+_FIRST_PIECE_CHARS = 48
 
 # A full stop that is not the end of a sentence. Speaking "Dr" and then "Smith is waiting" as two
 # utterances puts a breath in the middle of a name.
@@ -487,7 +488,16 @@ def _play(
     gain = loudness.sink_gain()
     try:
         while True:
-            item = pending.get()
+            # Waiting for the next sentence is still speaking: a stop must be noticed here too.
+            # Found on the end-to-end run — an interruption in the gap between "Give me a moment"
+            # and the answer waited 1.3 s for the answer's first sentence before stopping.
+            try:
+                item = pending.get(timeout=BLOCK_S)
+            except queue.Empty:
+                if stop_event is not None and stop_event.is_set():
+                    stopped = True
+                    break
+                continue
             if item is None:
                 break
             pcm, rate = item[0], item[1]
@@ -535,10 +545,11 @@ def _play(
         if stream is not None:
             if stopped:
                 stream.abort()
-                PLAYBACK["stopped_at"] = __import__("time").monotonic()
             else:
                 stream.stop()
             stream.close()
+        if stopped:
+            PLAYBACK["stopped_at"] = __import__("time").monotonic()
         # Drain so the producer thread can finish instead of blocking on a full queue.
         try:
             while pending.get_nowait() is not None:
