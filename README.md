@@ -117,6 +117,26 @@ sees them:
 Trouble is checked before greeting, so "Good morning, sir. The overnight backup failed." is read
 as a failure rather than as a greeting.
 
+### How soon it starts talking
+
+The number that decides whether an assistant feels quick is not how fast it speaks but how long
+it says nothing, and there is never anything on screen to explain that gap. Three things were
+costing it, all measured here:
+
+    the voice loaded on the first reply        1.04s   now loaded at startup
+    the whole reply synthesised before a word  1.67s   now the opening clause first, 1.05s
+    the whole reply written before a word      up to a few seconds, now overlapped
+
+The last is the big one. A reply used to be spoken only once the model had finished writing it,
+so the silence contained the entire generation. Now the sentences are spoken as they are
+written. Measured end to end against a local model: a three-sentence answer starts 0.76s sooner,
+an eight-sentence answer 3.20s sooner — 56% of the wait. The saving is the generation time of
+everything after the first sentence, so it grows with the answer, which is the right way round.
+
+A turn that calls a tool speaks nothing while it runs. A model that says "let me open that for
+you" and then calls a tool must not have said it out loud, and unlike a mistake on screen that
+cannot be taken back.
+
 The weights are 338 MB and are not fetched automatically. Until they are on disk the voice stays
 Piper, so Jarvis cannot promise a voice it has no way to produce:
 
@@ -129,12 +149,22 @@ Piper, so Jarvis cannot promise a voice it has no way to produce:
 
 "Study mode" closes Netflix, Instagram, YouTube Shorts and noneducational YouTube tabs, and
 keeps closing them until "exit study mode". YouTube videos are judged from their page titles;
-ambiguous titles are blocked. It also opens ChatGPT in Opera and sends the exam tutor instructions
-from `jarvis/modes/study_prompt.txt`. Browser blocking needs the Jarvis browser extension loaded
-in Opera. The mode flag survives a Jarvis restart.
+ambiguous titles are left open, because shutting a lecture somebody is midway through is the
+worse mistake — it is the one that gets study mode turned off for good. It also opens ChatGPT in
+whichever browser you use and sends the exam tutor instructions from
+`jarvis/modes/exam_tutor_prompt.md`. The mode flag survives a Jarvis restart.
+
+Shorts are blocked by their URL, before the title is read, so nothing can argue its way past it.
+Worth knowing, because it looks like a hole and is not: YouTube redirects `/shorts/<id>` to
+`/watch?v=<id>` when the id is not actually a Short, and such a tab is then judged on what it is
+like any other video.
+
+Closing tabs needs the browser to be drivable — see below. That is the extension or the debug
+port for a Chromium browser, and a restart with automation for a Firefox one.
 
 "Open my coding setup" asks every other window to close, then launches an empty VS Code window,
-Spotify and ChatGPT in Opera. Applications with unsaved work may ask before they close.
+Spotify and ChatGPT in whichever browser you use. Applications with unsaved work may ask before
+they close.
 
 Claude completion alerts come from Claude's Stop hook. Install it once with
 `.venv/bin/python scripts/install-claude-stop-hook.py`. The passive coding activity display never
@@ -272,7 +302,9 @@ Three things it can do that are worth knowing about:
 
 ## Computer control
 
-Jarvis reads browser pages through Opera GX's live DOM when browser control is enabled. For native
+Jarvis reads browser pages from the live DOM of whichever browser you use, when browser control
+is enabled — through the DevTools protocol for a Chromium one and Marionette for a Firefox one.
+For native
 apps it first reads the active window's AT-SPI accessibility tree, which exposes control labels and
 screen bounds. If an app does not expose the target, Jarvis uses a screenshot plus the configured
 vision model. It sends mouse and keyboard
@@ -329,6 +361,18 @@ loop. The web server binds to `127.0.0.1` by default.
 If you move or rename the Jarvis folder, run `bash scripts/relocate.sh` once: the systemd
 user units, the `jarvis` command on PATH, and the login autostart entry all store an absolute
 path outside the repo, and it re-points whichever of them you have installed.
+
+## When the microphone is the problem
+
+Ask it: "is my mic working", "check my microphone", "is my mic muted". It listens, says what is
+true, and unmutes it if that was the trouble — rather than leaving you to work it out from
+repeated "sorry sir, I didn't catch that".
+
+The two ways to get this wrong are opposites. An idle probe of a healthy microphone in a quiet
+room is near-silent by definition, so quiet is never reported as broken. And saturation is named
+explicitly, because it is the failure that looks like working: with the input boosted far enough
+the level meter moves and every word arrives as noise. This machine was found at 0.84 where a
+healthy floor is 0.005.
 
 ## Privacy and safety
 
