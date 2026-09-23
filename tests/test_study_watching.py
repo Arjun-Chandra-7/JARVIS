@@ -3,6 +3,20 @@
 The asymmetry is the design. Shutting a lecture somebody is midway through is a much worse
 failure than leaving one distraction open, because the first one gets study mode turned off for
 good. Several tests below exist only to pin that bias in place.
+
+Verified against a real browser, not only against these strings
+---------------------------------------------------------------
+Driving an isolated Zen: a Shorts tab and an ordinary tab were opened, the verdicts were taken
+from the URLs the browser actually reported, and the Short's tab was gone afterwards while the
+other one was still there.
+
+That run also turned up the thing worth writing down. YouTube redirects /shorts/<id> to
+/watch?v=<id> when the id is not a Short — so the first attempt never reached the Shorts branch
+at all, and only looked like it worked because the title was judged unrelated to studying. A
+genuine Short does stay on /shorts/, confirmed by opening the Shorts feed and reading where it
+landed. Which means the rule below is sound in both directions: a real Short is caught by the
+URL before anything can argue about its title, and a /shorts/ link to a normal video becomes an
+ordinary /watch URL and is judged on what it is.
 """
 
 from __future__ import annotations
