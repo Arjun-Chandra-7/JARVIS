@@ -354,7 +354,10 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
           {"to": {"type": "string"}, "message": {"type": "string"}}, ["to", "message"])
     async def whatsapp_send(a):
         from ..integrations import whatsapp
-        return (await asyncio.to_thread(whatsapp.smart_send, a.get("to", ""), a.get("message", "")))["message"]
+        # The model chose to send, so the owner sees it first — always, known contact or not.
+        # "Yeah, message Papa" once went out as text the model wrote itself, unseen.
+        return (await asyncio.to_thread(lambda: whatsapp.smart_send(
+            a.get("to", ""), a.get("message", ""), confirm=True)))["message"]
 
     @tool("instagram_dms", "Read the user's recent Instagram direct-message threads (their account).", {})
     async def instagram_dms(a):
@@ -573,7 +576,8 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         from ..integrations import whatsapp
         name, about = a.get("name", ""), a.get("about", "")
         text = await _compose_message(config, name, about)
-        res = await asyncio.to_thread(whatsapp.smart_send, name, text)
+        # Words the model composed are never sent unseen.
+        res = await asyncio.to_thread(lambda: whatsapp.smart_send(name, text, confirm=True))
         if res.get("status") == "sent":
             return f'{res["message"]} It said: "{text}"'
         return res["message"]

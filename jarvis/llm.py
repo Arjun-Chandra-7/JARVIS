@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from dataclasses import dataclass, field
 
 from . import providers as pv
+
+_SHORT_WAIT_S = 12.0
 
 
 @dataclass
@@ -76,9 +79,21 @@ def complete_sync(system: str, prompt: str, settings, temperature: float = 0.2, 
             text = ask(provider, system, prompt, temperature, timeout)
         except Exception as exc:  # noqa: BLE001 — classified, remembered, and the next one tried
             failure = pv.classify(exc)
-            pv.record_failure(provider, failure)
-            out.failures.append(f"{provider.id}: {failure.kind}")
-            continue
+            # A per-minute cap that lifts in a few seconds is worth waiting for once: the only
+            # alternative is the weak model, which a question about a lecture is never given.
+            wait = failure.retry_after or 0
+            if failure.kind == "rate_limited" and 0 < wait <= _SHORT_WAIT_S:
+                time.sleep(wait + 0.5)
+                try:
+                    text = ask(provider, system, prompt, temperature, timeout)
+                except Exception as again:  # noqa: BLE001
+                    failure = pv.classify(again)
+                else:
+                    failure = None
+            if failure is not None:
+                pv.record_failure(provider, failure)
+                out.failures.append(f"{provider.id}: {failure.kind}")
+                continue
         pv.record_success(provider)
         if text:
             out.text, out.provider, out.quality = text, provider.id, provider.quality

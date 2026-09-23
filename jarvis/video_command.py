@@ -72,6 +72,23 @@ _JUST_SAID_MORE = re.compile(
     r"what\s+(?:did|was)\s+(?:he|she|they)\s+just\s+(?:say|said|explain)|"
     r"what\s+(?:is|was)\s+(?:he|she|they)\s+(?:just\s+)?(?:explaining|saying)(?:\s+(?:now|right\s+now))?)")
 
+# The whole video rather than the last few seconds: "tell me what is happening in the video",
+# "what video am I looking at and give me a summary". Both were said live and matched nothing,
+# so the model answered "I can't see videos".
+_OVERVIEW = re.compile(
+    r"(?ix)\b(?:what(?:'s|\s+is)\s+(?:happening|going\s+on)\s+in\s+(?:the|this|my)\s+video|"
+    r"what\s+(?:video|is\s+this\s+video)\s+(?:am\s+i|are\s+we|is\s+this)?\s*(?:watching|looking\s+at|playing|on)|"
+    r"what\s+video\s+(?:is\s+)?(?:this|playing|on\s+(?:my|the)\s+screen)|"
+    r"what(?:'s|\s+is)\s+(?:this|the)\s+video\s+about|"
+    r"(?:summari[sz]e|recap|explain|describe)\s+(?:this|the|my|that)\s+video|"
+    r"(?:give\s+me\s+)?(?:a\s+)?summary\s+of\s+(?:this|the|that)\s+video|"
+    r"(?:the\s+)?video\s+on\s+(?:my|the)\s+screen|"
+    r"(?:is|ye|yeh|iss?)\s+video\s+(?:mein|me|mai)\s+kya|video\s+(?:mein|me)\s+kya\s+(?:ho|chal)\s+raha|"
+    r"(?:ye|yeh)\s+video\s+(?:kis|kiss)\s+(?:baare|bare)|video\s+ka\s+summary)")
+_OVERVIEW_HI = re.compile(
+    r"(?:वीडियो|video)\s+(?:में|मे)\s+क्या|(?:वीडियो|video)\s+(?:किस|किसके)\s+बारे|"
+    r"(?:वीडियो|video)\s+का\s+(?:summary|सारांश)")
+
 # Asked about the past on purpose: "what did he say yesterday", "kal wale video mein kya bola".
 # Only then is this a question for memory rather than for the screen.
 _EXPLICIT_PAST = re.compile(
@@ -109,6 +126,8 @@ def intent(text: str) -> Optional[str]:
         return "summary"
     if _JUST_SAID.search(said) or _JUST_SAID_MORE.search(said) or _JUST_SAID_HI.search(said):
         return "just_said"
+    if _OVERVIEW.search(said) or _OVERVIEW_HI.search(said):
+        return "overview"
     if _ON_SCREEN.search(said) or _ON_SCREEN_HI.search(said):
         return "on_screen"
     return None
@@ -221,6 +240,24 @@ def _log(kind: str, lang: str, context: str, action: str, state: Optional[yt.Pla
     route_log.record(**fields)
 
 
+_EXCERPT_CHARS = 6000
+
+
+def _fit(excerpt: list, limit: int = _EXCERPT_CHARS) -> list:
+    """Ten minutes of transcript is about the whole per-minute allowance of the strong model on
+    its free tier; sent twice in a row, the second question was answered by nobody. A long
+    stretch is thinned evenly, so a summary still covers all of it."""
+    total = sum(len(s.text) + 8 for s in excerpt)
+    if total <= limit:
+        return excerpt
+    keep = max(1, int(len(excerpt) * limit / total))
+    step = len(excerpt) / keep
+    picked = [excerpt[int(i * step)] for i in range(keep)]
+    if picked[-1] is not excerpt[-1]:
+        picked[-1] = excerpt[-1]          # the most recent line is the one "now" refers to
+    return picked
+
+
 def build_prompt(kind: str, question: str, state: yt.PlayerState, excerpt: list[yt.Segment],
                  source: str, span: tuple[float, float]) -> str:
     lines = [f"Video: {state.title}" + (f" — {state.channel}" if state.channel else "")
@@ -238,7 +275,9 @@ def build_prompt(kind: str, question: str, state: yt.PlayerState, excerpt: list[
     task = {"just_said": "Explain what was just said, in the last part of the excerpt.",
             "pause_explain": "The video is paused here. Teach this part.",
             "on_screen": "Explain what is being shown and discussed right now.",
-            "summary": "Summarise this stretch of the video in a few spoken sentences."}[kind]
+            "summary": "Summarise this stretch of the video in a few spoken sentences.",
+            "overview": ("Say in one line which video this is, then summarise what the excerpt covers "
+                         "in a few spoken sentences.")}[kind]
     lines += ["", f"Task: {task}", f"The student asked: \"{question}\"",
               _LANGUAGE_INSTRUCTION[reply_language(question)]]
     return "\n".join(lines)
@@ -249,9 +288,10 @@ async def handle(text: str, config=None) -> Optional[str]:
     if kind is None:
         return None
     lang = reply_language(text)
-    from .screen.page import active_page, why_no_page
+    from .screen import page as _pages
+    from .screen.page import why_no_page
 
-    page = active_page()
+    page = _pages.video_page()
     if page is None:
         _log(kind, lang, "none", "no_browser")
         return why_no_page() if lang == "en" else say("no_browser", lang)
@@ -304,11 +344,15 @@ async def _answer(kind: str, text: str, state: yt.PlayerState, player: yt.YouTub
     now = float(state.time or 0)
     if kind == "summary":
         span = (max(0.0, now - summary_seconds(text)), now)
+    elif kind == "overview":
+        # What has been watched, up to the last twenty minutes of it; a video not started yet
+        # is summarised from its opening.
+        span = (max(0.0, now - 1200), now + 5) if now >= 60 else (0.0, 600.0)
     elif kind == "on_screen":
         span = (max(0.0, now - 25), now + 10)
     else:
         span = (max(0.0, now - 40), now + 3)
-    excerpt = yt.window(segments, span[1], before=span[1] - span[0], after=0)
+    excerpt = _fit(yt.window(segments, span[1], before=span[1] - span[0], after=0))
 
     if not excerpt and not state.live_caption and kind == "on_screen":
         # No words to explain: this is what the screenshot is for — but only with a vision model

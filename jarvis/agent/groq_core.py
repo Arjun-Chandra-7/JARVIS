@@ -646,9 +646,12 @@ class GroqAgent:
 
     async def send(self, user_text: str) -> str:
         from ..commands import handle
-        direct = await handle(user_text, self.config, getattr(self, "command_session", "local"))
+        session = getattr(self, "command_session", "local")
+        direct = await handle(user_text, self.config, session)
         if direct is not None:
             return direct
+        from ..approvals import MANAGER
+        held_before = {a.id for a in MANAGER.pending(session)}
         self._route_query = user_text   # pick this turn's tool shortlist from what was asked
         self._failed_calls.clear()
         self._failed_calls_advice.clear()
@@ -861,6 +864,13 @@ class GroqAgent:
             linkedin_executed = linkedin_executed or any(
                 name.startswith("linkedin_") for _, name, _ in triples
             )
+            # A tool held something for a yes. The turn ends on the approval prompt itself: given
+            # "Ready to send… say yes" back, the model told the owner "I've sent the message".
+            held = [a for a in MANAGER.pending(session) if a.id not in held_before]
+            if held:
+                reply = " ".join(a.prompt() for a in held)
+                self.messages.append({"role": "assistant", "content": reply})
+                break
 
         vaultmod.git_autocommit(self.config.vault_path, f"jarvis: memory update {now:%Y-%m-%d %H:%M}")
         self._trim()

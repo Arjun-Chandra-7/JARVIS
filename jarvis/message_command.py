@@ -36,7 +36,7 @@ _ENGLISH = re.compile(
     rf"""(?ix)^(?:please\s+)?
     (?:send\s+(?:a\s+)?(?:{_PLATFORM}\s+)?(?:message|msg|text)\s+to|message|msg|text|{_PLATFORM}|
        (?:send\s+)?{_PLATFORM}\s+to|tell|ping)
-    \s+(?P<who>.+?)
+    [,\s]+(?P<who>.+?)
     (?:\s+(?:on|via|over|through)\s+{_PLATFORM})?
     (?:\s*[:,\-–]\s*|\s+(?:that|saying|to\s+say)\s+)
     (?P<msg>\S.*)$""")
@@ -54,7 +54,7 @@ _NO_BODY = re.compile(
     rf"""(?ix)^(?:please\s+)?
     (?:send\s+(?:a\s+)?(?:{_PLATFORM}\s+)?(?:message|msg|text)\s+to|message|msg|text|
        (?:send\s+)?{_PLATFORM}(?:\s+to)?)
-    \s+(?P<who>.+?)(?:\s+(?:on|via|over|through)\s+{_PLATFORM})?\s*$""")
+    [,\s]+(?P<who>.+?)(?:\s+(?:on|via|over|through)\s+{_PLATFORM})?\s*$""")
 
 # "Send 'Bye' to this number on WhatsApp" — the text first, then who. Unquoted text is only taken
 # when the sentence says WhatsApp or names a number, so "send the file to Papa" is not a message.
@@ -65,7 +65,7 @@ _TEXT_FIRST = re.compile(
 # Talk around the request that is not part of it.
 _LEADING_FILLER = re.compile(
     r"(?i)^(?:(?:ok(?:ay)?|alright|all\s+right|so|now|right|and|then|hmm|umm?|please|"
-    r"jarvis|hey\s+jarvis|also|next|acha|achha|chalo)[,.!\s]+)+")
+    r"yeah|yes|yep|haan|han|ji|jarvis|hey\s+jarvis|also|next|acha|achha|chalo)[,.!\s]+)+")
 
 # What a reply of only these words means is "nothing yet", not the message text.
 _NOT_A_BODY = re.compile(
@@ -159,8 +159,17 @@ def read(text: str) -> Optional[Request]:
 
     m = _NO_BODY.match(said)
     if m:
-        return _finish(m.group("who"), "", said, closing, explicit=False)
+        who, body = m.group("who"), ""
+        # "Message Papa hi." — a greeting at the end is what to send, not part of the name.
+        g = _TRAILING_GREETING.search(who.rstrip(" .!"))
+        if g and who[:g.start()].strip():
+            who, body = who[:g.start()], g.group("greeting")
+        return _finish(who, body, said, closing, explicit=False)
     return None
+
+
+_TRAILING_GREETING = re.compile(
+    r"(?i)\s+(?P<greeting>hi|hello|hey|namaste|good\s+morning|good\s+night|happy\s+birthday)$")
 
 
 def _finish(raw_who: str, body: str, said: str, closing: bool, *, explicit: bool) -> Optional[Request]:

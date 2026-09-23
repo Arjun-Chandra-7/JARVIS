@@ -206,6 +206,71 @@ def as_text(segments: list[Segment]) -> str:
     return "\n".join(f"[{clock(s.start)}] {s.text}" for s in segments)
 
 
+_CACHE: dict[str, tuple[float, list, str]] = {}
+_CACHE_TTL_S = 6 * 3600
+_VIDEO_ID = re.compile(r"^[\w-]{6,20}$")
+
+
+def _remember(video_id: str, segments: list, source: str) -> tuple[list, str]:
+    if video_id and segments:
+        _CACHE[video_id] = (time.time(), segments, source)
+        for stale in sorted(_CACHE, key=lambda k: _CACHE[k][0])[:-20]:
+            _CACHE.pop(stale, None)
+    return segments, source
+
+
+def _ytdlp() -> Optional[str]:
+    import os
+    import shutil
+    for candidate in (os.environ.get("JARVIS_YTDLP", ""), shutil.which("yt-dlp") or "",
+                      os.path.expanduser("~/.local/bin/yt-dlp"), os.path.expanduser("~/miniconda3/bin/yt-dlp")):
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def parse_json3(raw: dict) -> list[Segment]:
+    segs = []
+    for e in (raw or {}).get("events") or []:
+        if not e.get("segs"):
+            continue
+        text = re.sub(r"\s+", " ", "".join(s.get("utf8", "") for s in e["segs"])).strip()
+        if text:
+            segs.append(Segment((e.get("tStartMs") or 0) / 1000, (e.get("dDurationMs") or 0) / 1000, text))
+    return segs
+
+
+def ytdlp_transcript(video_id: str, lang: str = "en", timeout: float = 45.0) -> tuple[list[Segment], str]:
+    """The video's captions fetched outside the browser. One language only: asking for several
+    at once is what got an HTTP 429 back."""
+    import json
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    exe = _ytdlp()
+    if not exe or not _VIDEO_ID.match(video_id or ""):
+        return [], ""
+    lang = re.sub(r"[^\w-]", "", (lang or "en").split("-")[0]) or "en"
+    with tempfile.TemporaryDirectory(prefix="jarvis-subs-") as tmp:
+        try:
+            subprocess.run([exe, "--skip-download", "--write-subs", "--write-auto-subs", "--no-warnings",
+                            "--sub-langs", f"{lang}-orig,{lang}", "--sub-format", "json3",
+                            "-o", str(Path(tmp) / "s"), f"https://www.youtube.com/watch?v={video_id}"],
+                           capture_output=True, timeout=timeout, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return [], ""
+        files = sorted(Path(tmp).glob("s.*.json3"), key=lambda p: "-orig" not in p.name)
+        for path in files:
+            try:
+                segs = parse_json3(json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, ValueError):
+                continue
+            if segs:
+                return segs, f"captions ({lang}, fetched with yt-dlp)"
+    return [], ""
+
+
 class YouTube:
     def __init__(self, page) -> None:
         self.page = page
@@ -214,15 +279,38 @@ class YouTube:
         return PlayerState.from_page(await self.page.run(_STATE))
 
     async def transcript(self, state: PlayerState) -> tuple[list[Segment], str]:
-        """(segments, where they came from). Empty when the video has no words to give."""
+        """(segments, where they came from). Empty when the video has no words to give.
+
+        Tried in order: the player's own caption request, reused in the page; yt-dlp, outside
+        the page; the transcript panel. Found live: YouTube answers a reused caption URL with an
+        empty 200 once its proof-of-origin token has been spent, and the panel waits on timers a
+        background tab barely runs — so a video in a tab behind the one in focus had no
+        transcript at all, and every question about it got "I can't read the video".
+        """
+        cached = _CACHE.get(state.video_id)
+        if cached and time.time() - cached[0] < _CACHE_TTL_S:
+            return cached[1], cached[2]
         track = pick_track(state.tracks)
         if track and track.get("url"):
-            got = await self.page.run(_FETCH_TRACK, [track["url"], state.video_id], timeout=25)
+            try:
+                got = await self.page.run(_FETCH_TRACK, [track["url"], state.video_id], timeout=25)
+            except Exception:  # noqa: BLE001 — the next source may still work
+                got = None
             if isinstance(got, dict) and got.get("ok") and got.get("segments"):
                 kind = "auto-generated captions" if track.get("kind") == "asr" else "captions"
-                return [Segment(s["start"], s["dur"], s["text"]) for s in got["segments"]], \
-                    f"{kind} ({track.get('lang') or '?'})"
-        panel = await self.page.run(_PANEL, timeout=15)
+                return _remember(state.video_id,
+                                 [Segment(s["start"], s["dur"], s["text"]) for s in got["segments"]],
+                                 f"{kind} ({track.get('lang') or '?'})")
+        if state.video_id and (track or not state.tracks):
+            import asyncio
+            segs, source = await asyncio.to_thread(ytdlp_transcript, state.video_id,
+                                                   (track or {}).get("lang") or "en")
+            if segs:
+                return _remember(state.video_id, segs, source)
+        try:
+            panel = await self.page.run(_PANEL, timeout=15)
+        except Exception:  # noqa: BLE001 — no panel is an empty transcript, not a crash
+            panel = None
         if isinstance(panel, dict) and panel.get("ok"):
             rows = [(parse_stamp(r["stamp"]), r["text"]) for r in panel["rows"] if r.get("text")]
             rows = [(t, x) for t, x in rows if t is not None]
