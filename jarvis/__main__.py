@@ -79,7 +79,11 @@ def _voice_event(kind: str, text: str = "") -> None:
         "phone": f"  📱 {text}",
         "sleep": "  (back to sleep — say the wake word again)\n",
     }
-    print(labels.get(kind, f"  {kind} {text}"))
+    # stdout is the journal. A spoken phone number ends up in "heard", "partial" and "transcript"
+    # lines, so it is masked there; the overlay still shows what was actually heard.
+    import re as _re
+    line = labels.get(kind, f"  {kind} {text}")
+    print(_re.sub(r"\+?\d[\d\s-]{5,}\d", lambda m: f"<number …{_re.sub(r'[^0-9]', '', m.group(0))[-4:]}>", line))
     _push_to_hud(kind, text)
 
 

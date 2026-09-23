@@ -8,9 +8,6 @@ These go through /chat — the endpoint the voice loop and the web overlay both 
 that does what the real ones do first (``commands.handle``) and records whether the model would
 have been reached. All numbers are fictional; nothing reaches a bridge.
 """
-import asyncio
-import json
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -301,3 +298,12 @@ def test_same_words_twice_quickly_is_one_event_but_a_later_repeat_is_not():
     assert d.seen("pause") == "Paused."
     now[0] += 5
     assert d.seen("pause") is None
+
+
+def test_the_journal_never_gets_the_whole_number(capsys, monkeypatch):
+    import jarvis.__main__ as main
+    monkeypatch.setattr(main, "_push_to_hud", lambda *a, **k: None)
+    main._voice_event("transcript", LIVE)
+    main._voice_event("heard", "message +91 90000 00001")
+    out = capsys.readouterr().out
+    assert NUMBER not in out and "90000 00001" not in out and "…0001" in out
