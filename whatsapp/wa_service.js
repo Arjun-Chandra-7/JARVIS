@@ -18,6 +18,23 @@ const os = require("os");
 const path = require("path");
 
 const fs = require("fs");
+
+// libsignal (inside Baileys) console.logs whole Signal session objects — "Closing session:
+// SessionEntry {...}" — private ratchet keys included, and systemd keeps stdout in the journal.
+// Anything that carries session state, or is one of its session chatter lines, goes nowhere.
+function isSessionDump(args) {
+  return args.some((a) => {
+    if (a && typeof a === "object") {
+      const name = a.constructor && a.constructor.name;
+      return name === "SessionEntry" || "_chains" in a || "currentRatchet" in a || "privKey" in a;
+    }
+    return typeof a === "string" && /^(Closing (open )?session|Opening session|Removing old closed session|Session error|Failed to decrypt|Decrypted message with closed session)/.test(a);
+  });
+}
+for (const level of ["log", "info", "warn", "error", "debug"]) {
+  const original = console[level].bind(console);
+  console[level] = (...args) => { if (!isSessionDump(args)) original(...args); };
+}
 const AUTH_DIR = process.env.WA_AUTH_DIR || path.join(os.homedir(), ".local/share/jarvis/whatsapp");
 const PORT = parseInt(process.env.WA_PORT || "8765", 10);
 const LOG = path.join(os.tmpdir(), "jarvis-wa-debug.log");

@@ -175,6 +175,33 @@ async def chat(c: Chat):
     return {"reply": reply}
 
 
+@app.get("/approvals")
+async def approvals_pending(session_id: str = "local"):
+    """What is waiting for a yes, for the overlay to show. Summaries only; never the details."""
+    from .approvals import MANAGER
+    return {"pending": [{"id": a.id, "kind": a.kind, "summary": a.summary, "expires": a.expires,
+                         "fingerprint": a.fingerprint()} for a in MANAGER.pending(session_id)]}
+
+
+class Decision(BaseModel):
+    decision: str = Field(pattern="^(confirm|cancel)$")
+    fingerprint: str = Field(default="", max_length=32)
+
+
+@app.post("/approvals/{action_id}")
+async def approvals_decide(action_id: str, d: Decision):
+    """An overlay button. The fingerprint it was shown must still match, or nothing runs."""
+    from .approvals import MANAGER
+    async with _lock:
+        if d.decision == "cancel":
+            out = MANAGER.cancel(action_id)
+        else:
+            out = await MANAGER.confirm(action_id, fingerprint=d.fingerprint or None)
+    hud_state.log_turn("jarvis", out.message)
+    await _emit("reply", out.message)
+    return {"status": out.status, "message": out.message}
+
+
 @app.get("/coding/jobs")
 async def coding_jobs():
     from .integrations.coding_jobs import list_jobs

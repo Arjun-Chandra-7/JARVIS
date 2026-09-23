@@ -38,7 +38,7 @@ def test_model_cannot_lift_its_own_confirmation_gate():
     out = _call(dispatch, "enable_full_laptop_autonomy", {"enable": True})
     assert asked, "enabling autonomy must ask the person"
     assert config.allow_unconfirmed_shell is False
-    assert "stays off" in out
+    assert "Cancelled" in out
 
 
 def test_autonomy_without_any_confirm_channel_stays_off():
@@ -70,7 +70,7 @@ def test_full_control_shell_goes_through_the_same_gate_and_sandbox(monkeypatch):
         return False
 
     _, dispatch = _registry(deny)
-    assert "declined" in _call(dispatch, "control_laptop_full", {"command_or_script": "rm -rf ~/x"})
+    assert "Cancelled" in _call(dispatch, "control_laptop_full", {"command_or_script": "rm -rf ~/x"})
     assert not ran
     _call(dispatch, "control_laptop_full", {"command_or_script": "echo hi"})
     assert ran and ran[0][1] is sandbox.GUARDED
@@ -132,3 +132,11 @@ def test_bridge_never_names_a_chat_after_the_owner():
     js = (Path(__file__).resolve().parents[1] / "whatsapp" / "wa_service.js").read_text()
     assert "if (!m.key.fromMe) recordContact(m.key.remoteJid, m.pushName);" in js
     assert "(!m?.key?.fromMe && m?.pushName)" in js
+
+
+def test_bridge_keeps_signal_session_keys_out_of_the_journal():
+    # libsignal console.logs whole SessionEntry objects, private keys included; found 8,849
+    # privKey lines in 30 days of the service's journal before this filter.
+    js = (Path(__file__).resolve().parents[1] / "whatsapp" / "wa_service.js").read_text()
+    assert "function isSessionDump(args)" in js and '"privKey" in a' in js
+    assert 'for (const level of ["log", "info", "warn", "error", "debug"])' in js

@@ -108,33 +108,7 @@ async def _to_thread(fn, *args):
 
 
 async def _summarise(prompt: str, config=None) -> str:
-    """One plain completion: no tools, no history, no chance of it deciding to do something else.
+    """One plain completion (see llm.py): no tools, no history."""
+    from .llm import complete
 
-    Going through the full agent for this sent the file contents alongside ninety-four tool
-    schemas and the whole system prompt, and the model answered with an empty string.
-    """
-    import asyncio
-
-    from .config import CONFIG
-
-    settings = config or CONFIG
-
-    def ask() -> str:
-        try:
-            from openai import OpenAI
-
-            base_url, api_key, model = settings.llm_params()
-            client = OpenAI(base_url=base_url, api_key=api_key or "none",
-                            max_retries=0, timeout=60)
-            done = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "system",
-                           "content": "You describe software projects plainly and briefly."},
-                          {"role": "user", "content": prompt}],
-                temperature=0.2,
-            )
-            return (done.choices[0].message.content or "").strip()
-        except Exception:  # noqa: BLE001 - no summary is better than a traceback read aloud
-            return ""
-
-    return await asyncio.to_thread(ask)
+    return await complete("You describe software projects plainly and briefly.", prompt, config)

@@ -5,7 +5,80 @@ piece was actually taken, and what is next.
 
 ---
 
-## Latest pass (2026-09-23): audit, security, messaging, notifications, conversations
+## Second pass (2026-09-23): bridge live, one approval system, semantic screen, YouTube
+
+Suite: **1909 passing**.
+
+### WhatsApp bridge — restarted and verified live
+
+- `systemctl --user restart jarvis-whatsapp`: active; loaded the new code; logged "Forgot 11 chats
+  mislabelled with the owner's name"; address book 2,521 → 2,510; no name now covers more than 3 chats.
+- Live HTTP: foreign `Host` → 403; `Origin: http://127.0.0.1.attacker.example` → 403 (also on
+  `POST /send`); the HUD's origin → 200.
+- Papa flow against the live bridge, dry run: resolves to the right Papa in 23–147 ms.
+- **New leak found and fixed:** libsignal (inside Baileys) printed whole Signal session objects,
+  private keys included, to stdout → the systemd journal. 8,849 `privKey` lines in 30 days. The
+  bridge now drops them; 0 after restart. **The old lines are still in your user journal**;
+  clearing them means vacuuming it (`journalctl --user --rotate --vacuum-time=1s`), which also
+  deletes every other user-service log — your call.
+- `/tmp/jarvis-wa-debug.log` from before the fix still exists and holds message text; nothing
+  writes to it now. Delete it when convenient.
+
+### One approval system — `jarvis/approvals.py`
+
+Replaces the blocking `confirm_fn` (which the web/voice path never had, so e-mail and calendar
+always answered "user declined") and WhatsApp's private pending slot. E-mail, calendar, messages,
+destructive shell, file overwrite, browser restart and the autonomy switch all propose, then run
+the bound original call on "yes". Stable ids, fingerprints, 3-minute expiry, per-session,
+ambiguity → a question, provider failures reported with the provider's words, audit without
+bodies. Overlay: `GET /approvals`, `POST /approvals/{id}`.
+
+Removed: `jarvis/agent/sdk_tools.py` (864 lines, no callers since the Claude SDK brain went; it
+had an e-mail tool with no gate at all).
+
+### Semantic screen — `jarvis/screen/`
+
+`ScreenElement` (id, role, name, value, app, window, bounds, states, actions, parent/children,
+source, confidence) from AT-SPI → DOM (CDP or Marionette, one `Page` interface) → OCR; actions go
+through the element's own source and are verified by reading it again (`ActionResult.verified`).
+Password fields are never read or typed into.
+
+Environment here: **GNOME on Wayland**, XWayland at `:0`, no ydotool. AT-SPI works through system
+Python (`scripts/atspi_snapshot.py`, now with states and values); native windows report every box
+at 0,0, so native controls are only ever acted on through accessibility actions. Zen (Flatpak)
+exposes almost nothing over AT-SPI — browser content comes from the DOM adapter.
+
+### YouTube — verified live, and where it stopped
+
+Driven against a real YouTube page in an **isolated** Zen (own profile, own Marionette port
+2929, headless; your running Zen was never touched) and in Chrome via the DevTools MCP:
+
+| What | Result |
+|---|---|
+| Title, time, duration, paused, caption tracks, ad | read correctly (20 ms) |
+| Ad playing | detected; handler says so (39 ms) |
+| Pause | verified on the player, both engines |
+| Same page scripts under Marionette and CDP | both ran unchanged |
+| Real handler through `commands.handle` | 10–39 ms to the deterministic answer |
+| Grounded explanation, real model | 0.6–1.3 s on Groq `qwen/qwen3.8-27b`; Hinglish when asked in Hinglish; says when the excerpt does not justify a step |
+
+**Not verified — YouTube refused:** in both automated, signed-out sessions the player showed
+"Something went wrong" and never loaded media (`navigator.webdriver` is true under automation),
+and the transcript routes returned nothing: the caption URL needs a proof-of-origin token, a
+replay of the player's own tokenised request came back empty, and `get_transcript` answered
+"Precondition check failed". The adapter now detects the player's error overlay and says it,
+and "play" only counts when the clock advances. **Whether transcripts and playback work in your
+real, signed-in Zen after "restart the browser with control" is the open question** — a
+Marionette-controlled browser also reports `navigator.webdriver = true`.
+
+Model configuration found broken: Gemini returns 403 ("project has been denied access") and the
+configured Groq model `qwen/qwen3.6-27b` is retired (404). Teaching now uses a "strong" tier that
+falls back to `qwen/qwen3.8-27b`; the local brain (`qwen2.5:3b`, 10.8 s) explained Pythagoras as
+"the sum of the sides". Update `JARVIS_GROQ_MODEL` in `.env` when convenient.
+
+---
+
+## First pass (2026-09-23): audit, security, messaging, notifications, conversations
 
 Suite: 1683 passing before, **1829 passing** after (146 new tests, none removed or loosened).
 
@@ -23,10 +96,7 @@ Suite: 1683 passing before, **1829 passing** after (146 new tests, none removed 
 
 ### Known, not yet fixed
 
-- **The main voice path cannot confirm anything.** Voice uses the web server's agent, which is
-  built with `confirm_fn=None`, so every `_confirm(...)` there answers *no* — e-mail sending and
-  calendar creation can never be approved by voice. Messaging now uses a turn-based approval
-  ("send it") instead; the other confirmations need the same treatment.
+- ~~The main voice path cannot confirm anything.~~ Fixed in the second pass (approvals.py).
 - `permissions._DESTRUCTIVE` is a denylist (it says so). The sandbox is the real boundary.
 
 ### Messaging — the "Papa" failure, root-caused
@@ -82,11 +152,11 @@ deterministic actions end to end through the voice loop.
 
 ## Next, in priority order
 
-1. Turn-based approval for the other confirm-gated tools (e-mail, calendar) on the voice path.
-2. Semantic screen model (`ScreenElement` over AT-SPI → CDP/Marionette → OCR → vision);
-   `integrations/accessibility.py` and `desktop_control.py` are the starting points.
-3. Screen-aware study questions (video transcript at the current time via CDP).
-4. Dictation rewrite (hold/toggle hotkey, raw vs polished transcript, clipboard restore).
+1. Confirm the YouTube slice in the real signed-in browser (manual sequence in the chat log).
+   If `navigator.webdriver` blocks YouTube there, drive Chromium through the extension relay,
+   which does not set it.
+2. Move `screen_command.py` / `find_and_click` onto `ScreenModel` so every click is verified.
+3. Dictation rewrite (hold/toggle hotkey, raw vs polished transcript, clipboard restore).
 5. TTS clarity audit and benchmark; teaching overlay; away-mode hardening; self-repair.
 
 ---

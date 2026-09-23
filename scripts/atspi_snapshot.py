@@ -76,6 +76,37 @@ def _resolve_root(Atspi, app_hint: str = ""):
     return root, app_name, title
 
 
+# States a ScreenElement reports. Read, not inferred: "checked" is what the toolkit says.
+_STATES = ("focused", "focusable", "editable", "enabled", "sensitive", "checked", "selected",
+           "expanded", "pressed", "active", "visible", "showing", "multi_line")
+_SECRET_ROLES = {"password text"}
+
+
+def describe(Atspi, node) -> dict:
+    """What a caller may know about one node: states, and its value unless it is a secret."""
+    states = _safe(node.get_state_set)
+    names = []
+    if states is not None:
+        for state in _STATES:
+            kind = getattr(Atspi.StateType, state.upper(), None)
+            if kind is not None and _safe(lambda k=kind: states.contains(k), False):
+                names.append(state)
+    role = _safe(node.get_role_name, "") or ""
+    value = ""
+    if role not in _SECRET_ROLES:
+        value_iface = _safe(node.get_value_iface)
+        if value_iface is not None:
+            current = _safe(value_iface.get_current_value)
+            if current is not None:
+                value = str(current)
+        if not value and "editable" in names:
+            text_iface = _safe(node.get_text_iface)
+            if text_iface is not None:
+                count = _safe(text_iface.get_character_count, 0) or 0
+                value = (_safe(lambda: text_iface.get_text(0, min(count, 500)), "") or "")
+    return {"states": names, "value": value, "secret": role in _SECRET_ROLES}
+
+
 def snapshot(app_hint: str = "") -> dict:
     import gi
 
@@ -97,7 +128,7 @@ def snapshot(app_hint: str = "") -> dict:
             lambda: states.contains(Atspi.StateType.SHOWING), False))
         name = _safe(node.get_name, "") or ""
         role = _safe(node.get_role_name, "") or ""
-        if not name:
+        if not name and role not in _SECRET_ROLES:
             text_iface = _safe(node.get_text_iface)
             if text_iface is not None:
                 count = _safe(text_iface.get_character_count, 0) or 0
@@ -119,9 +150,13 @@ def snapshot(app_hint: str = "") -> dict:
         # control at x=0,y=0 and a coordinate click is impossible. The index chain from the window
         # root addresses a control without any coordinates at all, and the accessibility action is
         # both more reliable and more precise than aiming a pointer at it.
-        if showing and name and len(name) <= 240:
+        extra = describe(Atspi, node)
+        # Nameless text fields are exactly what dictation and "type into the search box" need,
+        # so an editable or focused node is kept even without a label.
+        keep = name or "editable" in extra["states"] or "focused" in extra["states"]
+        if showing and keep and len(name) <= 240:
             nodes.append({"name": name, "role": role, "rect": rect or [0, 0, 0, 0],
-                          "actions": actions, "path": list(path)})
+                          "actions": actions, "path": list(path), **extra})
         if depth < 18:
             count = min(250, _safe(node.get_child_count, 0) or 0)
             for i in reversed(range(count)):

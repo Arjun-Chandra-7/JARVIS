@@ -5,7 +5,8 @@ name, the platform folded into the text, or a message rewritten into something t
 said. The shape of the sentence already says which part is which, so it is read deterministically
 and the message goes out exactly as spoken.
 
-Also answers "send it" and "cancel" while a message is waiting for approval.
+Approving a held message ("send it", "haan bhej do") is the shared approval manager's job —
+see approvals.py.
 """
 from __future__ import annotations
 
@@ -32,14 +33,6 @@ _HINGLISH = re.compile(
        (?:bol|keh|bata)(?:\s+dena|\s+do|\s+de|dena|o)?)
     (?:\s+(?:ki|ke)\b)?\s*[:,]?\s*(?P<msg>\S.*)$""")
 
-# A bare "ok" is filler as often as it is consent, so it does not send on its own.
-_CONFIRM = re.compile(r"(?i)^(?:(?:yes|yeah|yep|haan|han|ok(?:ay)?|sure)[,\s]+)?"
-                      r"(?:send it|send|bhej(?:\s+do|\s+de|o)?|do it|go ahead|confirm(?:ed)?)(?:\s+please)?$"
-                      r"|^(?:yes|yeah|yep|haan|han)(?:\s+please)?$")
-_CANCEL = re.compile(r"(?i)^(?:no|nah|nahi|nhi|cancel(?: it)?|don'?t send(?: it)?|do not send(?: it)?|"
-                     r"mat bhejo|rehne do|rehne de|nhi rehne de|nahi rehne do|stop)(?:\s+please)?$")
-
-
 def parse(text: str) -> tuple[str, str] | None:
     """(recipient as said, message verbatim), or None when this is not a message request."""
     said = (text or "").strip()
@@ -59,13 +52,6 @@ def parse(text: str) -> tuple[str, str] | None:
 
 async def handle(text: str, config) -> str | None:
     from .integrations import whatsapp
-
-    said = (text or "").strip().rstrip(".!")
-    if whatsapp.pending_send():
-        if said and _CANCEL.fullmatch(said):
-            return whatsapp.cancel_pending()["message"]
-        if said and _CONFIRM.fullmatch(said):
-            return (await asyncio.to_thread(whatsapp.confirm_pending))["message"]
 
     parsed = parse(text)
     if not parsed:

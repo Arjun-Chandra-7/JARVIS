@@ -49,10 +49,17 @@ def deterministic_handlers():
         return await run_chain(text, config)
 
     async def message(text, config):
-        # "Message Papa on WhatsApp: I'll be home by eight" and the "send it" that approves one.
+        # "Message Papa on WhatsApp: I'll be home by eight". (Its "send it" is approvals.py's.)
         # Early, because the message text can say anything — "open YouTube tonight" is a message
         # here, not an instruction to open YouTube.
         from .message_command import handle as f
+        return await f(text, config)
+
+    async def video(text, config):
+        # "Explain what he just said", "pause and explain this part", "summarise the last two
+        # minutes" — answered from the video's own transcript at the current time. Before
+        # read_screen, which would OCR the frame for a question the captions already answer.
+        from .video_command import handle as f
         return await f(text, config)
 
     async def modes(text, config):
@@ -150,6 +157,7 @@ def deterministic_handlers():
     return [
         ("chain", chain),
         ("message", message),
+        ("video", video),
         ("modes", modes),
         ("system", system),
         ("screen_click", screen_click),
@@ -198,6 +206,14 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
     # While asleep, ignore everything except the wake phrase above (voice also enforces this).
     if asleep():
         return "I'm asleep, sir. Say “Jarvis, wake up” to bring me back."
+
+    # An answer to something waiting for approval — "yes", "send the email", "haan bhej do",
+    # "cancel". Matched on the words as said, before the Hinglish rewrite, and only when
+    # something is actually waiting, so an ordinary "yes" in conversation is left alone.
+    from .approvals import MANAGER
+    settled = await MANAGER.answer(clean_text(text), session_id)
+    if settled is not None:
+        return settled.message
 
     # Finer control over announcements first: "don't announce Instagram for two hours" also has
     # the words the all-or-nothing switch below looks for.

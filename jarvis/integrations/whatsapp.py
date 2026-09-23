@@ -122,10 +122,6 @@ def resolve(name: str) -> list[dict]:
 # see it first, send, check the bridge actually accepted it, and write down that it happened.
 # "Sent" is said only after the bridge returns the chat it went to.
 
-_PENDING_TTL_S = 180
-_pending: dict = {}
-
-
 def _approval_mode() -> str:
     """``new`` (default): preview the first message to someone not messaged before.
     ``always``: preview every message. ``never``: send once the recipient is certain."""
@@ -235,30 +231,14 @@ def smart_send(to: str, message: str, *, dry_run: bool = False, approved: bool =
                 "message": f'Dry run: would send to {cand.name} on WhatsApp: "{message}"'}
     mode = _approval_mode()
     if not approved and (mode == "always" or (mode == "new" and not _is_known(cand))):
-        _pending.clear()
-        _pending.update(cand=cand, message=message, at=time.monotonic())
-        why = "" if mode == "always" else " You haven't messaged them through me before."
+        from .. import context
+        from ..approvals import MANAGER
+        why = "" if mode == "always" else " (you haven't messaged them through me before)"
+        action = MANAGER.propose(
+            "message", f'send a WhatsApp to {cand.name}{why}: "{message}"',
+            {"recipient": cand.name, "platform": "WhatsApp", "action": "send message",
+             "address": cand.address, "message": message},
+            lambda: _deliver(cand, message), session=context.current())
         return {"ok": False, "status": "needs_approval", "preview": preview(cand, message),
-                "message": f'Ready to send to {cand.name} on WhatsApp: "{message}".{why} Say "send it" to confirm.'}
+                "approval_id": action.id, "message": action.prompt()}
     return _deliver(cand, message)
-
-
-def pending_send() -> dict | None:
-    if _pending and time.monotonic() - _pending["at"] > _PENDING_TTL_S:
-        _pending.clear()
-    return dict(_pending) if _pending else None
-
-
-def confirm_pending() -> dict:
-    held = pending_send()
-    _pending.clear()
-    if not held:
-        return {"ok": False, "status": "failed", "message": "There's no message waiting to be sent."}
-    return _deliver(held["cand"], held["message"])
-
-
-def cancel_pending() -> dict:
-    held = pending_send()
-    _pending.clear()
-    return {"ok": True, "status": "cancelled",
-            "message": f"Cancelled the message to {held['cand'].name}." if held else "Nothing was waiting to be sent."}

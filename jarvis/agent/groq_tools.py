@@ -74,8 +74,15 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
             return fn
         return deco
 
-    async def _confirm(desc: str) -> bool:
-        return bool(confirm_fn and await confirm_fn(desc))
+    async def _gate(kind: str, summary: str, details: dict, execute) -> str:
+        """Hold a side effect for approval (approvals.py). In the terminal ``confirm_fn`` answers
+        at once; everywhere else — web, voice, overlay — it waits for "yes" on a later turn, and
+        ``execute`` runs then, exactly as proposed."""
+        from .. import context
+        from ..approvals import MANAGER
+        out = await MANAGER.propose_or_ask(kind, summary, details, execute, ask=confirm_fn,
+                                           session=context.current())
+        return out.message
 
     # ---------------- built-in equivalents (shell / files / web) ----------------
     @tool("run_bash", "Run a shell command on this Linux machine and return stdout/stderr.",
@@ -83,8 +90,11 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     async def run_bash(a):
         cmd = a.get("command", "")
         if is_destructive(cmd) and not config.allow_unconfirmed_shell:
-            if not await _confirm(f"run this command:\n    {cmd}"):
-                return "User declined the command."
+            return await _gate("shell", f"run the command: {cmd[:120]}",
+                               {"action": "run command", "command": cmd}, lambda: _shell(cmd))
+        return await _shell(cmd)
+
+    async def _shell(cmd: str) -> str:
         # The confirmation above is a denylist and says so in its own docstring. The sandbox is
         # the part that does not depend on having thought of the command in advance: your home is
         # there, because a shell that cannot see your files is useless, but the credentials are
@@ -123,13 +133,18 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
             if p.exists() and not config.allow_unconfirmed_shell:
                 head = p.read_text(errors="ignore")[:400]
                 if "author: jarvis" not in head and "/scratch" not in str(p) and "/tmp" not in str(p):
-                    if not await _confirm(f"overwrite existing file not created by Jarvis:\n    {p}"):
-                        return "User declined overwriting this file."
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(a.get("content", ""))
-            return f"wrote {p}"
+                    content = a.get("content", "")
+                    return await _gate("file", f"overwrite {p.name}, a file Jarvis didn't create",
+                                       {"action": "overwrite file", "to": str(p), "content": content},
+                                       lambda: _write(p, content))
+            return _write(p, a.get("content", ""))
         except Exception as exc:  # noqa: BLE001
             return f"error: {exc}"
+
+    def _write(p: Path, content: str) -> str:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content)
+        return f"wrote {p}"
 
     @tool("list_dir", "List a directory.", {"path": {"type": "string"}}, ["path"])
     async def list_dir(a):
@@ -769,10 +784,9 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         from ..integrations import browser
         if browser.control_ready():
             return "Opera GX is already under control."
-        if not await _confirm("restart Opera GX (this closes your current tabs)"):
-            return "user declined."
-        state = browser.ensure(allow_restart=True)
-        return state["message"]
+        return await _gate("browser", "restart Opera GX, which closes your current tabs",
+                           {"action": "restart browser", "app": "Opera GX"},
+                           lambda: browser.ensure(allow_restart=True)["message"])
 
     @tool("open_app",
           "Open an installed application by the name you would say out loud — 'Opera GX', "
@@ -930,20 +944,29 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     @tool("google_email_send", "Send an email (confirm first).",
           {"to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}}, ["to", "subject", "body"])
     async def google_email_send(a):
-        if not await _confirm(f"send an email to {a.get('to')} — {a.get('subject')}"):
-            return "user declined."
         from ..integrations.google import gmail
-        return gmail.send(config, a.get("to", ""), a.get("subject", ""), a.get("body", "")) or "Google not connected."
+        to, subject, body = a.get("to", ""), a.get("subject", ""), a.get("body", "")
+
+        def send():
+            sent = gmail.send(config, to, subject, body)
+            return {"ok": bool(sent), "message": sent or "Google isn't connected, so the email wasn't sent."}
+        return await _gate("email", f'send an email to {to} with the subject "{subject}"',
+                           {"recipient": to, "platform": "Gmail", "action": "send email",
+                            "subject": subject, "body": body}, send)
 
     @tool("google_calendar_create", "Create a calendar event. start/end are ISO datetimes.",
           {"title": {"type": "string"}, "start": {"type": "string"}, "end": {"type": "string"},
            "description": {"type": "string"}}, ["title", "start", "end"])
     async def google_calendar_create(a):
-        if not await _confirm(f"create calendar event '{a.get('title')}' at {a.get('start')}"):
-            return "user declined."
         from ..integrations.google import calendar as gcal
-        return gcal.create_event(config, a.get("title", ""), a.get("start", ""), a.get("end", ""),
-                                 a.get("description", "")) or "Google not connected."
+        title, start, end = a.get("title", ""), a.get("start", ""), a.get("end", "")
+
+        def create():
+            made = gcal.create_event(config, title, start, end, a.get("description", ""))
+            return {"ok": bool(made), "message": made or "Google isn't connected, so no event was created."}
+        return await _gate("calendar", f'add "{title}" to your calendar at {start}',
+                           {"title": title, "platform": "Google Calendar", "action": "create event",
+                            "start": start, "end": end}, create)
 
     @tool("google_tasks_list", "List your Google Tasks.", {})
     async def google_tasks_list(a):
@@ -1046,8 +1069,11 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         # unconfirmed shell. Turning the gate back on is always allowed; turning it off needs
         # the person to say yes.
         if val and not config.allow_unconfirmed_shell:
-            if not await _confirm("turn off confirmation for shell commands and file overwrites"):
-                return "Full laptop autonomy stays off — it needs your explicit confirmation."
+            def enable():
+                config.allow_unconfirmed_shell = True
+                return "Full laptop autonomy is on: shell commands and overwrites no longer ask."
+            return await _gate("autonomy", "turn off confirmation for shell commands and file overwrites",
+                               {"action": "enable autonomy"}, enable)
         config.allow_unconfirmed_shell = val
         from . import omnicore
         omnicore.record_event("System Autonomy", "Jarvis", f"Full laptop autonomy set to: {val}", config=config)

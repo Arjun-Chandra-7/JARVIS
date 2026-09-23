@@ -49,7 +49,9 @@ def world(monkeypatch, tmp_path):
     monkeypatch.setattr(whatsapp, "send", fake_send)
     monkeypatch.delenv("JARVIS_DRY_RUN_SENDS", raising=False)
     monkeypatch.setenv("JARVIS_SEND_APPROVAL", "never")
-    whatsapp._pending.clear()
+    from jarvis.approvals import MANAGER
+    MANAGER.clear()
+    monkeypatch.setenv("JARVIS_STATE_DIR", str(tmp_path))
     return {"saved": saved, "sent": sent, "bridge": bridge_book, "vault": tmp_path}
 
 
@@ -161,6 +163,10 @@ def test_recipient_and_message_are_read_apart(said, who, msg):
 # --------------------------------------------------------------------------- sending
 
 def _say(text):
+    from jarvis.approvals import MANAGER
+    settled = asyncio.run(MANAGER.answer(text))
+    if settled is not None:
+        return settled.message
     return asyncio.run(message_command.handle(text, CONFIG))
 
 
@@ -211,7 +217,7 @@ def test_dry_run_shows_everything_and_sends_nothing(world, monkeypatch):
 def test_new_recipient_needs_approval_then_send_it(world, monkeypatch):
     monkeypatch.setenv("JARVIS_SEND_APPROVAL", "new")
     reply = _say("Message Papa on WhatsApp: I'll be home by eight.")
-    assert "send it" in reply.lower() and not world["sent"]
+    assert "to confirm" in reply.lower() and not world["sent"]
     assert _say("send it") == "Sent to Papa on WhatsApp."
     assert world["sent"] == [("919810000001", "I'll be home by eight.")]
     # Second time Papa is known, so no preview.
@@ -222,7 +228,7 @@ def test_held_message_can_be_cancelled(world, monkeypatch):
     monkeypatch.setenv("JARVIS_SEND_APPROVAL", "always")
     _say("Message Papa on WhatsApp: hi")
     assert "Cancelled" in _say("nhi rehne de")
-    assert _say("send it") is None or "no message waiting" in (_say("send it") or "").lower()
+    assert _say("send it") is None
     assert not world["sent"]
 
 

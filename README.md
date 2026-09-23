@@ -125,6 +125,34 @@ to `Jarvis/private/outbox.jsonl` with a masked number and a hash — never the t
 A held message goes out on "send it" / "haan bhej do" and is dropped on "cancel" / "rehne do".
 A bare "ok" does neither.
 
+## Approvals
+
+Anything with consequences — sending a message or an email, creating a calendar event, a
+destructive shell command, overwriting a file you wrote, restarting the browser, lifting the
+confirmation gate — is proposed rather than done: "Ready to send an email to … Say "yes" to
+confirm or "cancel"." The next turn settles it, by voice, typed, or with the overlay's buttons
+(`GET /approvals`, `POST /approvals/{id}`), and what runs is exactly what was described.
+
+"Yes", "send it", "confirm", "haan", "haan bhej do", "kar do" approve; "no", "cancel", "mat
+bhejo", "rehne do" cancel. With two things waiting, a bare "yes" approves neither and asks which;
+"send the email", "cancel the message" or "yes, to Mummy" picks one. Pending actions expire after
+three minutes, and a late "yes" is told so. A bare "ok" approves nothing. The terminal still asks
+inline. Every step goes to `~/.local/share/jarvis/approvals.jsonl` with the kind, a masked target
+and a hash — never a message, subject or command.
+
+## Questions about the video you are watching
+
+On a YouTube tab: "explain what he just said", "why is this step valid?", "explain what's on
+screen", "pause and explain this part", "summarise the last two minutes" — and the Hindi or
+Hinglish versions ("abhi kya bola, samjhao", "ruko aur samjhao", "pichle do minute ka summary
+do"). The answer comes from the video's own captions around the current time, not from a
+screenshot, pitched at a CBSE Class 10 student and in the language you asked in. The model is
+told to say when the excerpt does not cover something and to mark its own explanation as such.
+Pausing is checked on the player; playing counts only when the clock moves.
+
+This needs a drivable browser (see below) and uses the "strong" model tier: `JARVIS_STRONG_MODEL`
+if set, then your Groq model, then a current Groq model, then Gemini, then the local brain.
+
 ## Notifications
 
 Incoming messages are grouped before they are spoken: a conversation is announced once it has
