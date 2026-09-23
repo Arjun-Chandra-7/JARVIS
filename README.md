@@ -155,6 +155,16 @@ Groq model, the current default Groq model, then Gemini. The small local model i
 for explanations — it gets steps wrong — and when it is all that is left Jarvis says so and reads
 out the transcript lines instead. `JARVIS_ALLOW_WEAK_TEACHING=1` overrides that.
 
+## Asking about topics
+
+"What is a sequential input in an RNN?", "explain Ohm's law", "photosynthesis kya hota hai" —
+topic questions are taught by the strong model: the idea plainly, a concrete example, a one-line
+takeaway, in the language you asked. "Give me some examples" or "hindi mein samjhao" within ten
+minutes continues the same topic. Questions that point at the screen ("what is this in the
+diagram on my screen?") are answered from the screen instead (see the video section above).
+While a video or song is playing, talking over Jarvis no longer cuts him off — use the wake word,
+push-to-talk or the dictation key to stop him.
+
 ## Voice writing — dictate into any field
 
 Click into any text field — a browser box, an editor, a chat, a terminal — **tap Right Alt**,

@@ -5,6 +5,28 @@ piece was actually taken, and what is next.
 
 ---
 
+## Fourth pass (2026-09-24): screen questions, teaching, long answers cut off
+
+From the journal after dictation went live:
+
+* **Long answers stopped halfway.** Barge-in fired on the lecture playing aloud (louder than
+  Jarvis's echo). It now stands down while any MPRIS player is playing, and otherwise needs ~1 s of
+  sustained sound. The wake word, push-to-talk and the dictation key still stop him.
+* **Free-form screen questions** ("On my screen, what is a sequence output…", "…in this
+  scenario?", "take a screenshot and explain…") went to the local model ("I can't see your
+  screen"). Any question pointing at the screen/video/page/diagram is now `screen.ask`, answered
+  from the screen, with general knowledge added and labelled when the screen does not cover it.
+* **Topic explanations were one flat sentence** from the local 3B. `jarvis/explain_command.py`
+  sends topic questions to the strong model as a tutor (idea → example → takeaway, ~130 words,
+  the question's language) with ten-minute follow-ups that add new material. Personal, live and
+  Jarvis-feature questions are not topics and route as before.
+
+Verified live through /chat with the real brain and Groq: RNN explanation with an analogy and
+example; "give me some examples" gave three new ones; "photosynthesis kya hota hai" in natural
+Hinglish; a screen question answered from the playing video's transcript.
+
+---
+
 ## Third pass (2026-09-23): system-wide voice writing (dictation)
 
 `jarvis/flow/` — Right Alt (tap = hands-free, hold = push-to-talk, Escape cancels) dictates into
