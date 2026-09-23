@@ -50,7 +50,7 @@ _SYSTEM = (
     "You are a warm, clear tutor. Explain the topic the way a good teacher talks: the idea in one "
     "plain sentence, how it works with one small concrete example, then a one-line takeaway. If it "
     "is school material, pitch it at a CBSE Class 10 student. Spoken aloud: short sentences, no "
-    "markdown or bullet symbols, formulas in words. About 160 words at most.")
+    "markdown or bullet symbols, formulas in words. About 130 words; a follow-up, 80.")
 
 FOLLOW_UP_S = 600.0
 _LAST: dict[str, tuple[float, str, str]] = {}      # session → (when, question, answer)
@@ -87,10 +87,11 @@ async def handle(text: str, config=None) -> Optional[str]:
     if follow:
         _t, question, answer = _LAST[session]
         prompt = (f"Earlier they asked: \"{question}\"\nYou explained: \"{answer[:600]}\"\n"
-                  f"Now they say: \"{text.strip()}\" — continue on the same topic.\n{_LANGUAGE_INSTRUCTION[lang]}")
+                  f"Now they say: \"{text.strip()}\". Answer only that, on the same topic, with new "
+                  f"material — do not repeat what you already explained.\n{_LANGUAGE_INSTRUCTION[lang]}")
     done = await complete_detailed(_SYSTEM, prompt, config, temperature=0.4, strength="strong")
     route_log.record(intent="teach", action="explain" if done.ok else "no_strong_model", lang=lang,
-                     follow_up=follow, memory="not_consulted")
+                     follow_up=follow, memory="not_consulted", why="; ".join(done.failures)[:120])
     if not done.ok:
         return None                                # the normal brain answers instead
     _LAST[session] = (time.time(), _LAST[session][1] if follow else text.strip(), done.text)
