@@ -62,6 +62,12 @@ def deterministic_handlers():
         from .video_command import handle as f
         return await f(text, config)
 
+    async def teach(text, config):
+        # "What is a sequential input in an RNN?", "photosynthesis kya hota hai" — a topic,
+        # taught by the strong model. After video/screen, which own anything about the screen.
+        from .explain_command import handle as f
+        return await f(text, config)
+
     async def modes(text, config):
         # "Study mode" and "Iron Man mode" change what the whole machine is for, so they are
         # recognised before anything that might read "close everything" as a request to close
@@ -158,6 +164,7 @@ def deterministic_handlers():
         ("chain", chain),
         ("message", message),
         ("video", video),
+        ("teach", teach),
         ("modes", modes),
         ("system", system),
         ("screen_click", screen_click),
