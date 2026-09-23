@@ -225,3 +225,25 @@ def test_the_video_questions_through_the_router_never_reach_memory(wired, monkey
     wired["use"](AnyPage(in_view="An essay about climate change"))
     reply = asyncio.run(commands.handle("summarise this page", CONFIG, "voice"))
     assert reply == "Here is what that means." and "climate change" in wired["prompts"][-1]
+
+
+# --------------------------------------------------------------------------- free-form questions
+
+@pytest.mark.parametrize("said", [
+    "On my screen, what is a sequence output in regarding to whatever is on my screen?",
+    "So what is a sequential input and a sequential output in this scenario?",
+    "So take a screenshot of my screen and explain me what sequential",
+    "is video mein ye formula kya hai",
+    "इस वीडियो में ये formula क्यों आया?",
+])
+def test_questions_that_point_at_the_screen(said):
+    # Heard live; all went to the local model, which said it could not see the screen.
+    assert vc.intent(said) == "ask"
+
+
+def test_a_screen_question_is_answered_with_labelled_general_knowledge(wired):
+    wired["use"](AnyPage(in_view="Figure 3: an RNN unrolled over time steps x1, x2, x3"))
+    ask("what is a sequential input in this diagram?")
+    p = wired["prompts"][-1]
+    assert "RNN unrolled" in p and "general knowledge" in p and "Answer their question" in p
+    assert "never guess" in wired["system"] and "concrete example" in wired["system"]

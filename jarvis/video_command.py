@@ -89,6 +89,20 @@ _OVERVIEW_HI = re.compile(
     r"(?:वीडियो|video)\s+(?:में|मे)\s+क्या|(?:वीडियो|video)\s+(?:किस|किसके)\s+बारे|"
     r"(?:वीडियो|video)\s+का\s+(?:summary|सारांश)")
 
+# A question that points at the screen but is not one of the fixed shapes above — heard live:
+# "On my screen, what is a sequence output in regarding to whatever is on my screen?", "what is
+# a sequential input and output in this scenario?", "take a screenshot of my screen and explain".
+# All three went to the local model, which said it could not see anything.
+_SCREEN_REF = re.compile(
+    r"(?ix)\b(?:(?:on|in|from|of)\s+(?:my|the|this)\s+(?:screen|video|page|window|tab|slide|diagram|lecture)|"
+    r"in\s+this\s+(?:scenario|context|diagram|slide|example|case|video|lecture|chapter|part)|"
+    r"screenshot|(?:what(?:'s|\s+is)|whatever\s+is)\s+on\s+(?:my|the)\s+screen|"
+    r"screen\s+(?:pe|par|mein)|is\s+video\s+(?:mein|me)|is\s+(?:diagram|slide)\s+(?:mein|me))\b")
+_SCREEN_REF_HI = re.compile(r"(?:स्क्रीन|screen)\s+(?:पे|पर|में)|इस\s+(?:वीडियो|video|diagram|डायग्राम)\s+में")
+_QUESTIONISH = re.compile(
+    r"(?i)\?|\b(?:what|why|how|which|who|when|where|explain|describe|summari[sz]e|tell\s+me|teach|"
+    r"kya|kyu|kyun|kaise|kaun|samjhao|samjha|batao)\b|क्या|क्यों|कैसे|समझाओ|बताओ")
+
 # Asked about the past on purpose: "what did he say yesterday", "kal wale video mein kya bola".
 # Only then is this a question for memory rather than for the screen.
 _EXPLICIT_PAST = re.compile(
@@ -106,15 +120,21 @@ _HINGLISH = re.compile(r"(?i)\b(?:kya|kyu|kyun|kaise|samjhao|samjha|bola|kaha|ba
                        r"isme|ismein|matlab|bhai|yaar)\b")
 _DEVANAGARI = re.compile(r"[ऀ-ॿ]")
 
+_TEACH = (
+    "Teach it the way a good tutor talks: first the idea in one plain sentence, then how it works "
+    "with one small concrete example, then a one-line takeaway. Short spoken sentences; this is "
+    "read aloud, so no markdown, no bullet symbols, formulas in words such as 'a squared plus b "
+    "squared equals c squared'. About 180 words at most unless asked to summarise.")
+
 _TUTOR = (
     "You are a patient tutor for a CBSE Class 10 student in India. You are given an excerpt of the "
-    "transcript of the video they are watching, with timestamps, and their question. Base your "
-    "answer only on the excerpt. If the excerpt does not contain what is needed, say so plainly "
-    "and stop: never guess what the teacher said from the title or chapter. Explain step by step, "
-    "conversationally, in short spoken sentences (this is read aloud: no markdown, no bullet "
-    "symbols, write formulas in words such as 'a squared plus b squared equals c squared'). Keep "
-    "it under 120 words unless asked to summarise. Never claim the excerpt says something it does "
-    "not.")
+    "transcript of the video they are watching, with timestamps, and their question. What the "
+    "teacher said comes only from the excerpt: never guess it from the title or chapter, and never "
+    "claim the excerpt says something it does not. " + _TEACH)
+
+_ASK_TASK = ("Answer their question. Use the excerpt for what the video or screen shows. If it does not "
+             "cover the question, say so in a few words, then explain it clearly anyway and say that "
+             "part is general knowledge, not from the screen.")
 
 
 def intent(text: str) -> Optional[str]:
@@ -131,6 +151,8 @@ def intent(text: str) -> Optional[str]:
         return "overview"
     if _ON_SCREEN.search(said) or _ON_SCREEN_HI.search(said):
         return "on_screen"
+    if (_SCREEN_REF.search(said) or _SCREEN_REF_HI.search(said)) and _QUESTIONISH.search(said):
+        return "ask"
     if _PAGE_EN.match(said.rstrip(" .?!")) or _PAGE_HINGLISH.search(said) or _PAGE_HI.search(said):
         return "page"
     return None
@@ -313,6 +335,7 @@ def build_prompt(kind: str, question: str, state: yt.PlayerState, excerpt: list[
             "pause_explain": "The video is paused here. Teach this part.",
             "on_screen": "Explain what is being shown and discussed right now.",
             "summary": "Summarise this stretch of the video in a few spoken sentences.",
+            "ask": _ASK_TASK,
             "overview": ("Say in one line which video this is, then summarise what the excerpt covers "
                          "in a few spoken sentences.")}[kind]
     lines += ["", f"Task: {task}", f"The student asked: \"{question}\"",
@@ -399,6 +422,8 @@ async def _answer(kind: str, text: str, state: yt.PlayerState, player: yt.YouTub
     now = float(state.time or 0)
     if kind == "summary":
         span = (max(0.0, now - summary_seconds(text)), now)
+    elif kind == "ask":
+        span = (max(0.0, now - 90), now + 5)            # the question is about what was just on
     elif kind == "overview":
         # What has been watched, up to the last twenty minutes of it; a video not started yet
         # is summarised from its opening.
@@ -455,11 +480,9 @@ _EXPLAINER = (
     "You explain what a person is looking at on their screen right now. You are given what was "
     "read from it — the window or page title, possibly the text they selected, the text in view, "
     "the page's text, a video's captions, or an OCR reading of an application window (which may "
-    "contain reading errors). Answer only from that material. If it does not contain what is "
-    "needed, say so plainly and stop; never guess or fill in from general knowledge as if it were "
-    "on the screen. If it is schoolwork, pitch it at a CBSE Class 10 student. This is read aloud: "
-    "short spoken sentences, no markdown or bullet symbols, formulas in words. Under 120 words "
-    "unless asked to summarise.")
+    "contain reading errors). What is on the screen comes only from that material: never guess "
+    "it, and never present general knowledge as if it were on the screen. If it is schoolwork, "
+    "pitch it at a CBSE Class 10 student. " + _TEACH)
 
 _SUMMARY_WORDS = re.compile(r"(?i)summar|recap|tl;?dr|overview|gist|saar|सारांश|kis\s+baare|किस\s+बारे|\babout\b")
 
@@ -557,8 +580,8 @@ async def _explain_page(kind: str, text: str, page, config, lang: str) -> str:
     header += [f"From {what}:", _clip(material)]
     context = {"the text they selected": "page_selection", "the page's text": "page_text"}.get(what, "page_view")
     _log(kind, lang, context, "explain")
-    task = ("Summarise this in a few spoken sentences." if _wants_summary(kind, text)
-            else "Explain what this is and what it means, answering their question.")
+    task = (_ASK_TASK if kind == "ask" else "Summarise this in a few spoken sentences."
+            if _wants_summary(kind, text) else "Explain what this is and what it means, answering their question.")
     ok, answer = await _ask(text, header, task, lang, config)
     return answer if ok else say("no_model", lang)
 
@@ -575,6 +598,7 @@ async def _explain_app(kind: str, text: str, ctx, config, lang: str) -> str:
     header = [f"Window: {ctx.title or ctx.window or 'unknown'}" + (f" (app: {ctx.app})" if ctx.app else ""),
               f"From {reading}:", _clip(material)]
     _log(kind, lang, f"app_{ctx.note or 'text'}", "explain")
-    ok, answer = await _ask(text, header, "Explain what is on their screen, answering their question.",
+    ok, answer = await _ask(text, header, _ASK_TASK if kind == "ask" else
+                            "Explain what is on their screen, answering their question.",
                             lang, config)
     return answer if ok else say("no_model", lang)
