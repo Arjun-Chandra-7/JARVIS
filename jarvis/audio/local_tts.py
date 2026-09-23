@@ -274,6 +274,7 @@ def speak_as_it_arrives(
     stop_event: Optional[threading.Event] = None,
     on_first_audio: Optional[callable] = None,
     on_level: Optional[callable] = None,
+    on_sentence: Optional[callable] = None,
 ) -> str:
     """Speak a reply while it is still being written. Returns everything that was said.
 
@@ -288,6 +289,10 @@ def speak_as_it_arrives(
             if stop_event is not None and stop_event.is_set():
                 return
             said.append(sentence)
+            if on_sentence is not None:
+                # Here, and not around `deltas`: this is where whole sentences exist. Reporting
+                # the fragments instead would be a notification per token.
+                on_sentence(sentence)
             yield sentence
 
     def audio() -> Iterator[tuple[bytes, int]]:

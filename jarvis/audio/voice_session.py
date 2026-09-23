@@ -448,8 +448,12 @@ class VoiceSession:
 
         self._while_speaking(play, announce=text, force=force)
 
-    async def _ask_and_say(self, agent, prompt: str) -> str:
+    async def _ask_and_say(self, agent, prompt: str) -> tuple[str, bool]:
         """Ask the brain and speak the answer while it is still being written.
+
+        Returns (reply, handled). `handled` says the answer has already been spoken and shown,
+        sentence by sentence — the caller must then do neither, or the whole reply is repeated
+        aloud and printed twice.
 
         The two run at once: the brain fills a queue with fragments and the speaking thread
         drains it, so the first sentence is heard while the last is still being generated. What
@@ -460,7 +464,7 @@ class VoiceSession:
         rare path: the hosted voice takes whole utterances, and a provider can refuse to stream.
         """
         if self.backend != "local":
-            return await agent.send(prompt)
+            return await agent.send(prompt), False
 
         fragments: "queue.Queue[Optional[str]]" = queue.Queue()
 
@@ -472,8 +476,17 @@ class VoiceSession:
                 yield piece
 
         spoken: list[str] = []
+
+        def show(sentence: str) -> None:
+            # Each sentence reaches the HUD as it is spoken, rather than the whole reply
+            # arriving after the talking has stopped — which is what happened when the text was
+            # only published once the brain returned: you heard the answer with nothing on
+            # screen, and then read it as Jarvis fell silent.
+            self.on_event("reply", sentence)
+
         speaker = threading.Thread(
-            target=lambda: spoken.append(self._speak_as_written(drain())), daemon=True)
+            target=lambda: spoken.append(
+                self._speak_as_written(drain(), on_sentence=show)), daemon=True)
 
         agent.on_reply_delta = fragments.put
         try:
@@ -490,18 +503,17 @@ class VoiceSession:
         already = "".join(spoken).strip()
         remaining = (reply or "").strip()
         if already and remaining and remaining.startswith(already[:40]):
-            return reply          # spoken already; the caller must not say it twice
+            return reply, True    # said and shown already; the caller must do neither
         if remaining and not already:
-            self._speak(remaining)
-            return reply
+            return reply, False   # nothing streamed — a tool ran, so the caller says it
         if remaining and already and not remaining.startswith(already[:40]):
             # The brain's final answer is not what was streamed — a tool ran after the text, or
             # the answer was rewritten. Say the real one; a half-answer left hanging is worse
             # than a repeated word.
-            self._speak(remaining)
-        return reply
+            return reply, False
+        return reply, True
 
-    def _speak_as_written(self, pieces, force: bool = False) -> str:
+    def _speak_as_written(self, pieces, on_sentence=None, force: bool = False) -> str:
         """Speak a reply while the model is still writing it. Returns what was said.
 
         Only the local voice can do this: the hosted one is asked for a whole utterance at a
@@ -516,6 +528,7 @@ class VoiceSession:
             said.append(local_tts.speak_as_it_arrives(
                 pieces, self.config.piper_model, self.config.audio_output_device,
                 stop_event=stop, on_first_audio=on_first_audio, on_level=on_level,
+                on_sentence=on_sentence,
             ))
 
         # The text is not known in advance, so the HUD is told when the first audio arrives
@@ -1268,19 +1281,22 @@ class VoiceSession:
                         continue
 
                     start = time.monotonic()
-                    spoke_it = False
+                    # `handled` means the answer has already been spoken and shown, sentence by
+                    # sentence, while the brain was still writing it. Saying it again here would
+                    # repeat the whole reply aloud and print it twice.
+                    handled = False
                     try:
-                        reply = await self._ask_and_say(agent, self._augment(transcript))
-                        spoke_it = True
+                        reply, handled = await self._ask_and_say(
+                            agent, self._augment(transcript))
                     except Exception as exc:  # noqa: BLE001 - never let one bad turn kill the loop
                         reply = "Something went wrong on that one, sir."
                         self.on_event("error", f"brain: {exc}")
                     self.on_event("timing", f"thought in {time.monotonic() - start:.1f}s")
                     if not (reply or "").strip():
                         reply = "I don't have an answer for that, sir."
-                        spoke_it = False
-                    self.on_event("reply", reply)
-                    if not spoke_it:
+                        handled = False
+                    if not handled:
+                        self.on_event("reply", reply)
                         self._speak(reply)
                     # By default require the wake word again for each turn (no auto-listen after a
                     # reply). Set JARVIS_FOLLOWUP=1 to keep the conversational follow-up window.
