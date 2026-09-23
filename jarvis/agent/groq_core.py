@@ -450,6 +450,11 @@ class GroqAgent:
         calls: dict[int, dict] = {}
         speaking = on_delta is not None
         finish = None
+        # Small models sometimes emit a tool call as plain text instead of calling it. The loop
+        # rescues those (`_parse_calls`), but by then it would already have been read out, and
+        # a JSON payload spoken aloud is not something an apology covers. So nothing is spoken
+        # until the reply has proved it is prose, which the first non-space character settles.
+        proven_prose = False
 
         for chunk in stream:
             if not chunk.choices:
@@ -477,10 +482,37 @@ class GroqAgent:
             piece = getattr(delta, "content", None)
             if piece:
                 content.append(piece)
+                if speaking and not proven_prose:
+                    opening = "".join(content).lstrip()
+                    if not opening:
+                        continue          # nothing but whitespace so far; wait for a character
+                    if opening[0] in "{[":
+                        speaking = False  # a tool call written as text
+                    else:
+                        proven_prose = True
+                        # Everything held back while waiting for that first character is due
+                        # now, or the answer would start from its second word.
+                        on_delta(opening)
+                        continue
                 if speaking:
                     on_delta(piece)
 
         return _StreamedResponse("".join(content), calls, finish)
+
+    def _complete_maybe_streaming(self):
+        """The completion the loop asks for: streamed when anything is listening for it.
+
+        Falling back rather than failing is deliberate. Streaming is a way of answering sooner,
+        never a requirement for answering at all, so a provider that will not stream, or breaks
+        halfway through one, costs the speed and not the reply.
+        """
+        on_delta = getattr(self, "on_reply_delta", None)
+        if on_delta is None:
+            return self._complete()
+        try:
+            return self._stream(on_delta)
+        except Exception:  # noqa: BLE001
+            return self._complete()
 
     def _complete(self):
         """One completion, under whichever specialist this turn belongs to.
@@ -682,7 +714,7 @@ class GroqAgent:
         rl_waits = 0  # how many times we've waited out a rate-limit this turn
         for _ in range(12):  # bounded tool rounds
             try:
-                resp = await asyncio.to_thread(self._complete)
+                resp = await asyncio.to_thread(self._complete_maybe_streaming)
             except Exception as exc:  # noqa: BLE001
                 if _is_rate_limit(exc) and not self._on_local and self.config.brain in ("groq", "gemini"):
                     # 1) Groq only: switch to the high-limit fallback model (once)

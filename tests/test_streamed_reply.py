@@ -206,3 +206,42 @@ def test_a_call_with_no_name_is_dropped():
     ]
     resp = Brain(chunks)._stream(lambda _p: None)
     assert resp.choices[0].message.tool_calls is None
+
+
+# ------------------------------------------------------- a tool call written as text
+def test_a_reply_that_opens_with_a_brace_is_never_spoken():
+    """Small models sometimes write a tool call out as text instead of calling it. The loop
+    rescues those, but by then it would already have been read aloud — and a JSON payload
+    spoken out loud is not something an apology covers."""
+    spoken = []
+    Brain(text('{"name": ', '"open_app", ', '"arguments": {}}'))._stream(spoken.append)
+    assert spoken == []
+
+
+def test_a_reply_that_opens_with_a_bracket_is_never_spoken():
+    spoken = []
+    Brain(text('[{"name"', ': "open_app"}]'))._stream(spoken.append)
+    assert spoken == []
+
+
+def test_prose_is_spoken_from_its_first_word():
+    """The guard holds fragments back only until the first character settles it. Whatever was
+    held has to be released then, or the answer starts from its second word."""
+    spoken = []
+    resp = Brain(text("Good ", "morning", ", sir."))._stream(spoken.append)
+    assert "".join(spoken) == "Good morning, sir."
+    assert resp.choices[0].message.content == "Good morning, sir."
+
+
+def test_leading_whitespace_does_not_decide_anything():
+    """Models often open with a newline. That is not a character that settles prose or JSON."""
+    spoken = []
+    Brain(text("\n", "  ", "Right away, sir."))._stream(spoken.append)
+    assert "".join(spoken).strip() == "Right away, sir."
+
+
+def test_a_brace_later_in_prose_is_still_spoken():
+    """The rule is about how the reply opens, not about braces anywhere in it."""
+    spoken = []
+    Brain(text("The config uses ", "{a: 1}", " as its default."))._stream(spoken.append)
+    assert "".join(spoken) == "The config uses {a: 1} as its default."

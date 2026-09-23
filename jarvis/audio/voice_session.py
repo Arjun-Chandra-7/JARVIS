@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import queue
 import threading
 import time
 from pathlib import Path
@@ -426,11 +427,114 @@ class VoiceSession:
         return t.strip()
 
     def _speak(self, text: str, force: bool = False) -> None:
+        text = self._clean_for_speech(text)
+        if not text.strip():
+            return
+
+        def play(stop, on_first_audio, on_level):
+            if self.backend == "local":
+                from . import local_tts
+
+                local_tts.speak(
+                    text, self.config.piper_model, self.config.audio_output_device,
+                    stop_event=stop, on_first_audio=on_first_audio, on_level=on_level,
+                )
+            else:
+                tts.speak(
+                    text, self.config.elevenlabs_api_key, self.config.tts_voice_id,
+                    self.config.tts_model_id, self.sample_rate,
+                    self.config.audio_output_device, stop_event=stop,
+                )
+
+        self._while_speaking(play, announce=text, force=force)
+
+    async def _ask_and_say(self, agent, prompt: str) -> str:
+        """Ask the brain and speak the answer while it is still being written.
+
+        The two run at once: the brain fills a queue with fragments and the speaking thread
+        drains it, so the first sentence is heard while the last is still being generated. What
+        is returned is the finished reply, because everything downstream — the HUD, the journal,
+        the follow-up — still wants the whole thing.
+
+        Falls back to waiting for the reply whenever streaming is not available, which is not a
+        rare path: the hosted voice takes whole utterances, and a provider can refuse to stream.
+        """
+        if self.backend != "local":
+            return await agent.send(prompt)
+
+        fragments: "queue.Queue[Optional[str]]" = queue.Queue()
+
+        def drain():
+            while True:
+                piece = fragments.get()
+                if piece is None:
+                    return
+                yield piece
+
+        spoken: list[str] = []
+        speaker = threading.Thread(
+            target=lambda: spoken.append(self._speak_as_written(drain())), daemon=True)
+
+        agent.on_reply_delta = fragments.put
+        try:
+            speaker.start()
+            reply = await agent.send(prompt)
+        finally:
+            agent.on_reply_delta = None
+            fragments.put(None)          # closes the stream whether it finished or failed
+            speaker.join(timeout=30)
+
+        # What was actually said, versus what the brain ended up returning. They differ when a
+        # tool ran: the loop speaks nothing for those rounds and the reply is assembled
+        # afterwards, so there is still something left to say.
+        already = "".join(spoken).strip()
+        remaining = (reply or "").strip()
+        if already and remaining and remaining.startswith(already[:40]):
+            return reply          # spoken already; the caller must not say it twice
+        if remaining and not already:
+            self._speak(remaining)
+            return reply
+        if remaining and already and not remaining.startswith(already[:40]):
+            # The brain's final answer is not what was streamed — a tool ran after the text, or
+            # the answer was rewritten. Say the real one; a half-answer left hanging is worse
+            # than a repeated word.
+            self._speak(remaining)
+        return reply
+
+    def _speak_as_written(self, pieces, force: bool = False) -> str:
+        """Speak a reply while the model is still writing it. Returns what was said.
+
+        Only the local voice can do this: the hosted one is asked for a whole utterance at a
+        time. When it is in use the caller falls back to waiting for the reply, which is how it
+        behaved before any of this existed.
+        """
+        said: list[str] = []
+
+        def play(stop, on_first_audio, on_level):
+            from . import local_tts
+
+            said.append(local_tts.speak_as_it_arrives(
+                pieces, self.config.piper_model, self.config.audio_output_device,
+                stop_event=stop, on_first_audio=on_first_audio, on_level=on_level,
+            ))
+
+        # The text is not known in advance, so the HUD is told when the first audio arrives
+        # rather than before it — which is also the first moment there is anything to show.
+        self._while_speaking(play, announce=None, force=force)
+        return "".join(said)
+
+    def _while_speaking(self, play, announce, force: bool = False) -> None:
+        """Run `play` with everything that has to be true while Jarvis is talking.
+
+        Barge-in, the stop token, the speaking flag and the HUD level all have to be set up
+        before a sound is made and taken down afterwards whatever happens. Two copies of that
+        would eventually differ in one of them, and the one that differs would be the one that
+        leaves the HUD animating a level nothing is producing.
+        """
         if not force:
             from .. import power
             if power.asleep():          # muted while asleep; wake/sleep lines pass force=True
                 return
-        text = self._clean_for_speech(text)
         stop = self._stop_speaking = threading.Event()
         monitor: Optional[threading.Thread] = None
         if self.config.enable_barge_in:
@@ -445,24 +549,12 @@ class VoiceSession:
         )
         watcher.start()
         try:
-            if self.backend == "local":
-                from . import local_tts
-
-                local_tts.speak(
-                    text, self.config.piper_model, self.config.audio_output_device, stop_event=stop,
-                    on_first_audio=lambda: self.on_event("speaking", text),
-                    on_level=lambda lvl: levels.publish(lvl, "speaking"),
-                )
-            else:
-                tts.speak(
-                    text,
-                    self.config.elevenlabs_api_key,
-                    self.config.tts_voice_id,
-                    self.config.tts_model_id,
-                    self.sample_rate,
-                    self.config.audio_output_device,
-                    stop_event=stop,
-                )
+            play(
+                stop,
+                lambda: self.on_event("speaking", announce) if announce is not None
+                else self.on_event("speaking"),
+                lambda lvl: levels.publish(lvl, "speaking"),
+            )
         finally:
             stop.set()
             self._speaking.clear()
@@ -1176,16 +1268,20 @@ class VoiceSession:
                         continue
 
                     start = time.monotonic()
+                    spoke_it = False
                     try:
-                        reply = await agent.send(self._augment(transcript))
+                        reply = await self._ask_and_say(agent, self._augment(transcript))
+                        spoke_it = True
                     except Exception as exc:  # noqa: BLE001 - never let one bad turn kill the loop
                         reply = "Something went wrong on that one, sir."
                         self.on_event("error", f"brain: {exc}")
                     self.on_event("timing", f"thought in {time.monotonic() - start:.1f}s")
                     if not (reply or "").strip():
                         reply = "I don't have an answer for that, sir."
+                        spoke_it = False
                     self.on_event("reply", reply)
-                    self._speak(reply)
+                    if not spoke_it:
+                        self._speak(reply)
                     # By default require the wake word again for each turn (no auto-listen after a
                     # reply). Set JARVIS_FOLLOWUP=1 to keep the conversational follow-up window.
                     if not self.config.enable_followup:
