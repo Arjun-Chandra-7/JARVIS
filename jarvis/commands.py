@@ -55,6 +55,13 @@ def deterministic_handlers():
         from .message_command import handle as f
         return await f(text, config)
 
+    async def youtube(text, config):
+        # "Search for Pythagoras theorem" with YouTube open, then "play the first video": the
+        # results page is a URL and the results come from yt-dlp, so neither needs the browser
+        # to be under automation. Before video, which answers questions about what is playing.
+        from .youtube_command import handle as f
+        return await f(text, config)
+
     async def video(text, config):
         # "Explain what he just said", "pause and explain this part", "summarise the last two
         # minutes" — answered from the video's own transcript at the current time. Before
@@ -163,6 +170,7 @@ def deterministic_handlers():
     return [
         ("chain", chain),
         ("message", message),
+        ("youtube", youtube),
         ("video", video),
         ("teach", teach),
         ("modes", modes),

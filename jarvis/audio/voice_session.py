@@ -125,7 +125,7 @@ class VoiceSession:
         from . import aec
         node = aec.input_node() if device < 0 else ""
         self.mic = Microphone(self.wake.frame_length, device_index=device, pipewire_node=node)
-        self.aec_active = bool(node)
+        self.aec_active = node == aec.SOURCE
         if aec.mode() == "on" and not node:
             self.on_event("loading", "echo cancellation requested but jarvis-aec is not running "
                                      "— run scripts/install-aec-service.sh")
@@ -667,14 +667,40 @@ class VoiceSession:
         return text
 
     def _transcribe(self, pcm: bytes) -> str:
-        if self.backend == "local":
-            from . import local_stt
+        """Groq's Whisper large-v3-turbo first, the local model if it fails or is not set up.
 
-            return local_stt.transcribe(
-                pcm, self.sample_rate, self.config.whisper_model, self.config.whisper_beam,
-                self.config.stt_language, self.config.stt_vocabulary,
-            )
-        return stt.transcribe(pcm, self.config.deepgram_api_key, self.sample_rate, self.config.stt_model)
+        Measured on the end-to-end run: the local `small` model turned "Ab ye step Hinglish mein
+        samjhao" into "अब ये स्थ तब हिंगलिष में समजाओ" and took 13.7 s on a busy machine, so the
+        request was not understood. Groq heard it as "अब ये step English में समझाओ" in 0.26 s,
+        and every English command in that run in 0.25–0.43 s. The dictation key already used this
+        order; the assistant now does too. ``JARVIS_ASSISTANT_STT`` sets it ("local" alone keeps
+        everything on this machine).
+        """
+        if self.backend != "local":
+            return stt.transcribe(pcm, self.config.deepgram_api_key, self.sample_rate,
+                                  self.config.stt_model)
+        from ..flow import stt as flow_stt
+        from . import local_stt, voice_log
+
+        def local(pcm_, rate, vocabulary, language):
+            return local_stt.transcribe(pcm_, rate, self.config.whisper_model,
+                                        self.config.whisper_beam, self.config.stt_language,
+                                        self.config.stt_vocabulary), ""
+
+        def groq(pcm_, rate, vocabulary, language):
+            # Primed with a line of Roman Hinglish (Hindi words stay Hindi, English stays
+            # English) and the command vocabulary.
+            prompt = f"{flow_stt.ROMAN_HINGLISH_HINT} {self.config.stt_vocabulary or local_stt.DEFAULT_VOCABULARY}"
+            return flow_stt.groq(pcm_, rate, vocabulary=prompt[:800], timeout=6.0)
+
+        order = [n.strip() for n in os.environ.get("JARVIS_ASSISTANT_STT", "groq,local").split(",")
+                 if n.strip() in {"groq", "local"}] or ["local"]
+        heard = flow_stt.transcribe(pcm, self.sample_rate, providers=order,
+                                    table={"groq": groq, "local": local})
+        voice_log.metric("stt_provider", provider=heard.provider or "none",
+                         fallback=bool(heard.failures), ms=heard.seconds * 1000,
+                         lang=heard.language or "")
+        return heard.text
 
     @staticmethod
     def _media_playing() -> bool:
@@ -843,7 +869,7 @@ class VoiceSession:
             # arriving after the talking has stopped — which is what happened when the text was
             # only published once the brain returned: you heard the answer with nothing on
             # screen, and then read it as Jarvis fell silent.
-            if acked and sentence.strip() == acked[0].strip():
+            if acked and sentence.strip() in acked[0]:
                 return
             self.on_event("reply", sentence)
 
@@ -937,8 +963,6 @@ class VoiceSession:
             monitor = threading.Thread(target=self._barge_in_monitor, args=(stop, first_audio),
                                        daemon=True)
             monitor.start()
-        self._speaking.set()
-        speech_control.set_speaking(True)
         # A stop requested before this utterance started must not silence it.
         stop_token = speech_control.token()
         watcher = threading.Thread(
@@ -949,6 +973,11 @@ class VoiceSession:
         started = time.monotonic()
 
         def on_first_audio() -> None:
+            # Speaking from the first sound, not from when the reply was asked for: while the
+            # brain is still thinking nothing is playing, and the wake cooldown, the dictation
+            # pre-roll and the web server's "is he speaking" all mean sound.
+            self._speaking.set()
+            speech_control.set_speaking(True)
             first_audio.set()
             if in_turn and self._conversation.active:
                 self._conversation.speaking()
@@ -1576,9 +1605,9 @@ class VoiceSession:
             ok, message = await asyncio.to_thread(self._media.transport, name)
             voice_log.metric("fast_path", route=f"media.{name}", ok=ok,
                              ms=(time.monotonic() - started) * 1000)
-            if ok or "Nothing is playing" not in message:
-                return message
-            return None            # no local player: the browser handlers may still manage it
+            # Also when nothing is playing: found live, "wait, pause it" with no player went on to
+            # the model, which answered with something about Pythagoras.
+            return message
         return None
 
     async def _turns(self, agent, transcript: str) -> bool:
