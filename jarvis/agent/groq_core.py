@@ -200,6 +200,64 @@ def _is_a_turn_note(message: dict) -> bool:
 HISTORY_STALE_AFTER_S = 4 * 3600
 
 
+# --------------------------------------------------------------- a streamed reply, reassembled
+# The agent loop reads `resp.choices[0].message`, branches on `.tool_calls`, and passes the
+# message back into `self.messages`. A streamed answer arrives as hundreds of fragments instead,
+# so it is put back into that exact shape here — which is what keeps the loop from needing a
+# streaming version of itself.
+
+
+class _StreamedFunction:
+    __slots__ = ("name", "arguments")
+
+    def __init__(self, name: str, arguments: str):
+        self.name = name
+        # The API sends arguments as a JSON string and so does this, unparsed, because that is
+        # what the loop already expects to be handed.
+        self.arguments = arguments
+
+
+class _StreamedCall:
+    __slots__ = ("id", "type", "function")
+
+    def __init__(self, call_id: str, name: str, arguments: str):
+        self.id = call_id
+        self.type = "function"
+        self.function = _StreamedFunction(name, arguments)
+
+
+class _StreamedMessage:
+    __slots__ = ("role", "content", "tool_calls")
+
+    def __init__(self, content: str, calls):
+        self.role = "assistant"
+        # None rather than "" when there is nothing: an empty string beside a tool call is a
+        # different thing to the API than no content at all.
+        self.content = content or None
+        self.tool_calls = calls or None
+
+
+class _StreamedChoice:
+    __slots__ = ("index", "message", "finish_reason")
+
+    def __init__(self, message, finish_reason):
+        self.index = 0
+        self.message = message
+        self.finish_reason = finish_reason
+
+
+class _StreamedResponse:
+    """What `_stream` hands back: indistinguishable from a normal completion to its reader."""
+
+    __slots__ = ("choices",)
+
+    def __init__(self, content: str, calls: dict, finish_reason):
+        ordered = [calls[i] for i in sorted(calls)]
+        built = [_StreamedCall(c["id"] or f"call_{n}", c["name"], c["arguments"])
+                 for n, c in enumerate(ordered) if c["name"]]
+        self.choices = [_StreamedChoice(_StreamedMessage(content, built), finish_reason)]
+
+
 class GroqAgent:
     def __init__(self, config: Config, mode: str = "text",
                  confirm_fn: Optional[ConfirmCallback] = None, on_tool: Optional[ToolCallback] = None) -> None:
@@ -359,6 +417,70 @@ class GroqAgent:
                                           if s["function"]["name"] not in names], said)
         except Exception:  # noqa: BLE001 - routing must never block a turn
             return gate.allowed(self.schemas, said)
+
+    # ----------------------------------------------------------------- streaming the answer
+    # The reply is spoken only once it has been written in full, so the silence before Jarvis
+    # says anything contains the whole generation. Streaming lets the first sentence be spoken
+    # while the rest is still being written.
+    #
+    # The agent loop is not changed to accommodate it. It reads `resp.choices[0].message` and
+    # branches on `.tool_calls`, so a streamed answer is reassembled into exactly that shape and
+    # the loop cannot tell the difference. Anything else would mean two versions of a loop that
+    # already handles tool rounds, rate-limit fallbacks and claim checking.
+    #
+    # Deltas are only forwarded while the answer is still plainly text. The moment a tool call
+    # appears the callback is dropped: a turn that calls a tool has not produced an answer yet,
+    # and speaking its preamble would be speaking something the user should never hear.
+
+    def _stream(self, on_delta):
+        """One completion, streamed, returned in the same shape as `_complete`."""
+        specialist = getattr(self, "_specialist", None)
+        stream = self.client.chat.completions.create(
+            model=(specialist.model if specialist and specialist.model else self.model),
+            messages=self.messages,
+            tools=self._active_schemas(),
+            tool_choice="auto",
+            temperature=(specialist.temperature if specialist is not None
+                         else self.config.temperature),
+            max_tokens=512,
+            stream=True,
+        )
+
+        content: list[str] = []
+        calls: dict[int, dict] = {}
+        speaking = on_delta is not None
+        finish = None
+
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            choice = chunk.choices[0]
+            finish = choice.finish_reason or finish
+            delta = choice.delta
+            if delta is None:
+                continue
+
+            for call in (getattr(delta, "tool_calls", None) or []):
+                # A tool call means this is not the answer. Stop speaking immediately — before
+                # the fragment is even recorded — so nothing already said can be added to.
+                speaking = False
+                slot = calls.setdefault(call.index, {"id": "", "name": "", "arguments": ""})
+                if call.id:
+                    slot["id"] = call.id
+                fn = getattr(call, "function", None)
+                if fn is not None:
+                    if fn.name:
+                        slot["name"] = fn.name
+                    if fn.arguments:
+                        slot["arguments"] += fn.arguments
+
+            piece = getattr(delta, "content", None)
+            if piece:
+                content.append(piece)
+                if speaking:
+                    on_delta(piece)
+
+        return _StreamedResponse("".join(content), calls, finish)
 
     def _complete(self):
         """One completion, under whichever specialist this turn belongs to.
