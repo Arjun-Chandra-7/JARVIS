@@ -25,20 +25,46 @@ from typing import List
 
 
 class Microphone:
-    def __init__(self, frame_length: int, device_index: int = -1) -> None:
+    def __init__(self, frame_length: int, device_index: int = -1, pipewire_node: str = "") -> None:
         import sounddevice as sd  # lazy: only needed in voice mode
 
         self.frame_length = frame_length
+        self.pipewire_node = pipewire_node
         device = None if device_index < 0 else device_index
+        if pipewire_node:
+            device = self._pipewire_device(sd)
         self._device = device
         self.channels = self._native_channels(sd, device)
-        self._stream = sd.InputStream(
-            samplerate=16000,
-            channels=self.channels,
-            dtype="int16",
-            blocksize=frame_length,
-            device=device,
-        )
+        self._stream = self._open(sd)
+
+    @staticmethod
+    def _pipewire_device(sd):
+        """The PortAudio device that is PipeWire itself, which can be pointed at one node."""
+        for index, info in enumerate(sd.query_devices()):
+            if info.get("name") == "pipewire" and info.get("max_input_channels", 0) > 0:
+                return index
+        return None
+
+    def _open(self, sd):
+        """Open the stream — on a named PipeWire node when one was asked for.
+
+        PIPEWIRE_NODE is read by PipeWire's ALSA plugin when the device is opened, so it is set
+        for exactly that moment and removed again: Jarvis's own output streams must keep going to
+        the default sink.
+        """
+        import os
+
+        before = os.environ.get("PIPEWIRE_NODE")
+        if self.pipewire_node:
+            os.environ["PIPEWIRE_NODE"] = self.pipewire_node
+        try:
+            return sd.InputStream(samplerate=16000, channels=self.channels, dtype="int16",
+                                  blocksize=self.frame_length, device=self._device)
+        finally:
+            if before is None:
+                os.environ.pop("PIPEWIRE_NODE", None)
+            else:
+                os.environ["PIPEWIRE_NODE"] = before
 
     @staticmethod
     def _native_channels(sd, device) -> int:
@@ -94,14 +120,15 @@ class Microphone:
         from . import inputs
 
         inputs.refresh_devices()
+        if self.pipewire_node:
+            from . import aec
+
+            # The echo canceller may have gone away (its service stopped): fall back to the
+            # plain microphone rather than open a node that is not there.
+            self.pipewire_node = aec.input_node()
+            self._device = self._pipewire_device(sd) if self.pipewire_node else None
         self.channels = self._native_channels(sd, self._device)
-        self._stream = sd.InputStream(
-            samplerate=16000,
-            channels=self.channels,
-            dtype="int16",
-            blocksize=self.frame_length,
-            device=self._device,
-        )
+        self._stream = self._open(sd)
         self._stream.start()
 
     def delete(self) -> None:

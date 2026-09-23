@@ -94,7 +94,13 @@ def _voice_event(kind: str, text: str = "") -> None:
             print(f"  dictation {state}")
         _push_to_hud(kind, text)
         return
-    line = labels.get(kind, f"  {kind} {text}")
+    # Transcripts, replies and message text are logged as word counts unless the time-limited
+    # diagnostic mode is on (--voice-diagnostics); the overlay still gets them in full.
+    from .audio.voice_log import journal_line
+    logged = journal_line(kind, text)
+    line = {**labels, "heard": f"\nyou (voice)> {logged}", "reply": f"jarvis> {logged}",
+            "phone": f"  📱 {logged}", "timing": f"  ⏱  {logged}",
+            "loading": f"  {logged}"}.get(kind, f"  {kind} {logged}")
     print(_re.sub(r"\+?\d[\d\s-]{5,}\d", lambda m: f"<number …{_re.sub(r'[^0-9]', '', m.group(0))[-4:]}>", line))
     _push_to_hud(kind, text)
 
@@ -645,10 +651,27 @@ def main() -> None:
                         help="one-time: sign in to Instagram so Jarvis can read your DMs")
     parser.add_argument("--sleep", action="store_true", help="soft off: stay running but silent until woken")
     parser.add_argument("--wake", action="store_true", help="undo --sleep")
+    parser.add_argument("--voice-diagnostics", metavar="MINUTES", type=float,
+                        help="log what the voice hears and says (masked) for MINUTES; 0 turns it off")
+    parser.add_argument("--voice-report", action="store_true",
+                        help="voice latency and interruption figures from the safe metrics log")
     args = parser.parse_args()
 
     try:
-        if args.sleep or args.wake:
+        if args.voice_diagnostics is not None:
+            from .audio import voice_log
+            if args.voice_diagnostics <= 0:
+                voice_log.disable_diagnostics()
+                print("Voice diagnostics off: transcripts are logged as word counts.")
+            else:
+                until = voice_log.enable_diagnostics(args.voice_diagnostics)
+                import time as _time
+                print("Voice diagnostics on until", _time.strftime("%H:%M", _time.localtime(until)),
+                      "— numbers, e-mail addresses and tokens stay masked.")
+        elif args.voice_report:
+            from .audio import voice_report
+            print(voice_report.render())
+        elif args.sleep or args.wake:
             from .power import set_asleep
             set_asleep(args.sleep)
             print("Jarvis is now", "asleep." if args.sleep else "awake.")

@@ -202,6 +202,98 @@ async def chat(c: Chat):
     return {"reply": reply}
 
 
+@app.post("/chat/stream")
+async def chat_stream(c: Chat):
+    """/chat, with the reply's text sent as it is written — one JSON object per line.
+
+    {"delta": "..."} while the model writes, then {"reply": "...", "streamed": bool}. The voice
+    process speaks the deltas as sentences complete, so a spoken answer starts after its first
+    sentence instead of after its last.
+
+    Only questions stream. An answer to "open YouTube" or "send it" is spoken once it is final,
+    because the text a model writes about an action is checked afterwards — a claim that nothing
+    backs up is replaced — and saying "done" before that check is exactly what must not happen.
+    """
+    from fastapi.responses import StreamingResponse
+
+    agent = _agent["a"]
+    if agent is None:
+        async def booting():
+            yield json.dumps({"reply": "Brain still booting, sir — one moment.", "streamed": False}) + "\n"
+        return StreamingResponse(booting(), media_type="application/x-ndjson")
+
+    from .agent.gate import wants_something_done
+    from .commands import clean_text
+    from .dedupe import CHAT as dedupe
+    shown = clean_text(c.message) or c.message.strip()[:400]
+    stream_it = not wants_something_done(shown)
+    deltas: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    async def run() -> str:
+        hud_state.log_turn("you", shown)
+        await _emit("heard", shown)
+        async with _lock:
+            again = dedupe.seen(c.message, c.event_id)
+            if again is not None:
+                from . import route_log
+                route_log.record(intent="duplicate", action="skipped")
+                return again
+            try:
+                agent.command_session = c.session_id
+                if stream_it:
+                    agent.on_reply_delta = lambda piece: loop.call_soon_threadsafe(deltas.put_nowait, piece)
+                reply = await agent.send(c.message)
+            except Exception as exc:  # noqa: BLE001
+                reply = f"[error] {exc}"
+            finally:
+                agent.on_reply_delta = None
+            dedupe.done(c.message, reply, c.event_id)
+        hud_state.log_turn("jarvis", reply)
+        await _emit("reply", reply)
+        return reply
+
+    async def gen():
+        task = asyncio.create_task(run())
+        streamed = False
+        try:
+            while True:
+                getter = asyncio.create_task(deltas.get())
+                done, _ = await asyncio.wait({getter, task}, return_when=asyncio.FIRST_COMPLETED)
+                if getter in done:
+                    streamed = True
+                    yield json.dumps({"delta": getter.result()}, ensure_ascii=False) + "\n"
+                    continue
+                getter.cancel()
+                while not deltas.empty():
+                    streamed = True
+                    yield json.dumps({"delta": deltas.get_nowait()}, ensure_ascii=False) + "\n"
+                break
+            yield json.dumps({"reply": task.result(), "streamed": streamed}, ensure_ascii=False) + "\n"
+        finally:
+            # The listener went away (barge-in, cancel): the turn still finishes — an action
+            # already under way is not abandoned half-done — but nothing more is sent.
+            pass
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
+class ConversationEnd(BaseModel):
+    session_id: str = Field(default="voice", max_length=80)
+
+
+@app.post("/conversation/end")
+async def conversation_end(body: ConversationEnd):
+    """The spoken conversation is over: forget what "it" and "the first one" referred to.
+
+    Approvals are deliberately left alone — a message held for a yes survives the goodbye and
+    expires on its own clock.
+    """
+    from . import context
+    context.forget(body.session_id)
+    return {"ok": True}
+
+
 @app.get("/providers")
 async def provider_status():
     """The startup provider check, and which breakers are open now."""

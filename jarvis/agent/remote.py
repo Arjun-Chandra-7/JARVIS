@@ -75,11 +75,42 @@ class RemoteAgent:
     async def __aexit__(self, *exc: Any) -> None:
         return None
 
+    on_reply_delta = None     # set by the voice loop to speak the reply while it is written
+
     async def send(self, user_text: str, event_id: str = "") -> str:
         msg = user_text + (voice_note(user_text) if self.mode == "voice" else "")
         # One id per utterance, so the server acts on it once however many times it arrives.
         event_id = event_id or getattr(self, "event_id", "") or ""
         self.event_id = ""
+        on_delta = self.on_reply_delta
+        if on_delta is not None:
+            try:
+                return await self._send_streaming(msg, event_id, on_delta)
+            except httpx.TimeoutException:
+                return "That one took too long, sir — let me know if you'd like me to try again."
+            except Exception:  # noqa: BLE001 — fall back to the plain call; the event id
+                pass           # makes a repeat of an already-handled request a no-op
+        return await self._send_plain(msg, event_id)
+
+    async def _send_streaming(self, msg: str, event_id: str, on_delta) -> str:
+        import json
+
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=5.0)) as client:
+            async with client.stream("POST", f"{self.base}/chat/stream",
+                                     json={"message": msg, "session_id": self.mode,
+                                           "event_id": event_id}) as r:
+                r.raise_for_status()
+                async for line in r.aiter_lines():
+                    if not line.strip():
+                        continue
+                    item = json.loads(line)
+                    if "delta" in item:
+                        on_delta(item["delta"])
+                    elif "reply" in item:
+                        return item["reply"] or "(no reply)"
+        raise RuntimeError("stream ended without a reply")
+
+    async def _send_plain(self, msg: str, event_id: str) -> str:
         # generous enough for a deep-research turn, but bounded so a hung call can't wedge the
         # voice loop (which can't listen while it's waiting on a reply).
         try:
@@ -91,3 +122,20 @@ class RemoteAgent:
             return "That one took too long, sir — let me know if you'd like me to try again."
         except Exception as exc:  # noqa: BLE001
             return f"[voice can't reach the brain — is --web running? {exc}]"
+
+    async def end_conversation(self) -> None:
+        """The spoken conversation ended with a goodbye: its references are forgotten."""
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                await client.post(f"{self.base}/conversation/end", json={"session_id": self.mode})
+        except Exception:  # noqa: BLE001 — best effort; the context also goes stale by itself
+            pass
+
+    async def cancel_tasks(self) -> str:
+        """"Cancel everything": queued background work, and an honest word on what is running."""
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                data = (await client.post(f"{self.base}/tasks/cancel")).json() or {}
+        except Exception:  # noqa: BLE001
+            return ""
+        return str(data.get("message") or "")

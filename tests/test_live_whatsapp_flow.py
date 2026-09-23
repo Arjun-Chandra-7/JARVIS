@@ -300,10 +300,19 @@ def test_same_words_twice_quickly_is_one_event_but_a_later_repeat_is_not():
     assert d.seen("pause") is None
 
 
-def test_the_journal_never_gets_the_whole_number(capsys, monkeypatch):
+def test_the_journal_never_gets_the_whole_number(capsys, monkeypatch, tmp_path):
     import jarvis.__main__ as main
+    from jarvis.audio import voice_log
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     monkeypatch.setattr(main, "_push_to_hud", lambda *a, **k: None)
     main._voice_event("transcript", LIVE)
     main._voice_event("heard", "message +91 90000 00001")
     out = capsys.readouterr().out
-    assert NUMBER not in out and "90000 00001" not in out and "…0001" in out
+    # By default the journal gets a word count, not the words — the number least of all.
+    assert NUMBER not in out and "90000 00001" not in out and "0001" not in out
+    assert "(4 words)" in out
+    # With diagnostics on, the words are shown and the number is still masked.
+    voice_log.enable_diagnostics(5)
+    main._voice_event("heard", "message +91 90000 00001")
+    out = capsys.readouterr().out
+    assert "message" in out and "90000 00001" not in out and NUMBER not in out

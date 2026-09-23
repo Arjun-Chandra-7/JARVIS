@@ -26,6 +26,36 @@ def _no_real_youtube(monkeypatch):
     youtube._CACHE.clear()
 
 
+_REAL_AUDIO_CHANGES = (
+    ("wpctl", "set-mute"), ("wpctl", "set-volume"), ("wpctl", "set-default"),
+    ("playerctl", "play"), ("playerctl", "pause"), ("playerctl", "play-pause"),
+    ("playerctl", "next"), ("playerctl", "previous"), ("systemctl", "restart"),
+)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_audio_changes(monkeypatch):
+    """No test changes the machine's real microphone, speakers or players.
+
+    Found the hard way: a microphone-recovery test that did not stub the mute check ran the real
+    `wpctl set-mute … 0` and unmuted the owner's microphone, which they had muted. Any such
+    command now fails as if refused; a test that wants to see it happen mocks subprocess itself.
+    """
+    import subprocess
+
+    real_run = subprocess.run
+
+    def guarded(args, *a, **k):
+        words = [str(w) for w in (args if isinstance(args, (list, tuple)) else str(args).split())]
+        for program, verb in _REAL_AUDIO_CHANGES:
+            if words and words[0].endswith(program) and verb in words[1:4]:
+                return subprocess.CompletedProcess(args, 1, stdout="", stderr="refused in tests")
+        return real_run(args, *a, **k)
+
+    monkeypatch.setattr(subprocess, "run", guarded)
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _no_real_models(monkeypatch, tmp_path_factory):
     """No test talks to a model provider, and none writes the real provider-health breaker file.

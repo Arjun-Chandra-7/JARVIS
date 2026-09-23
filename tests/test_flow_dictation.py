@@ -676,6 +676,9 @@ def _fake_session(flow, coord):
                         _gesture=keys.Gesture("hold"), mic=SimpleNamespace(read=lambda: [0] * 512),
                         on_event=lambda k, t="": events.append((k, t)), _mic_lock=threading.Lock(),
                         _dict_busy=threading.Lock(), _preroll=deque(maxlen=8), _spoke_at=0.0)
+    from jarvis.audio.conversation import ConversationSession
+    s._conversation = ConversationSession()
+    s._conversation.dictation_started()                # as the key's on_start does
     s._dictation_event = lambda state, **d: events.append(("dictation", state))
     return s, events, VoiceSession
 
@@ -750,6 +753,9 @@ def test_dictation_gives_the_microphone_back_even_when_it_crashes():
     s, events, VS = _fake_session(Broken(), coord)
     VS._dictation_worker(s)
     assert coord.owner == "wake" and ("dictation", "error") in events
+    # …and the conversation is not left believing a dictation is still running.
+    from jarvis.audio.conversation import State
+    assert s._conversation.state is not State.DICTATION
 
 
 def test_dictation_audio_never_reaches_the_assistant():
