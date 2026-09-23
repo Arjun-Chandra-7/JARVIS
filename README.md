@@ -155,6 +155,24 @@ Groq model, the current default Groq model, then Gemini. The small local model i
 for explanations — it gets steps wrong — and when it is all that is left Jarvis says so and reads
 out the transcript lines instead. `JARVIS_ALLOW_WEAK_TEACHING=1` overrides that.
 
+## Voice writing — dictate into any field
+
+Click into any text field — a browser box, an editor, a chat, a terminal — **tap Right Alt**,
+speak, and tap it again (or hold it while you speak and let go). Clean text appears at the
+cursor: fillers and false starts gone, "at five, actually make that six" written as "at six",
+"comma" and "new paragraph" as punctuation, "first point … second point …" as a list. English,
+Hindi and Hinglish all work, and nothing is translated: in chats Hindi is written the way you
+text (Roman letters), elsewhere in Devanagari. Escape cancels.
+
+Said on its own, "new paragraph", "delete the last sentence", "replace Friday with Monday",
+"make this formal" and "paste last dictation" edit instead of typing. In a terminal the command
+is shown first and inserted only when you press the key again — Enter is never pressed.
+Password, OTP and token fields are refused before anything is transcribed.
+
+Speech goes to Groq Whisper (your existing key), falling back to the local model offline. Audio is
+never written to disk; a 24-hour local history lets you paste or retry the last dictation. Full
+details, settings, measurements and troubleshooting: [docs/DICTATION.md](docs/DICTATION.md).
+
 ## Model providers
 
 At startup (and on `python -m jarvis --check`) each configured provider is asked for its model

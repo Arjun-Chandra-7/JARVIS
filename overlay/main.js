@@ -277,6 +277,39 @@ function toast(msg) {
   if (win && !win.isDestroyed()) win.webContents.send("toast", msg);
 }
 
+// --------------------------------------------------------------------------- dictation capsule
+// A separate, tiny window: it can never take focus (the text field you are dictating into keeps
+// it), ignores the mouse, and is transparent whenever dictation is idle.
+let dictationWin = null;
+function createDictationCapsule() {
+  if (process.env.JARVIS_DICTATION_INDICATOR === "0") return;
+  const area = screen.getPrimaryDisplay().workArea;
+  const width = 600, height = 150;
+  dictationWin = new BrowserWindow({
+    x: Math.round(area.x + (area.width - width) / 2),
+    y: Math.round(area.y + area.height - height - 24),
+    width, height,
+    transparent: true,
+    frame: false,
+    resizable: false,
+    movable: false,
+    focusable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    fullscreenable: false,
+    // White under the alpha, as for the main window: a compositor that refuses transparency
+    // must not paint a black box over the bottom of the screen.
+    backgroundColor: "#00ffffff",
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false },
+  });
+  dictationWin.setIgnoreMouseEvents(true);
+  dictationWin.setAlwaysOnTop(true, "screen-saver");
+  dictationWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  dictationWin.loadFile("dictation.html", { query: { port: PORT } });
+  dictationWin.once("ready-to-show", () => dictationWin.showInactive());
+  dictationWin.on("closed", () => { dictationWin = null; });
+}
+
 // --------------------------------------------------------------------------- window
 function createWindow() {
   const bounds = state.bounds[state.form] ? clampToDisplay(state.bounds[state.form])
@@ -528,6 +561,7 @@ app.whenReady().then(() => {
     ["media", "mediaKeySystem", "display-capture"].includes(permission));
 
   createWindow();
+  createDictationCapsule();
   // A previous run that ended inside the frame can leave the window fullscreen, and Mutter keeps
   // the top bar and dock hidden for as long as one exists. Cleared here, where there is actually
   // a window to clear — the same check placed before createWindow() silently did nothing.

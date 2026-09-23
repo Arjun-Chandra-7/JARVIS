@@ -82,6 +82,18 @@ def _voice_event(kind: str, text: str = "") -> None:
     # stdout is the journal. A spoken phone number ends up in "heard", "partial" and "transcript"
     # lines, so it is masked there; the overlay still shows what was actually heard.
     import re as _re
+    if kind == "dictation":
+        # Dictation events carry the terminal preview; the journal gets the state and nothing
+        # else, and not the ten-a-second microphone levels at all.
+        import json as _json
+        try:
+            state = _json.loads(text).get("state", "")
+        except ValueError:
+            state = ""
+        if state and state != "level":
+            print(f"  dictation {state}")
+        _push_to_hud(kind, text)
+        return
     line = labels.get(kind, f"  {kind} {text}")
     print(_re.sub(r"\+?\d[\d\s-]{5,}\d", lambda m: f"<number …{_re.sub(r'[^0-9]', '', m.group(0))[-4:]}>", line))
     _push_to_hud(kind, text)

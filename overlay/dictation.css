@@ -1,0 +1,108 @@
+/* The dictation capsule. Same tokens as the overlay: paper-white surface, hairline, one accent
+ * spent on state. Readable over light and dark windows because it carries its own surface. */
+
+html, body {
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+  font: 500 13px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100vh;
+  padding-bottom: 6px;
+  box-sizing: border-box;
+}
+
+.capsule {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 14px 8px 12px;
+  border-radius: 999px;
+  background: var(--surface-base);
+  color: var(--text-primary);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.16), 0 1px 2px rgba(15, 23, 42, 0.1);
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+body:not([data-state="idle"]) .capsule {
+  opacity: 1;
+  transform: none;
+}
+
+.mic {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 16px;
+}
+
+.bar {
+  width: 3px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--text-faint);
+  transition: height 90ms linear, background 120ms ease;
+}
+
+body[data-state="listening"] .bar,
+body[data-state="speech"] .bar { background: var(--accent); }
+body[data-state="processing"] .bar,
+body[data-state="inserting"] .bar { background: var(--text-secondary); animation: think 900ms ease-in-out infinite; }
+body[data-state="processing"] .bar:nth-child(2), body[data-state="inserting"] .bar:nth-child(2) { animation-delay: 90ms; }
+body[data-state="processing"] .bar:nth-child(3), body[data-state="inserting"] .bar:nth-child(3) { animation-delay: 180ms; }
+body[data-state="processing"] .bar:nth-child(4), body[data-state="inserting"] .bar:nth-child(4) { animation-delay: 270ms; }
+body[data-state="processing"] .bar:nth-child(5), body[data-state="inserting"] .bar:nth-child(5) { animation-delay: 360ms; }
+body[data-state="inserted"] .bar { background: var(--success); height: 8px; }
+body[data-state="inserted_unverified"] .bar,
+body[data-state="confirm"] .bar,
+body[data-state="preview"] .bar { background: var(--warning); height: 8px; }
+body[data-state="error"] .bar,
+body[data-state="refused"] .bar,
+body[data-state="offline"] .bar { background: #d93025; height: 8px; }
+
+@keyframes think {
+  0%, 100% { height: 4px; }
+  50% { height: 12px; }
+}
+
+.label { white-space: nowrap; max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
+
+.preview {
+  margin-bottom: 8px;
+  max-width: 560px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--surface-base);
+  color: var(--text-primary);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.16);
+  font: 12.5px/1.35 ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  order: -1;
+}
+
+@media (prefers-color-scheme: dark) {
+  .capsule, .preview {
+    background: #1f2227;
+    color: #eef0f4;
+    border-color: rgba(255, 255, 255, 0.1);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .capsule { transition: none; }
+  .bar { transition: none; animation: none !important; }
+}

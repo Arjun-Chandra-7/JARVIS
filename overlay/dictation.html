@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- The dictation indicator: a capsule at the bottom of the screen that never takes focus or
+         clicks. It listens to the backend's event stream for "dictation" events and nothing else. -->
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self'; connect-src http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="dictation.css" />
+    <title>JARVIS dictation</title>
+  </head>
+  <body data-state="idle">
+    <div class="capsule" role="status" aria-live="polite">
+      <span class="mic" aria-hidden="true">
+        <span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span>
+      </span>
+      <span class="label">Listening</span>
+    </div>
+    <div class="preview" hidden></div>
+    <script src="dictation.js"></script>
+  </body>
+</html>

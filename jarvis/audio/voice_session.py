@@ -121,6 +121,32 @@ class VoiceSession:
         self._ptt = None                     # push-to-talk watcher, started in run()
         self._dictating = False              # while true, speech is typed rather than obeyed
         self._ptt_pressed = threading.Event()
+        # System-wide dictation (jarvis/flow): one owner for the microphone, a key that starts
+        # and stops it, and the engine that turns the audio into text in the focused field.
+        from ..flow.mic import COORDINATOR
+        self._coord = COORDINATOR
+        self._flow = None
+        self._gesture = None
+        self._dict_keys = None
+        self._dict_stop = threading.Event()
+        self._dict_cancel = threading.Event()
+        self._dict_key_at = 0.0
+        self._preempted = False
+        self._hud_queue: "queue.Queue" = queue.Queue()
+        from collections import deque
+        # ~300 ms of wake-listening audio, sized by time: the wake frames here are 80 ms, and a
+        # count of 8 kept 640 ms — enough to pull in whatever was playing before the key.
+        self._preroll: "deque" = deque(maxlen=max(1, round(0.3 * self.sample_rate / self.frame_length)))
+        self._spoke_at = 0.0
+        # Whoever reads a frame holds this for that frame; dictation holds it for its whole
+        # capture. So dictation starts at once — while Jarvis is thinking nobody is reading at all
+        # — and the wake listener, the assistant and barge-in simply wait until it is done.
+        self._mic_lock = threading.Lock()
+        self._dict_busy = threading.Lock()
+
+    def _read_frame(self):
+        with self._mic_lock:
+            return self.mic.read()
 
     # --- stages ----------------------------------------------------------
     async def _wait_for_wake_or_event(self):
@@ -128,6 +154,7 @@ class VoiceSession:
 
         Returns ('wake'|'event', payload).
         """
+        self._coord.listen_for_wake()
         while True:
             if self._ptt_pressed.is_set():
                 # The caller emits "wake" for every path, so do not emit it again here — doing so
@@ -136,8 +163,12 @@ class VoiceSession:
                 return ("wake", None)
             if not self._events.empty():
                 return ("event", self._events.get_nowait())
-            frame = await asyncio.to_thread(self.mic.read)  # frees the loop for D-Bus signals
+            frame = await asyncio.to_thread(self._read_frame)  # frees the loop for D-Bus signals
+            # The last quarter second is kept: when the dictation key goes down, the first word
+            # has often already started, and this is where it is.
+            self._preroll.append(frame)
             if self.wake.process(frame):
+                self._preroll.clear()               # the wake phrase never becomes dictation
                 return ("wake", None)
 
     async def _watch_whatsapp(self) -> None:
@@ -318,6 +349,135 @@ class VoiceSession:
             self._recovering = False
 
     def _record_transcript(self, wait_s: float) -> Optional[str]:
+        """An assistant turn's capture. Pressing the dictation key hands the microphone over
+        mid-capture: nothing captured so far becomes a command."""
+        from ..flow.mic import Preempted
+        try:
+            self._coord.assistant_capture()
+            return self._record_transcript_inner(wait_s)
+        except Preempted:
+            self._preempted = True
+            return None
+
+    # --- system-wide dictation --------------------------------------------------------------
+    def _dictation_event(self, state: str, **details) -> None:
+        """Overlay events, sent from a worker so the capture loop never waits on HTTP."""
+        import json as _json
+        self._hud_queue.put(("dictation", _json.dumps({"state": state, **details}, ensure_ascii=False)))
+
+    def _hud_worker(self) -> None:
+        while True:
+            kind, text = self._hud_queue.get()
+            try:
+                self.on_event(kind, text)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _start_dictation_keys(self) -> None:
+        from ..flow import keys as fkeys
+        from ..flow.engine import DictationEngine
+        threading.Thread(target=self._hud_worker, daemon=True).start()
+        self._flow = DictationEngine(emit=self._dictation_event)
+        # Start the focus bridge now: it follows focus changes as they happen, and one that starts
+        # at the key press has missed them (a browser can go on claiming "active" after another
+        # window took over).
+        from ..flow.focus import BRIDGE
+        threading.Thread(target=BRIDGE.request, args=("ping",), daemon=True).start()
+        key, mode, cancel_key = fkeys.configured()
+        if hotkey.resolve_key(key) is None:
+            self.on_event("loading", "dictation key disabled (JARVIS_DICTATION_KEY=none)")
+            return
+        problems = fkeys.conflicts(key, self.config.ptt_key)
+        if problems:
+            self.on_event("loading", "dictation key problem — " + " ".join(problems))
+            if any("push-to-talk" in p or "cancel key" in p for p in problems):
+                return
+
+        def on_start():
+            self._dict_key_at = time.monotonic()
+            self._dict_stop.clear()
+            self._dict_cancel.clear()
+            if self._speaking.is_set():
+                self.stop_speaking()           # Jarvis's own voice must not be transcribed
+            self._coord.request_dictation()    # an assistant capture in progress ends now
+            threading.Thread(target=self._dictation_worker, daemon=True, name="dictation").start()
+
+        def on_cancel():
+            if self._flow is not None and self._flow.pending:
+                self._flow.discard_pending()
+            self._dict_cancel.set()
+            self._coord.cancel_request()
+
+        def on_confirm():
+            threading.Thread(target=self._flow.confirm_pending, daemon=True).start()
+
+        self._gesture = fkeys.Gesture(mode, on_start=on_start, on_stop=self._dict_stop.set,
+                                      on_cancel=on_cancel, on_confirm=on_confirm)
+        self._dict_keys = fkeys.start(key, self._gesture, cancel_key)
+        if self._dict_keys is not None:
+            self.on_event("loading", f"dictation: {key} ({mode}) · cancel: {cancel_key}")
+        else:
+            self.on_event("loading", f"dictation key unavailable — {hotkey.diagnose(key)}")
+
+    def _dictation_worker(self) -> None:
+        """Started by the key, on its own thread: dictation does not wait for the voice loop.
+
+        Found live: a YouTube lecture playing aloud woke the assistant, which spent 4.7 s
+        thinking and then spoke — and a dictation pressed meanwhile waited for all of it, so the
+        words were gone before the microphone was read. Now the key stops Jarvis speaking, takes
+        the microphone (at most one frame's wait) and records straight away; an assistant capture
+        in progress ends at once, and the wake listener waits until the capture is finished.
+        """
+        if self._flow is None or not self._dict_busy.acquire(blocking=False):
+            return                                     # one dictation at a time
+        try:
+            # Let Jarvis's own voice finish stopping, so its tail is not the first thing heard.
+            for _ in range(20):
+                if not self._speaking.is_set():
+                    break
+                time.sleep(0.025)
+            # Audio heard just before the key: included unless it could be Jarvis's own voice.
+            preroll = [] if (self._speaking.is_set() or time.monotonic() - self._spoke_at < 1.0) \
+                else list(self._preroll)
+            self._preroll.clear()
+            if not self._mic_lock.acquire(timeout=2.0):
+                self._dictation_event("error", message="The microphone is busy — try again")
+                if self._gesture is not None:
+                    self._gesture.reset()
+                return
+            try:
+                self._coord.begin_dictation()
+                pcm = self._flow.capture(self.mic.read, self._dict_stop, self._dict_cancel,
+                                         rate=self.sample_rate, key_at=self._dict_key_at, preroll=preroll)
+            finally:
+                self._mic_lock.release()                 # wake listening resumes while text is made
+            self._coord.processing()
+            result = self._flow.finish(pcm, rate=self.sample_rate)
+            del pcm
+            if result.get("status") in {"preview", "confirm"} and self._gesture is not None:
+                self._gesture.await_confirmation()
+                gesture, flow = self._gesture, self._flow
+
+                def expire():
+                    if gesture.state == "confirming":
+                        gesture.reset()
+                        flow.discard_pending()
+                threading.Timer(16.0, expire).start()
+            elif self._gesture is not None and self._gesture.state in {"held", "hands_free"}:
+                self._gesture.reset()
+            m = self._flow.metrics
+            # Timings only: what was said never reaches the journal.
+            self.on_event("timing", "dictation " + " ".join(f"{k}={v}" for k, v in m.items())
+                          + f" status={result.get('status')}")
+        except Exception as exc:  # noqa: BLE001 — a broken dictation must still give the mic back
+            self._dictation_event("error", message=f"Dictation failed ({type(exc).__name__})")
+            if self._gesture is not None:
+                self._gesture.reset()
+        finally:
+            self._coord.end_dictation()
+            self._dict_busy.release()
+
+    def _record_transcript_inner(self, wait_s: float) -> Optional[str]:
         capture_start = time.monotonic()
         speech_end = [0.0]
 
@@ -342,7 +502,7 @@ class VoiceSession:
                 levels.publish(level, "listening", probability)
 
             pcm = endpoint.record_utterance(
-                self.mic.read,
+                self._coord.guard(self._read_frame),
                 sample_rate=self.sample_rate,
                 frame_length=self.frame_length,
                 silence_ms=self.config.endpoint_hangover_ms,
@@ -359,7 +519,7 @@ class VoiceSession:
                 partial.cancel()
         else:
             pcm = vad.record_utterance(
-                self.mic.read,
+                self._coord.guard(self._read_frame),
                 sample_rate=self.sample_rate,
                 frame_length=self.frame_length,
                 threshold=self.threshold,
@@ -395,9 +555,9 @@ class VoiceSession:
         self.on_event("timing",
                       f"heard {duration:.1f}s clip, endpoint+capture {speech_end[0]-capture_start:.1f}s, "
                       f"transcribed in {stt_s:.2f}s "
-                      f"-> {'\"'+text+'\"' if text else 'EMPTY (STT found no words)'}")
+                      f"-> {('(dictated text)' if self._dictating else '\"'+text+'\"') if text else 'EMPTY (STT found no words)'}")
         if text:
-            self.on_event("transcript", text)   # committed transcript replaces any partial
+            self.on_event("transcript", "(dictated text)" if self._dictating else text)   # committed transcript replaces any partial
         return text
 
     def _transcribe(self, pcm: bytes) -> str:
@@ -418,7 +578,7 @@ class VoiceSession:
         t0 = time.monotonic()
         while not stop.is_set() and time.monotonic() - t0 < 0.6:
             try:
-                frame = self.mic.read()
+                frame = self._read_frame()
             except Exception:  # noqa: BLE001
                 return
             echo_samples.append(vad.rms(frame))
@@ -431,7 +591,7 @@ class VoiceSession:
         needed, run = 8, 0  # ~0.6s of sustained speech above the echo before cutting
         while not stop.is_set():
             try:
-                frame = self.mic.read()
+                frame = self._read_frame()
             except Exception:  # noqa: BLE001
                 return
             if vad.rms(frame) >= trigger:
@@ -644,6 +804,7 @@ class VoiceSession:
         finally:
             stop.set()
             self._speaking.clear()
+            self._spoke_at = time.monotonic()      # its echo must not be dictation pre-roll
             speech_control.set_speaking(False)
             levels.publish(0.0, "")     # idle: stop the HUD animating a level nothing is producing
             if monitor is not None:
@@ -681,7 +842,7 @@ class VoiceSession:
         """
         try:
             for _ in range(max(0, frames)):
-                self.mic.read()
+                self._read_frame()
         except Exception:  # noqa: BLE001 - a flush failure must not break the turn
             pass
         if self._endpointer is not None:
@@ -1133,7 +1294,7 @@ class VoiceSession:
                 local_tts.warmup(self.config.piper_model)
                 if self.config.live_partials and self._endpointer is not None:
                     self._partials = local_stt.PartialTranscriber(
-                        on_text=lambda t: self.on_event("partial", t),
+                        on_text=lambda t: self.on_event("partial", "…" if self._dictating else t),
                         sample_rate=self.sample_rate,
                         model_name=self.config.partial_model,
                         vocabulary=self.config.stt_vocabulary,
@@ -1150,6 +1311,11 @@ class VoiceSession:
                 self.on_event("loading", f"push-to-talk: {self.config.ptt_key}")
             elif hotkey.resolve_key(self.config.ptt_key) is not None:
                 self.on_event("loading", f"push-to-talk unavailable — {hotkey.diagnose(self.config.ptt_key)}")
+
+            try:
+                self._start_dictation_keys()
+            except Exception as exc:  # noqa: BLE001 — dictation missing must not stop the assistant
+                self.on_event("loading", f"dictation unavailable ({type(exc).__name__})")
 
             phrase = "Hey Jarvis" if self.backend == "local" else self.config.wake_keyword
             hint = f"wake word: '{phrase}'"
@@ -1169,6 +1335,11 @@ class VoiceSession:
                 # command spoken straight afterwards is not clipped.
                 self._flush_mic(frames=3)
                 transcript = self._record_transcript(wait_s=POST_WAKE_WAIT_S)
+                if not transcript and self._preempted:
+                    # The dictation key took the microphone: no apology, straight to dictation.
+                    self._preempted = False
+                    self.on_event("sleep")
+                    continue
                 if not transcript:
                     # Woke but captured nothing intelligible → say so instead of going silent, so it
                     # never looks "stuck". Usually a mic/VAD/threshold issue (see the timing log).
@@ -1181,7 +1352,7 @@ class VoiceSession:
                     self.on_event("sleep")
                     continue
                 while transcript:
-                    self.on_event("heard", transcript)
+                    self.on_event("heard", "(dictated text)" if self._dictating else transcript)
                     t_lower = transcript.lower().strip()
 
                     # --- dictation: every word is typed, nothing is obeyed ---
@@ -1209,10 +1380,16 @@ class VoiceSession:
                             transcript = self._record_transcript(
                                 wait_s=max(12, self.config.follow_up_s))
                             continue
-                        typed = _dict.type_out(transcript)
+                        # The same engine as the dictation key: cleanup, the field's profile,
+                        # verified insertion, and history — so Hindi works (ydotool could not
+                        # type it) and the words never go into the reply log.
+                        if self._flow is not None:
+                            done = await asyncio.to_thread(self._flow.handle_text, transcript)
+                            typed = str(done.get("status", "")).startswith(("inserted", "pasted", "typed", "preview"))
+                        else:
+                            typed = _dict.type_out(transcript)
                         self.on_event("reply" if typed else "error",
-                                      _dict.as_typed(transcript) if typed
-                                      else "I couldn't type that — nothing has focus.")
+                                      "Typed." if typed else "I couldn't type that — nothing has focus.")
                         # Straight back to listening: dictation is continuous, and a wake word
                         # between every sentence would make it useless.
                         transcript = self._record_transcript(wait_s=max(12, self.config.follow_up_s))

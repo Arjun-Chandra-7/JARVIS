@@ -5,6 +5,57 @@ piece was actually taken, and what is next.
 
 ---
 
+## Third pass (2026-09-23): system-wide voice writing (dictation)
+
+`jarvis/flow/` — Right Alt (tap = hands-free, hold = push-to-talk, Escape cancels) dictates into
+whatever field has the cursor. Details: `docs/DICTATION.md`.
+
+**Reused:** the evdev key reader (extended to key-up and a cancel key), the voice process's
+single microphone stream, the Silero-era capture loop's frame format, AT-SPI (a new persistent
+focus bridge, `scripts/atspi_focus_bridge.py`), ydotool, Marionette for Zen read-back, the
+overlay's event stream, the approvals-style "propose then confirm" for dictionary changes.
+**Replaced:** the old spoken dictation's typing (`ydotool type`, which cannot type Devanagari and
+logged every dictated sentence as a reply) — "Jarvis, dictate" now goes through the new engine,
+and its transcripts are logged as "(dictated text)". **Added:** microphone coordinator,
+cleanup, command grammar, profiles, dictionary, verified insertion, history, the capsule.
+
+**Verified live on this machine** (real key through ydotool → evdev, real microphone hearing
+speech from the speakers, the real voice process): tap-to-dictate and hold-to-dictate inserted the
+exact sentences into GNOME Text Editor; Escape inserted nothing. Key → recording 52–158 ms,
+release → transcript 0.24–0.37 s, insertion 45–57 ms. Through the engine with real STT and real
+fields: GNOME Text Editor (English list, Devanagari), Zen textarea / contenteditable "WhatsApp"
+compose / search box (DOM read back and matched exactly; Hindi speech came out as Roman
+Hinglish in the chat box), password field refused with nothing transcribed, Ptyxis terminal
+previewed then pasted with no Enter. Clipboard restored every time.
+
+**Measured and fixed along the way:**
+* The local fallback turned Hindi into English ("Today I want to learn about science") or
+  nothing: `local_stt.transcribe` always primes with an English command vocabulary and drops
+  low-confidence segments. Dictation has its own local path (detect language, English prompt only
+  for English): Hindi CER 100% → ~24%, Devanagari kept. `base` writes Hindi in Urdu script;
+  `small` is the default. `medium` fits only on the CPU here (Ollama holds the GPU): ~100 s/clip.
+* Groq Whisper primed with one line of Roman Hinglish writes Hindi speech in Roman letters with
+  English words as English ("Aaj electricity ka chapter revise karna hai"); unprimed it spells
+  English words in Devanagari. Chats/search get Roman, everything else Devanagari (configurable).
+* Firefox answers "ok" to an accessible insert into a contenteditable and changes nothing; its
+  accessible text also never updates after a paste. Both handled (re-check, then paste; DOM read).
+* GTK 4 text views and the terminal report length but read back ""; exact growth is the evidence.
+* A browser keeps reporting its window "active" after another took focus; the focus bridge now
+  follows focus and window-activate events from the moment the voice service starts.
+* A lecture playing aloud falsely woke the assistant; while it thought (4.7 s) and spoke, a
+  dictation key press waited behind it and the words were lost. Dictation now runs on its own
+  worker started by the key: it cuts Jarvis's speech, takes the microphone lock (every loop
+  reader holds it per frame) and records at once. Live, with that lecture still playing:
+  key → recording 81–93 ms, release → transcript 0.25–0.26 s, English exact, Hindi near-exact,
+  Escape kept nothing. (That run used JARVIS_DICTATION_DRY_RUN=1 — you had a chat focused.)
+
+**Not verified:** VS Code (a separate instance never took focus while you were using Zen; the
+code profile is covered by tests only), and a real WhatsApp compose box (a local look-alike page
+was used, deliberately). Hinglish accuracy on synthetic speech is not meaningful — the Hindi TTS
+voice mangles English words — so it needs your own voice to judge.
+
+---
+
 ## Second pass (2026-09-23): bridge live, one approval system, semantic screen, YouTube
 
 Suite: **1909 passing**.
