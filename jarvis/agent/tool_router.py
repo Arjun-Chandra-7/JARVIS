@@ -51,8 +51,31 @@ ALWAYS = (
 # router honest without needing a bigger embedding model.
 ALIASES: dict[str, str] = {
     "recall": "what do you know about me, remember, memory, my notes, past decisions, who am i",
+    # --- Added after measuring which tools the router never even shortlisted. Each of these
+    # describes itself in two or three words, and two or three words share no vocabulary with a
+    # spoken sentence: "generate image" and "make me a picture of a samurai" have not one word
+    # in common. What belongs here is how a thing is actually asked for — the alias is the only
+    # place that knowledge can live, because the description has to stay short for the model
+    # that reads it.
+    "generate_image": "make me a picture, draw me something, create an image, a wallpaper, "
+                      "an illustration, a painting, a drawing, generate art, picture of",
+    "check_coding_tasks": "is claude done, has codex finished, how is the agent getting on, "
+                          "is it still working, coding job status, what is the agent doing, "
+                          "did the build finish yet",
+    "who_is_around": "is anyone else here, who else is in the room, am i alone, "
+                     "is somebody with me, anyone nearby, who is present",
+    "conversation_search": "what did i say about, what did we decide, did i mention, "
+                           "earlier you told me, last week we talked about, find in our chat, "
+                           "what was said before",
+    "whatsapp_inbox": "what did someone say, any messages from, who has messaged me, "
+                      "unread whatsapp, my texts, did anyone reply, messages waiting",
+    "google_calendar_create": "schedule a meeting, book a slot, put it in my calendar, "
+                              "set up an appointment, add an event, pencil in, "
+                              "make time on friday, block out an hour",
     "system_stats": "battery level, cpu usage, memory, temperature, disk space, how is the machine",
-    "google_agenda": "calendar, schedule today, what's on today, next meeting, appointments",
+    "google_agenda": "calendar, schedule today, what's on today, next meeting, appointments, "
+                     "do i have anything on, what am i doing tomorrow, is my morning free, "
+                     "what does my day look like, anything this afternoon",
     "catch_up": "what did i miss, summarise my messages and mail, brief me, unread",
     "capture_screen": "look at my screen, what's on screen, screenshot, read this error, "
                       "observe a desktop app or game before and after acting, see the basket",
@@ -107,7 +130,8 @@ ALIASES: dict[str, str] = {
     # Arjun is also a contact name and this was the only offered tool that looks a person up.
     "find_contact": "look up someone's phone number before messaging them, whatsapp contact "
                     "details, which number do I have for this person",
-    "message_person": "tell someone, message them about, let them know",
+    "message_person": "tell someone, message them about, let them know, text them, drop them a line, "
+                      "send a message to, whatsapp them, say to, write to",
     "web_search": "search the web, look up, find online, what is",
     "deep_research": "research thoroughly, deep dive, detailed report on",
 }

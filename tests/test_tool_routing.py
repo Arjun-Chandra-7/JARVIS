@@ -76,10 +76,16 @@ def test_the_right_tool_is_usually_in_the_shortlist(schemas, capsys):
         for said, expected in misses[:12]:
             print(f"    miss: {said!r} -> wanted {expected}")
 
-    # Measured at 87.1% (61/70) the day this was written, on the lexical path. The floor sits
-    # just under that: a ratchet, not an aspiration. If a change improves it, raise the floor; if
-    # a change drops it below, this is what says so.
-    assert recall >= 0.80, f"routing recall fell to {recall:.1%}; misses: {misses[:10]}"
+    # 87.1% (61/70) when this was written, 87.7% (64/73) as the corpus grew, and 100% (73/73)
+    # once the tools that had never been shortlisted were given the words people ask for them
+    # with. A ratchet, not an aspiration: raise it when a change improves it, and let it be what
+    # says so when a change drops it.
+    #
+    # The floor is under a hundred on purpose. Perfect recall on the corpus that motivated the
+    # aliases is a weak claim; what makes it a real one is that seventeen phrasings written
+    # fresh, sharing no wording with the corpus, also all landed. A future tool without aliases
+    # should show up as a fall to be looked at, not as a failure to be silenced.
+    assert recall >= 0.95, f"routing recall fell to {recall:.1%}; misses: {misses[:10]}"
 
 
 def test_a_question_does_not_put_a_write_tool_first(schemas):
@@ -111,3 +117,43 @@ def test_the_unmistakable_ones_rank_first(schemas, said, expected):
     """These have exactly one right answer and no near neighbour. If any of them stops ranking
     first, something is wrong with scoring rather than with the corpus."""
     assert _shortlist(schemas, said)[0] == expected
+
+
+# --------------------------------------------------------------- does it generalise?
+# Written fresh, sharing no wording with the corpus above. The aliases were added after seeing
+# which corpus phrases missed, so perfect recall there proves little on its own; this is the
+# check that what was added describes how people talk rather than what the corpus happens to say.
+HELD_OUT = [
+    ("cook me up an illustration of a lighthouse at dusk", "generate_image"),
+    ("i want a painting of my dog in armour", "generate_image"),
+    ("render something abstract for the background", "generate_image"),
+    ("has the agent finished that refactor", "check_coding_tasks"),
+    ("what's codex up to right now", "check_coding_tasks"),
+    ("am i on my own in here", "who_is_around"),
+    ("is there somebody behind me", "who_is_around"),
+    ("what did we decide about the pricing", "conversation_search"),
+    ("did i ever mention the deadline to you", "conversation_search"),
+    ("any messages from priya", "whatsapp_inbox"),
+    ("has anyone replied yet", "whatsapp_inbox"),
+    ("book me a slot with the dentist on tuesday", "google_calendar_create"),
+    ("put a call with the team in for monday", "google_calendar_create"),
+    ("what does my day look like", "google_agenda"),
+    ("is my afternoon free", "google_agenda"),
+    ("drop dad a line saying i'll be late", "message_person"),
+    ("whatsapp priya that the meeting moved", "message_person"),
+]
+
+
+def test_the_aliases_describe_speech_not_the_corpus(schemas, capsys):
+    """All seventeen landed when this was written. The floor is lower than that: these are
+    harder than the corpus by construction, and a tool added later without aliases should read
+    as a number worth looking at rather than a broken build."""
+    misses = [(said, want) for said, want in HELD_OUT
+              if want not in _shortlist(schemas, said)]
+    recall = 1 - len(misses) / len(HELD_OUT)
+    with capsys.disabled():
+        print(f"  held-out recall@{KEEP}: {recall:.1%} "
+              f"({len(HELD_OUT) - len(misses)}/{len(HELD_OUT)})")
+        for said, want in misses:
+            print(f"    miss: {said!r} -> wanted {want}")
+    assert recall >= 0.85, f"held-out recall fell to {recall:.1%}; misses: {misses}"
