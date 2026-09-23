@@ -21,7 +21,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterable, Iterator, Optional
 
 _voice = None
 _voice_path: Optional[str] = None
@@ -197,6 +197,107 @@ def synth_stream(
             yield _synth_chunk_cli(chunk, model_path)
 
 
+# --------------------------------------------------------------- speaking while it is written
+# A reply is spoken only once the model has finished writing it, so the wait before Jarvis says
+# anything includes the whole generation. For a three-sentence answer that is most of the wait,
+# and none of it is visible — there is nothing on screen to explain the pause.
+#
+# The model emits fragments, not sentences: "Your first", " meeting is at", " ten." What follows
+# turns that back into sentences and hands each one over the moment it is complete, so speech
+# starts after the first sentence is written rather than after the last.
+
+# Cut the opening on a clause as well, for the same reason kokoro_tts does: the first thing said
+# should be short, because nothing can be heard until it is synthesised.
+_CLAUSE_BREAK = re.compile(r",\s")
+_FIRST_PIECE_CHARS = 90
+
+# A full stop that is not the end of a sentence. Speaking "Dr" and then "Smith is waiting" as two
+# utterances puts a breath in the middle of a name.
+_NOT_AN_ENDING = re.compile(
+    r"(?:\b(?:mr|mrs|ms|dr|prof|sr|jr|st|vs|etc|e\.g|i\.e|approx|fig|no)\.|"
+    r"\b[A-Za-z]\.)\s*$", re.IGNORECASE)
+
+_ENDS_A_SENTENCE = re.compile(r"[.!?]['\")\]]?\s")
+
+
+def sentences_as_they_arrive(deltas: Iterable[str]) -> Iterator[str]:
+    """Whole sentences out of a stream of fragments, each yielded as soon as it is complete.
+
+    Nothing is held back waiting for more: the point is to speak early. The tail left over when
+    the stream ends is yielded too, finished or not, because a model that stops mid-sentence
+    still said something.
+    """
+    buffer = ""
+    first = True
+    for delta in deltas:
+        if not delta:
+            continue
+        buffer += delta
+        while True:
+            # The opening is allowed to break on a comma, once, and only while it is long enough
+            # that waiting for the full stop would be the slower thing.
+            if first and len(buffer) >= _FIRST_PIECE_CHARS:
+                clause = _CLAUSE_BREAK.search(buffer, 0, _FIRST_PIECE_CHARS + 40)
+                ending = _ENDS_A_SENTENCE.search(buffer)
+                if clause and (ending is None or clause.end() < ending.end()):
+                    piece, buffer = buffer[:clause.start() + 1], buffer[clause.end():]
+                    first = False
+                    if piece.strip():
+                        yield piece.strip()
+                    continue
+
+            match = _ENDS_A_SENTENCE.search(buffer)
+            if not match:
+                break
+            candidate = buffer[:match.end()]
+            if _NOT_AN_ENDING.search(candidate):
+                # An abbreviation, not an ending. Look past it for the real one rather than
+                # cutting a name in half.
+                later = _ENDS_A_SENTENCE.search(buffer, match.end())
+                if not later:
+                    break
+                candidate = buffer[:later.end()]
+                match = later
+            buffer = buffer[match.end():]
+            first = False
+            if candidate.strip():
+                yield candidate.strip()
+
+    if buffer.strip():
+        yield buffer.strip()
+
+
+def speak_as_it_arrives(
+    deltas: Iterable[str],
+    model_path: str,
+    output_device: int = -1,
+    stop_event: Optional[threading.Event] = None,
+    on_first_audio: Optional[callable] = None,
+    on_level: Optional[callable] = None,
+) -> str:
+    """Speak a reply while it is still being written. Returns everything that was said.
+
+    The same player as `speak`; only the source differs. The text is returned because the caller
+    still needs the finished reply — to show it, to log it, to remember it — and it would
+    otherwise have been consumed by the speaking.
+    """
+    said: list[str] = []
+
+    def pieces() -> Iterator[str]:
+        for sentence in sentences_as_they_arrive(deltas):
+            if stop_event is not None and stop_event.is_set():
+                return
+            said.append(sentence)
+            yield sentence
+
+    def audio() -> Iterator[tuple[bytes, int]]:
+        for sentence in pieces():
+            yield from synth_stream(sentence, model_path, stop_event)
+
+    _play(audio(), output_device, stop_event, on_first_audio, on_level)
+    return " ".join(said)
+
+
 def _peak(pcm: bytes) -> float:
     """Loudest sample in a block, 0..1 — what the HUD's speaking animation follows."""
     if not pcm:
@@ -227,14 +328,30 @@ def speak(
     text = (text or "").strip()
     if not text:
         return
+    _play(synth_stream(text, model_path, stop_event), output_device, stop_event,
+          on_first_audio, on_level)
 
+
+def _play(
+    audio: Iterator[tuple[bytes, int]],
+    output_device: int = -1,
+    stop_event: Optional[threading.Event] = None,
+    on_first_audio: Optional[callable] = None,
+    on_level: Optional[callable] = None,
+) -> None:
+    """Play (pcm, rate) pairs as they are produced.
+
+    Split out of `speak` so that speaking a finished reply and speaking one still being written
+    share a player rather than having two of them drift apart. A worker synthesises ahead while
+    this thread plays, so the gap between sentences is covered by audio already queued.
+    """
     import sounddevice as sd
 
     pending: "queue.Queue[Optional[tuple[bytes, int]]]" = queue.Queue(maxsize=2)
 
     def produce() -> None:
         try:
-            for item in synth_stream(text, model_path, stop_event):
+            for item in audio:
                 if stop_event is not None and stop_event.is_set():
                     break
                 pending.put(item)
