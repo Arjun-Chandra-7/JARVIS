@@ -570,7 +570,23 @@ class VoiceSession:
             )
         return stt.transcribe(pcm, self.config.deepgram_api_key, self.sample_rate, self.config.stt_model)
 
+    @staticmethod
+    def _media_playing() -> bool:
+        """Is a video or song playing aloud? (MPRIS: browsers, Spotify, players.)"""
+        import subprocess
+        try:
+            out = subprocess.run(["playerctl", "-a", "status"], capture_output=True, text=True, timeout=1).stdout
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return "Playing" in out
+
     def _barge_in_monitor(self, stop: threading.Event) -> None:
+        # Found live: long answers stopped halfway while a lecture played aloud — its sound is
+        # louder than Jarvis's own echo, so it read as the person talking over him. With media
+        # playing there is no telling the two apart without echo cancellation, so barge-in stands
+        # down (the wake word, push-to-talk and the dictation key still stop him).
+        if self._media_playing():
+            return
         # No hardware echo-cancellation, so his own speaker leaks into the mic. Sample that echo
         # level for the first ~0.6s of playback, then set the interrupt bar ABOVE it — so only the
         # user's voice (louder than the echo) cuts him off, not his own speech.
@@ -588,7 +604,9 @@ class VoiceSession:
             echo = echo_samples[int(len(echo_samples) * 0.75)]  # 75th-pct echo level
         trigger = max(self.threshold * 2.5, echo * 1.9)
 
-        needed, run = 8, 0  # ~0.6s of sustained speech above the echo before cutting
+        # ~1 s of sustained sound above the echo (frames are 80 ms here): 0.6 s let a laugh or a
+        # door cut off a long answer.
+        needed, run = max(8, round(1.0 * self.sample_rate / self.frame_length)), 0
         while not stop.is_set():
             try:
                 frame = self._read_frame()
