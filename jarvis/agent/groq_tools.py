@@ -781,19 +781,22 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         res = await browser.go_back()
         return res.get("message") or res.get("error", "Could not go back.")
 
+    from ..integrations import web_browser as _wb
+    _browser_name = _wb._spoken(_wb.preferred()) or "the browser"
+
     @tool("browser_enable_control",
-          "Restart Opera GX so Jarvis can click inside pages. Closes the current tabs — only do "
-          "this when the user has agreed.", {})
+          f"Restart {_browser_name} so Jarvis can click inside pages. Closes the current tabs — "
+          "only do this when the user has agreed.", {})
     async def browser_enable_control(a):
         from ..integrations import browser
         if browser.control_ready():
-            return "Opera GX is already under control."
-        return await _gate("browser", "restart Opera GX, which closes your current tabs",
-                           {"action": "restart browser", "app": "Opera GX"},
+            return f"{_browser_name} is already under control."
+        return await _gate("browser", f"restart {_browser_name}, which closes your current tabs",
+                           {"action": "restart browser", "app": _browser_name},
                            lambda: browser.ensure(allow_restart=True)["message"])
 
     @tool("open_app",
-          "Open an installed application by the name you would say out loud — 'Opera GX', "
+          "Open an installed application by the name you would say out loud — 'Zen', "
           "'VS Code', 'Spotify', 'Settings'. For websites use browser_open instead.",
           {"name": {"type": "string"}}, ["name"])
     async def open_app(a):
@@ -825,7 +828,7 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     # same job, the blunt one wins often enough to matter, and because it takes a raw URL the model
     # invents plausible-looking ones (observed: a fabricated netflix.com/title/... link). browser_open
     # accepts URLs too, so nothing is lost.
-    @tool("open_url", "Open a URL in the browser (Opera GX).", {"url": {"type": "string"}}, ["url"])
+    @tool("open_url", f"Open a URL in the browser ({_browser_name}).", {"url": {"type": "string"}}, ["url"])
     async def open_url(a):
         from ..integrations import apps
         opened = apps.open_url(a.get("url", ""))

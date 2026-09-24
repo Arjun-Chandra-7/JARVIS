@@ -62,8 +62,8 @@ async def run(subject: str, config=None) -> str:
     from .vision import reference, strokes
 
     if not browser.control_ready():
-        return ("I can only draw in a browser I can control — say “restart Opera with control” "
-                "and open a whiteboard first.")
+        return ("I can only draw in a browser I can control — say “restart the browser with "
+                "control” and open a whiteboard first.")
 
     box = await browser.canvas_box()
     if not box:
