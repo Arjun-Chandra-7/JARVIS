@@ -236,6 +236,22 @@ def _apply_pronunciations(t: str, pairs: Iterable[tuple[str, str]]) -> str:
     return t
 
 
+# ------------------------------------------------------------------ internals are never said
+# A tool's name, or a call written out, is the model talking to itself. Heard in the history:
+# "Please clarify or use whatsapp_send to reply." Sentences like that are dropped, not read out.
+_INTERNALS = re.compile(r"<\s*/?\s*function\b|\bfunction=|\b[a-z]{2,}(?:_[a-z]{2,})+\b|\btool[_\s]call\b|\bsystem\s+prompt\b")
+
+
+def leaks_internals(sentence: str) -> bool:
+    return bool(_INTERNALS.search(sentence or ""))
+
+
+def without_internals(text: str) -> str:
+    """The reply minus any sentence that exposes a tool name or a call."""
+    parts = re.split(r"(?<=[.!?।])\s+", (text or "").strip())
+    return " ".join(p for p in parts if p and not leaks_internals(p)).strip()
+
+
 # ------------------------------------------------------------------ the whole thing
 def normalize(text: str, *, pronunciations: Optional[Iterable[tuple[str, str]]] = None,
               address: Optional[str] = None) -> str:

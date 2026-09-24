@@ -171,6 +171,16 @@ push-to-talk or the dictation key to stop him.
 diagram" from anywhere: Jarvis draws on a transparent, click-through layer over the desktop while
 he speaks, each picture appearing as its words are heard.
 
+* **Any subject.** "Explain the water cycle with a diagram", "photosynthesis ko diagram se
+  samjhao", "draw a diagram of the OSI model", "पाचन तंत्र चित्र बनाकर समझाओ". The strong model
+  writes the lesson as data — parts, links, an optional formula, and what to show on each step —
+  and code checks it and draws it as a flow, cycle, tree, stack, timeline or comparison. It says
+  "Let me draw that out" at once, since writing takes a few seconds. "Explain the X again"
+  replays that part; any other question about it is answered with the diagram as context. If no
+  model is reachable, or the reply doesn't make sense, it says so and draws nothing.
+* **Whatever is on screen.** "Explain this visually" over a video on any subject draws a lesson
+  from the captions around that moment (without captions, it says the lesson is general, not the
+  teacher's words); over a page or an app, from what you've selected or what is in view.
 * **Pythagoras, from the video.** He pauses the video (and checks it stopped), reads the title,
   the time and the captions around it, and says which of those he is going by. If the triangle is
   on screen and clear, he traces it; otherwise he draws a clean one beside it and says so. No

@@ -65,21 +65,52 @@ def topic_of(text: str) -> str:
     return ""
 
 
+_LANG_TAG = (r"(?:in\s+)?(?:pure\s+|shuddh\s+)?(?:english|hindi|hinglish)(?:\s+(?:mein|me|main))?|"
+             r"(?:शुद्ध\s+)?(?:हिंदी|हिन्दी|अंग्रेज़ी|अंग्रेजी|english)\s*(?:में|मे)?")
+_FILLER = (r"can|could|would|you|please|me|to\s+me|for\s+me|us|how|what|the\s+idea\s+of|about|and|with|using|"
+           r"a|an|the|of|it|ko|ka|ki|ke|को|का|की|के|में|मे|se|से|karke|kar\s*ke|करके|kar\s+do|करो|do|dijiye|and\s+explain|"
+           r"works?|happens?|kaise|कैसे|kaam\s+karta\s+hai|काम\s+करता\s+है|hota\s+hai|होता\s+है|hai|है")
+_DEICTIC = re.compile(rf"(?ix)^(?:{_THIS}|इसे|इसको|इसका|यह|ये|यहाँ|(?:this|the)\s+(?:step|part|thing|topic|concept|screen|video|page|slide|chapter|diagram|question|problem))$")
+_VISUAL_RX = re.compile(rf"(?i)(?:{_VISUAL}|(?:a\s+)?(?:flow\s*chart|flowchart|mind\s*map|picture|figure))")
+_EXPLAIN_RX = re.compile(rf"(?i)(?:\b(?:{_EXPLAIN})\b|समझा\w*|सिखा\w*|बताओ|दिखाओ|explain\s+(?:karo|kijiye)|\bvisuali[sz]e\b|"
+                         r"\bdiagram\s+of\b|\bdraw\s+(?:out\s+)?(?:a\s+)?(?:diagram|flow\s*chart|flowchart|mind\s*map)\b)")
+
+
+def subject_of(text: str) -> str:
+    """What the lesson is about: the request with the asking, the drawing and the language removed.
+    "Explain the water cycle with a diagram" → "water cycle"; "इसे चित्र बनाकर समझाओ" → "इसे"."""
+    t = _clean(text)
+    t = re.sub(r"(?i)\bpause\s+(?:and|karke|kar\s+ke)\b|\bpause\b|रोककर|रोक\s+कर", " ", t)
+    t = _VISUAL_RX.sub(" ", t)
+    t = _EXPLAIN_RX.sub(" ", t)
+    t = re.sub(rf"(?i)(?:{_LANG_TAG})", " ", t)
+    t = re.sub(r"(?i)\b(?:step\s+by\s+step|in\s+detail|simply|clearly|properly|quickly|again)\b", " ", t)
+    words = [w for w in re.split(r"[\s,.!?।]+", t) if w]
+    filler = re.compile(rf"(?ix)^(?:{_FILLER})$")
+    while words and filler.match(words[0]):
+        words.pop(0)
+    while words and filler.match(words[-1]):
+        words.pop()
+    return " ".join(words).strip()
+
+
 def lesson(text: str) -> Optional[Intent]:
+    """A request for a drawn lesson — on a named subject, or on whatever is on the screen."""
     s = _clean(text)
     if not s:
         return None
-    visual = re.search(rf"(?i)(?:{_VISUAL})", s)
+    visual = _VISUAL_RX.search(s)
+    explain = _EXPLAIN_RX.search(s)
+    pause_first = bool(re.search(r"(?i)\bpause\b|\bruko\b|रोको|रोककर|pause\s+kar", s))
+    if not visual or not (explain or pause_first):
+        return None
+    subject = subject_of(s)
     topic = topic_of(s)
-    pause_first = bool(re.search(r"(?i)\bpause\b|\bruko\b|रोको|pause\s+kar", s))
-    if topic and (visual or re.search(rf"(?i)\b(?:{_EXPLAIN})\b|(?:समझा|सिखा)", s)) and visual:
-        return Intent("lesson", "topic", topic, {"pause_first": pause_first})
-    if visual and re.search(rf"(?i)(?:\b(?:{_THIS})\b|इसे|इसको|यह|ये|यहाँ)", s) and re.search(
-            rf"(?i)(?:\b(?:{_EXPLAIN})\b|समझा|सिखा|बताओ|दिखाओ|draw|diagram|visual)", s):
+    if not subject or _DEICTIC.match(subject) or len(subject) < 2:
         return Intent("lesson", "screen", topic, {"pause_first": pause_first})
-    if pause_first and visual:
-        return Intent("lesson", "screen", topic, {"pause_first": True})
-    return None
+    if len(subject.split()) > 12:
+        return None                           # a sentence, not a subject: leave it to the tutor
+    return Intent("lesson", "topic", topic, {"pause_first": pause_first, "subject": subject})
 
 
 # --------------------------------------------------------------------------- controls

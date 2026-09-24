@@ -47,8 +47,23 @@ def _already_logged(who: str, text: str, now: float) -> bool:
     return False
 
 
+def as_said(text: str) -> str:
+    """What the person said, without what Jarvis attached to it on the way to the brain: the
+    "(Spoken question, not a request…)" note after it and "[Most recent incoming message…]" or
+    "[Live view…]" context before it. Found in the history as if spoken by the user."""
+    import re
+
+    t = re.split(r"\n\n\((?:Spoken question|Spoken request)", text or "", maxsplit=1)[0]
+    t = re.sub(r"^\s*(?:\[[^\]\n]{0,2000}\]\s*)+", "", t)
+    return t.strip()
+
+
 def log_turn(who: str, text: str) -> None:
     """Append one message to the durable HUD history (best-effort)."""
+    if who == "you":
+        text = as_said(text)
+        if not text:
+            return
     now = time.time()
     if _already_logged(who, text, now):
         return

@@ -78,6 +78,20 @@ SAY = {
                   "hinglish": "Maine {at} pe pause kiya. Yeh part {title} lagta hai, aur abhi main sirf Pythagoras aur RAG draw kar sakta hoon. Words mein samjhaun?",
                   "hi": "मैंने {at} पर pause किया। यह part {title} लगता है, और अभी मैं सिर्फ़ Pythagoras और RAG draw कर सकता हूँ। Words में समझाऊँ?",
                   "hi-pure": "मैंने {at} पर रोका। यह भाग {title} लगता है, और अभी मैं केवल पाइथागोरस और RAG के चित्र बना सकता हूँ। क्या शब्दों में समझाऊँ?"},
+    "video_generic": {"en": "I've paused at {at}. Here's what this part is about, drawn out.",
+                      "hinglish": "Maine {at} pe pause kiya. Yeh part diagram mein dekhte hain.",
+                      "hi": "मैंने {at} पर pause किया। यह part diagram में देखते हैं।",
+                      "hi-pure": "मैंने {at} पर रोका। इस भाग को चित्र में देखते हैं।"},
+    "video_title_only_generic": {"en": "I've paused at {at}. I can't read captions for this part, so this is a general explanation of the video's topic, not what the teacher said.",
+                                 "hinglish": "Maine {at} pe pause kiya. Is part ke captions nahi mil rahe, isliye yeh video ke topic ki general explanation hai, teacher ne kya bola woh nahi.",
+                                 "hi": "मैंने {at} पर pause किया। इस part के captions नहीं मिल रहे, इसलिए यह video के topic की general explanation है, teacher ने क्या बोला वो नहीं।",
+                                 "hi-pure": "मैंने {at} पर रोका। इस भाग के उपशीर्षक नहीं मिल रहे, इसलिए यह वीडियो के विषय की सामान्य व्याख्या है, शिक्षक के शब्द नहीं।"},
+    "page": {"en": "Here's the part you're reading, drawn out.", "hinglish": "Jo aap padh rahe ho, woh diagram mein dekhte hain.",
+             "hi": "जो आप पढ़ रहे हो, वो diagram में देखते हैं।", "hi-pure": "जो आप पढ़ रहे हैं, उसे चित्र में देखते हैं।"},
+    "nothing_readable": {"en": "I can't read anything on the screen to explain. Select the part you mean, or open it in the browser, and ask again.",
+                         "hinglish": "Screen pe mujhe padhne layak kuch nahi mila. Jo part chahiye use select karo, phir poochho.",
+                         "hi": "Screen पर मुझे पढ़ने लायक कुछ नहीं मिला। जो part चाहिए उसे select करो, फिर पूछो।",
+                         "hi-pure": "स्क्रीन पर पढ़ने योग्य कुछ नहीं मिला। जो भाग चाहिए उसे चुनिए, फिर पूछिए।"},
     "grounded": {"en": "I've paused at {at}. The teacher is on the Pythagoras theorem here.",
                  "hinglish": "Maine video {at} pe pause kar diya. Yahan teacher Pythagoras theorem padha rahe hain.",
                  "hi": "मैंने video {at} पर pause कर दिया। यहाँ teacher Pythagoras theorem पढ़ा रहे हैं।",
@@ -122,11 +136,21 @@ class ScreenContext:
 
 
 @dataclass
+class Material:
+    """What is on the screen, as text, for a lesson on any subject — and how to say where it came from."""
+    subject: str
+    text: str
+    intro: str
+    source: SourceContext
+
+
+@dataclass
 class Outcome:
     lesson: Optional[LessonPlan] = None
     message: str = ""                     # said instead of a lesson, when there is none
     context: Optional[ScreenContext] = None
     page: Any = None
+    material: Optional[Material] = None   # set when the caller should draw a lesson from it
 
 
 def video_rect(geo: dict, area: dict) -> tuple[Optional[dict], bool]:
@@ -259,7 +283,19 @@ async def prepare(language: str, area: dict, page=None, capture=None, want_topic
     ctx = ScreenContext()
     t0 = time.monotonic()
     if page is None:
-        page = await asyncio.to_thread(pages.find_video_page)
+        # What is in front: a YouTube tab takes the video path; a page or an app is read as text.
+        # (find_video_page alone picked a background video while a textbook page was in front.)
+        from .. import screen_context as sc
+        try:
+            front = await sc.locate(prefer_video=True)
+        except Exception:  # noqa: BLE001
+            front = sc.ScreenContext()
+        if front.source == "youtube" and front.page is not None:
+            page = front.page
+        elif front.source in ("page", "app"):
+            return await _text_material(front, language)
+        else:
+            page = await asyncio.to_thread(pages.find_video_page)
     if page is None:
         return Outcome(message=say("no_page", language))
     yt = YouTube(page)
@@ -301,7 +337,19 @@ async def prepare(language: str, area: dict, page=None, capture=None, want_topic
     if want_topic and not ctx.topic:
         ctx.topic = want_topic
     if ctx.topic != "pythagoras":
-        return Outcome(message=say("not_topic", language, at=at, title=(state.title or "this video")[:80]), context=ctx, page=page)
+        # Any other subject: a lesson written from the captions (or, without them, a general one
+        # on the video's topic that says it is not the teacher's words).
+        src = SourceContext(kind="video", title=state.title, at_s=state.time, caption_language=ctx.caption_language,
+                            transcript_used=bool(ctx.transcript))
+        if ctx.transcript:
+            text = f"Video: {state.title}\nPosition: {at}\nCaptions around this point:\n{ctx.transcript}"
+            intro = say("video_generic", language, at=at)
+            subject = f"what this part of the video \"{state.title}\" is teaching"
+        else:
+            text = f"Video: {state.title}\n{state.description[:500]}"
+            intro = say("video_title_only_generic", language, at=at)
+            subject = state.title or "this video's topic"
+        return Outcome(context=ctx, page=page, material=Material(subject, text, intro, src))
 
     # The frame. Only with a trustworthy position — a triangle traced 200 px off is worse than a
     # clean one drawn beside the video.
@@ -341,6 +389,28 @@ async def prepare(language: str, area: dict, page=None, capture=None, want_topic
     plan.extras["video_rect"] = rect
     ctx.timings["plan_ms"] = round((time.monotonic() - t0) * 1000)
     return Outcome(lesson=plan, context=ctx, page=page)
+
+
+async def _text_material(front, language: str) -> Outcome:
+    """A lesson from the page or app in front: the selection if there is one, else what is in view."""
+    from .. import screen_context as sc
+
+    title = front.title or front.window or "the screen"
+    if front.source == "page" and front.page is not None:
+        try:
+            got = await sc.read_page(front.page, around_s=60.0)
+        except Exception:  # noqa: BLE001
+            got = {}
+        text = got.get("selection") or got.get("in_view") or got.get("body") or ""
+        title = got.get("title") or title
+    else:
+        text = front.selection or front.in_view or front.body
+    text = (text or "").strip()
+    if len(text) < 40:
+        return Outcome(message=say("nothing_readable", language))
+    src = SourceContext(kind="page" if front.source == "page" else "app", title=title[:120])
+    return Outcome(material=Material(f"what the student is reading: {title[:120]}", f"{title}\n\n{text[:3000]}",
+                                     say("page", language), src))
 
 
 class AnchorTracker:

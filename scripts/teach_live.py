@@ -56,9 +56,11 @@ def shoot(out: Path, name: str) -> None:
     out.mkdir(parents=True, exist_ok=True)
     full = str(out / f".{name}-full.png")
     p = screenshot._portal_screenshot(full)
-    boxes = [runner().scene.bounds_of(i) for i in runner().scene.objects]
-    boxes = [b for b in boxes if b]
     try:
+        # A copy: the lesson is still drawing while this reads it.
+        scene = runner().scene
+        ids = list(dict(scene.objects))
+        boxes = [b for b in (scene.bounds_of(i) for i in ids) if b]
         if p and boxes:
             area = overlay().work_area()
             with Image.open(p) as im:
@@ -81,6 +83,7 @@ def main() -> None:
     ap.add_argument("--interrupt-at", type=float)
     ap.add_argument("--follow", action="append", default=[])
     ap.add_argument("--leave", action="store_true")
+    ap.add_argument("--request", help="any request, e.g. \"explain the water cycle with a diagram\" (what: any)")
     ap.add_argument("--dismiss-at", type=float, help="send the emergency signal (SIGURG) to the overlay")
     ap.add_argument("--continue", dest="cont", action="store_true", help="after an interruption, say continue")
     a = ap.parse_args()
@@ -97,7 +100,7 @@ def main() -> None:
                         "hi": "Pythagoras theorem को diagram बनाकर समझाओ", "hi-pure": "पाइथागोरस प्रमेय चित्र बनाकर शुद्ध हिंदी में समझाओ"},
                "screen": {"en": "Jarvis, pause and explain this step visually", "hinglish": "Jarvis, pause karke isko diagram se samjhao",
                           "hi": "Jarvis, pause करके इसे चित्र बनाकर समझाओ", "hi-pure": "रोककर इसे चित्र बनाकर शुद्ध हिंदी में समझाओ"}}
-    said = request[a.what][a.lang]
+    said = a.request or request[a.what][a.lang]
     t0 = time.time()
     timers = []
     if a.shot:

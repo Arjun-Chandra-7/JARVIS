@@ -66,8 +66,11 @@ ACT, IGNORE, END = "act", "ignore", "end"
 
 # Said to close the conversation. Whole sentence only: "that's all I needed for the essay, now
 # open Docs" is a request, not a goodbye.
+# Lead-ins are allowed: "Yeah, that's it." and "Jarvis, that's it." were both heard, and both were
+# answered as questions ("Just handling routine tasks.") instead of closing.
 _END = re.compile(
-    r"(?i)^(?:(?:ok(?:ay)?|thanks?|thank you)[,\s]*)*(?:that'?s all|that'?s it|that will be all|"
+    r"(?i)^(?:(?:ok(?:ay)?|thanks?|thank you|yeah|yes|yep|ya|haan|han|alright|all right|right|so|well|"
+    r"hey|(?:hey\s+)?(?:jarvis|javis|jarvi|jarves|jars))[,.!\s]*)*(?:that'?s all|that'?s it|that will be all|"
     r"that'?ll be all|nothing(?: else)?|no(?:,)? thanks?|no thank you|never ?mind|we'?re done|"
     r"i'?m done|done|bas|bas itna|bas ho gaya|ho gaya|theek hai bas|chalo bye|bye|bye bye|goodbye|"
     r"ok(?:ay)? bye|stop listening|you can stop listening|rehne do|rehne de|"

@@ -135,10 +135,19 @@ def test_wrong_tab_ad_error_and_unpausable_are_reported(fake_transcript):
     assert out.lesson is None and "still playing" in out.message
 
 
-def test_other_topics_are_not_forced_into_pythagoras(fake_transcript):
+def test_any_other_topic_becomes_a_lesson_from_the_captions(fake_transcript):
     fake_transcript("today we talk about photosynthesis and chlorophyll")
     out = run_prepare(FakePage({"title": "Photosynthesis explained"}))
-    assert out.lesson is None and "Pythagoras and RAG" in out.message
+    assert out.lesson is None and out.material is not None
+    assert "chlorophyll" in out.material.text and out.material.source.transcript_used
+    assert "4:12" in out.material.intro and "teacher" not in out.material.intro.lower()
+
+
+def test_without_captions_it_says_it_is_not_the_teachers_words(fake_transcript):
+    fake_transcript(None)
+    out = run_prepare(FakePage({"title": "Photosynthesis explained"}))
+    assert out.material and "not what the teacher said" in out.material.intro
+    assert not out.material.source.transcript_used
 
 
 def test_an_unmaximised_window_is_not_traced(fake_transcript):

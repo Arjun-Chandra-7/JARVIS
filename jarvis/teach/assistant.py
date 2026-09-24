@@ -88,7 +88,42 @@ def wants(text: str, r: Optional[LessonRunner] = None) -> bool:
     busy = r.active or not r.scene.empty()
     if busy and c:
         return True
+    if busy and r.lesson and r.lesson.extras.get("generic"):
+        return about_the_lesson(text)
     return bool(busy and r.lesson and intents.follow_up(text, r.lesson.topic))
+
+
+_LIVE_OR_ACTION = re.compile(
+    r"(?i)\b(?:time|date|today|tomorrow|weather|temperature|news|score|price|battery|volume|brightness|"
+    r"message|whatsapp|call|email|mail|remind|reminder|timer|alarm|open|play|pause|stop|close|search|"
+    r"send|text\s+him|text\s+her|song|music|video\s+chala)\b|समय|मौसम|मैसेज|कॉल")
+_QUESTIONISH = re.compile(
+    r"(?i)\?|\b(?:what|why|how|which|who|when|where|explain|again|example|examples|simpler|difference|mean|means|"
+    r"kya|kyu|kyun|kaise|kaun|samjha\w*|batao|dobara|phir\s+se|udaharan)\b|क्या|क्यों|कैसे|कौन|समझा|बताओ|दोबारा|उदाहरण|"
+    r"\b(?:in|mein|me)\s+(?:english|hindi|hinglish)\b")
+
+
+def about_the_lesson(text: str) -> bool:
+    """A question that belongs to the lesson on screen — not an action, not a live fact."""
+    s = (text or "").strip()
+    if not s or len(s.split()) > 30 or _LIVE_OR_ACTION.search(s):
+        return False
+    return bool(_QUESTIONISH.search(s))
+
+
+async def _generic_follow_up(said: str, lesson, lang: str) -> Optional[Step]:
+    from ..llm import complete_detailed
+    from ..video_command import _LANGUAGE_INSTRUCTION
+    from .lessons import generic
+
+    if re.search(r"(?i)\b(?:again|explain|what\s+(?:is|does)|tell\s+me\s+about|samjhao|dobara|phir\s+se|kya\s+hai)\b|समझाओ|दोबारा|क्या\s+है", said):
+        step = generic.explain_again(lesson, said)
+        if step is not None and lang == lesson.language:
+            return step
+    done = await complete_detailed(generic.FOLLOW_SYSTEM,
+                                   generic.follow_up_prompt(lesson, said, _LANGUAGE_INSTRUCTION.get(lang, _LANGUAGE_INSTRUCTION["en"])),
+                                   None, temperature=0.3, timeout=30.0, strength="strong")
+    return generic.follow_up_step(lesson, done.text) if done.ok else None
 
 
 # --------------------------------------------------------------------------- running
@@ -118,13 +153,64 @@ def _pythagoras_follow_up(kind: str, lesson, lang: str, correct: Optional[bool] 
     return None
 
 
+NO_LESSON = {
+    "en": "I couldn't put a diagram together for that just now — {why}",
+    "hinglish": "Abhi iska diagram nahi ban paaya — {why}",
+    "hi": "अभी इसका diagram नहीं बन पाया — {why}",
+    "hi-pure": "अभी इसका चित्र नहीं बन पाया — {why}",
+}
+WHY = {
+    "no_model": {"en": "no model is reachable.", "hinglish": "koi model reachable nahi hai.", "hi": "कोई model reachable नहीं है।",
+                 "hi-pure": "कोई मॉडल उपलब्ध नहीं है।"},
+    "unusable": {"en": "the lesson that came back didn't make sense, so I've drawn nothing rather than something wrong.",
+                 "hinglish": "jo lesson aaya woh theek nahi tha, isliye galat cheez draw nahi ki.",
+                 "hi": "जो lesson आया वो ठीक नहीं था, इसलिए ग़लत चीज़ draw नहीं की।",
+                 "hi-pure": "जो पाठ आया वह ठीक नहीं था, इसलिए गलत चित्र नहीं बनाया।"},
+}
+
+
+async def generic_plan(subject: str, lang: str, area: dict, source_text: str = "", intro=None, src=None):
+    """(plan, why-not). The model writes the lesson as JSON; generic.check keeps only what can be drawn."""
+    from ..llm import complete_detailed
+    from ..video_command import _LANGUAGE_INSTRUCTION
+    from .lessons import generic
+
+    done = await complete_detailed(generic.SYSTEM, generic.prompt(subject, _LANGUAGE_INSTRUCTION.get(lang, _LANGUAGE_INSTRUCTION["en"]), source_text),
+                                   None, temperature=0.3, timeout=45.0, strength="strong")
+    if not done.ok:
+        return None, "no_model"
+    spec = generic.check(generic.parse_json(done.text))
+    if spec is None:
+        return None, "unusable"
+    return generic.build(spec, lang, area, subject, intro=intro, source=src), ""
+
+
+def _no_lesson(lang: str, why: str) -> str:
+    return NO_LESSON.get(lang, NO_LESSON["en"]).format(why=WHY[why].get(lang, WHY[why]["en"]))
+
+
+async def _ack(speaker: Speaker, lang: str, background: bool) -> None:
+    """Something said at once, while the lesson is being written — silence reads as nothing happening."""
+    if background:
+        return
+    from .lessons.generic import ACK
+    await asyncio.to_thread(speaker.speak, [ACK.get(lang, ACK["en"])], lambda i, at: None)
+
+
 async def _lesson(intent: intents.Intent, text: str, speaker: Speaker, lang: str, background: bool) -> Reply:
     from . import screen_lesson
 
     r = runner()
     area = await asyncio.to_thread(overlay().work_area)
     if intent.name == "topic":
-        plan = rag.plan(lang, area) if intent.topic == "rag" else pythagoras.plan(lang, area)
+        if intent.topic in ("rag", "pythagoras"):
+            # Hand-built lessons for these two: instant, offline, and every picture placed by hand.
+            plan = rag.plan(lang, area) if intent.topic == "rag" else pythagoras.plan(lang, area)
+        else:
+            await _ack(speaker, lang, background)
+            plan, why = await generic_plan(intent.args.get("subject") or text, lang, area)
+            if plan is None:
+                return Reply(_no_lesson(lang, why))
         await _run(r.start, plan, speaker, background=background)
         return Reply(plan.text(), spoken=not background)
     # From the screen. Anything already drawn goes first: the frame is read without it.
@@ -132,22 +218,27 @@ async def _lesson(intent: intents.Intent, text: str, speaker: Speaker, lang: str
         r.clear()
         await asyncio.sleep(0.25)
     out = await screen_lesson.prepare(lang, area, want_topic=intent.topic)
+    if out.lesson is None and out.material:
+        # Not Pythagoras: any other subject, drawn from what is actually on the screen.
+        await _ack(speaker, lang, background)
+        plan, why = await generic_plan(out.material.subject, lang, area, source_text=out.material.text,
+                                       intro=[out.material.intro], src=out.material.source)
+        if plan is None:
+            return Reply(_no_lesson(lang, why))
+        await _run(r.start, plan, speaker, background=background)
+        return Reply(plan.text(), spoken=not background)
     if out.lesson is None:
         return Reply(out.message)
     tracker = None
     if out.lesson.source_context.triangle_from_screen and out.page is not None:
         rect = out.lesson.extras.get("video_rect")
         tracker = screen_lesson.AnchorTracker(out.page, overlay(), area, rect)
-        tracker.url = ""
 
     def run():
         if tracker:
             lesson_id = out.lesson.lesson_id
             tracker.start(lambda: r.lesson is not None and r.lesson.lesson_id == lesson_id)
-        try:
-            r.start(out.lesson, speaker)
-        finally:
-            pass
+        r.start(out.lesson, speaker)
     await _run(run, background=background)
     return Reply(out.lesson.text(), spoken=not background)
 
@@ -291,6 +382,12 @@ async def handle(text: str, speaker: Optional[Speaker] = None, background: bool 
         rep = await _control(c, speaker, lang, background)
         if rep is not None:
             return rep
+    if r.lesson is not None and (r.active or not r.scene.empty()) and r.lesson.extras.get("generic") \
+            and about_the_lesson(said):
+        step = await _generic_follow_up(said, r.lesson, lang)
+        if step is not None:
+            await _run(r.follow_up, step, speaker, background=background)
+            return Reply(" ".join(p.text for p in step.phrases), spoken=not background)
     if r.lesson is not None and (r.active or not r.scene.empty()):
         fu = intents.follow_up(said, r.lesson.topic)
         if fu:

@@ -5,6 +5,36 @@ piece was actually taken, and what is next.
 
 ---
 
+## Seventh pass (2026-09-24): lessons on any subject; wrong answers found in the history
+
+**Any subject.** `jarvis/teach/lessons/generic.py`: the strong model writes the lesson as JSON,
+code validates and lays it out (flow / cycle / tree / layers / timeline / compare, edges routed
+around boxes) and draws it; "explain this visually" over a video on any subject uses its
+captions, over a page or app what is selected or in view. Live: water cycle with two follow-ups,
+drift p95 4 ms, first frame 6.8 s after the request (ack spoken at once). Real-model runs: 6 of 8
+topics built (OSI, Newton, French Revolution, transformer in Hindi, digestive system in pure
+Hindi, water cycle); 2 hit Groq's per-minute cap. **Gemini returns `permission_denied` for the
+configured key** — the only strong fallback — so check that key.
+
+**Wrong answers from `~/.config/jarvis/hud-history.jsonl`, each fixed and pinned by a test:**
+
+| Heard | Said | Cause → fix |
+|---|---|---|
+| "Is Clawed completed?" | "I'll send that message to the unknown number…" | the last WhatsApp message was attached to *every* turn, forever → only when recent (10 min) and the turn is about replying or names the sender |
+| an unclear sentence | "Please clarify or use whatsapp_send to reply." | same, plus tool names spoken → sentences exposing tool names/calls are dropped from speech |
+| "What values does this show about Nicola and Jippo?" (after the chapter on screen was explained) | "Who are these?" ×4 | screen answers weren't remembered → kept 10 min; follow-ups answered from the same material (`screen_follow_up` handler) |
+| "यह step English में समझाओ" | "…will provide a succinct response directly…" | same |
+| "Find a whiteboard site and draw me the Mona Lisa" | "[error] 'webSocketDebuggerUrl'" | drawing assumed Chromium; Zen is Marionette → drawn on the overlay instead |
+| "Yeah, that's it." / "JARvis, that's it." | "Just handling routine tasks." | goodbye needed an exact sentence → lead-ins allowed |
+| — | "(Spoken question, not a request…)" logged as the user's words | the note attached for the brain → stripped before logging |
+
+**The test suite wrote to the real history** (314 fake turns: "Sent to the number ending 0001",
+made-up requests), which the HUD restores on reload. Tests now use a temporary file
+(`tests/conftest.py`); the 314 were removed from the real file, backup at
+`~/.config/jarvis/hud-history.jsonl.bak-before-test-cleanup`.
+
+Suite: 2522 → 2556 passing.
+
 ## Sixth pass (2026-09-24): the teaching overlay — drawing while explaining
 
 Branch `live-failure-repair`. README → Explaining with pictures; design, measurements and limits

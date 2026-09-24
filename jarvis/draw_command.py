@@ -30,7 +30,15 @@ _POINTS_AT_A_PICTURE = re.compile(
     r"(?:this|that)\s+(?:image|picture|photo))$")
 
 
+_FIND_A_BOARD = re.compile(
+    r"(?i)^(?:(?:hey\s+)?jarvis[,\s]+)?(?:please\s+)?(?:find|open|get)\s+(?:me\s+)?(?:a\s+|an\s+)?(?:free\s+)?(?:online\s+)?"
+    r"(?:whiteboard|drawing|canvas)(?:\s+(?:site|website|app))?(?:\s+online)?\s*(?:,\s*)?(?:and|then)\s+")
+
+
 def parse(text: str) -> Optional[str]:
+    # "Find a free whiteboard site online and draw me the Mona Lisa" is a request to draw the
+    # Mona Lisa; the whiteboard was the means. It reached a browser path that assumed Chromium.
+    text = _FIND_A_BOARD.sub("", (text or "").strip())
     match = _DRAW.match((text or "").strip().rstrip(".!?"))
     if not match:
         return None
@@ -61,14 +69,18 @@ async def run(subject: str, config=None) -> str:
     from .integrations import browser
     from .vision import reference, strokes
 
-    if not browser.control_ready():
-        return ("I can only draw in a browser I can control — say “restart the browser with "
-                "control” and open a whiteboard first.")
-
-    box = await browser.canvas_box()
+    # A whiteboard in a Chromium browser Jarvis can drive, if there is one; otherwise the
+    # teaching overlay over the desktop. Zen is driven over Marionette, which has no canvas
+    # automation here — found live as "[error] 'webSocketDebuggerUrl'" read out for "draw me the
+    # Mona Lisa".
+    box = None
+    if browser.control_ready():
+        try:
+            box = await browser.canvas_box()
+        except Exception:  # noqa: BLE001 — not a Chromium page: draw on the overlay instead
+            box = None
     if not box:
-        return ("There is no drawing surface on this page, sir. Open a whiteboard first — "
-                "any page with a canvas will do.")
+        return await _draw_on_overlay(subject, reference, strokes)
 
     # Thin the pen first. Density is bounded by stroke width, not by the extraction: at the
     # default width a detailed drawing fills its dark areas into a solid blob, because
@@ -106,6 +118,53 @@ async def run(subject: str, config=None) -> str:
     source = "the picture I generated" if made else "a reference picture"
     return (f"Drew {subject} — {len(fitted)} strokes, {points:,} points, from {source}. "
             f"It's a line rendering, not a copy.")
+
+
+OVERLAY_BUDGET = 12000        # points: what the overlay carries comfortably in a few batches
+OVERLAY_STROKES = 380         # under the overlay's 400-object limit, leaving room for the frame
+
+
+async def _draw_on_overlay(subject: str, reference, strokes) -> str:
+    """The same line drawing, on the teaching overlay: a panel at the side of the screen, strokes
+    drawn in batches so the picture builds up rather than appearing all at once."""
+    from .teach import layout
+    from .teach.bus import overlay
+    from .teach.runner import runner
+    from .teach.scene import add, anim, create, obj
+
+    picture = await asyncio.to_thread(reference.find, subject)
+    if picture is None:
+        return f"I couldn't find a picture of {subject} to work from."
+    plan = await asyncio.to_thread(strokes.from_image, picture, OVERLAY_BUDGET)
+    if plan is None:
+        return f"I found a picture of {subject} but couldn't get any lines out of it."
+    area = await asyncio.to_thread(overlay().work_area)
+    k = layout.scale_for(area)
+    P = layout.panel(area, 760 * k, 900 * k)
+    fitted = plan.scaled_into(int(P["x"]), int(P["y"] + 40 * k), int(P["w"]), int(P["h"] - 50 * k))
+    kept = sorted((s for s in fitted if len(s) >= 2), key=len, reverse=True)[:OVERLAY_STROKES]
+    if not kept:
+        return f"I found a picture of {subject} but couldn't get any lines out of it."
+    r = runner()
+    if r.active or not r.scene.empty():
+        r.clear()
+    r.draw([create("drawing", area.get("index", 0)),
+            add(obj("draw-panel", "panel", x=P["x"], y=P["y"], w=P["w"], h=P["h"], title=subject[:40], anim=anim("fade", 200)))])
+    batch, points, sent = [], 0, 0
+    for i, s in enumerate(kept):
+        pts = [[round(float(x), 1), round(float(y), 1)] for x, y in s[:4000]]
+        batch.append({"op": "stroke.draw", "object": obj(f"d{i}", "stroke", points=pts,
+                                                          style={"color": "text", "width": 1.4, "glow": 0},
+                                                          anim=anim("draw", 500, delay=min(8000, sent * 12)))})
+        points += len(pts)
+        sent += 1
+        if len(batch) >= 60 or points >= 6000:
+            r.draw(batch, checkpoint=False)
+            batch, points = [], 0
+    if batch:
+        r.draw(batch, checkpoint=False)
+    return (f"Drew {subject} on the screen — {len(kept)} strokes, from a reference picture. "
+            "It's a line rendering, not a copy. Say “clear it” when you're done.")
 
 
 async def handle(text: str, config=None) -> Optional[str]:

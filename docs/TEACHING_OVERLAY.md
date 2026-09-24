@@ -29,6 +29,7 @@ VoiceSession._turns                                              main.js → tea
 | `jarvis/teach/plan.py` | `LessonPlan` / `Step` / `Phrase`: speech and the commands that belong to each phrase. |
 | `jarvis/teach/runner.py` | Plays a plan through a `Speaker`; pause, resume, back, skip, again, follow-ups, cleanup, generations. |
 | `jarvis/teach/lessons/pythagoras.py`, `rag.py` | Deterministic templates in `en`, `hinglish`, `hi` (Devanagari Hinglish), `hi-pure`. |
+| `jarvis/teach/lessons/generic.py` | Any subject: the model returns lesson JSON (nodes, edges, formula, steps); `check` keeps only what is valid and safe, `place` lays it out (flow, cycle, tree, layers, timeline, compare) and routes edges around boxes, `build` makes the plan; follow-ups by node or by model with the lesson as context. |
 | `jarvis/teach/screen_lesson.py`, `triangle.py` | The video lesson: find, pause + verify, ground, locate, detect, trace, track. |
 | `jarvis/teach/intents.py`, `assistant.py` | What a request means; the one entry point for voice and typed requests. |
 
@@ -121,7 +122,9 @@ or the renderer crashes (the voice process is told and redraws the current step)
   are not used; with nothing to point at, Jarvis asks.
 * **Typed controls don't reach a spoken lesson.** The backend and the voice process each have
   their own runner; "go back" typed into the HUD affects a lesson started from the HUD.
-* **Lessons exist for Pythagoras and RAG only.** Other topics with "with a diagram" fall through to
-  the spoken tutor.
+* **Any-topic lessons need the strong model.** Groq's per-minute token cap allows roughly two
+  lesson-sized requests a minute; Gemini currently answers `permission_denied` for the configured
+  key. When neither answers, Jarvis says so and draws nothing. Pythagoras and RAG are hand-built
+  and work offline.
 * **A lesson owner that exits without clearing leaves its drawing** until the next lesson, a
   voice-process restart (which resets the overlay) or the emergency shortcut.

@@ -80,6 +80,12 @@ def deterministic_handlers():
         reply = await f(text, background=True)
         return reply.text if reply else None
 
+    async def screen_follow_up(text, config):
+        # "What values does this show about Nicola?" right after the chapter on screen was
+        # explained: answered from the same material, not by a brain that never saw it.
+        from .video_command import follow_up as f
+        return await f(text, config)
+
     async def teach(text, config):
         # "What is a sequential input in an RNN?", "photosynthesis kya hota hai" — a topic,
         # taught by the strong model. After video/screen, which own anything about the screen.
@@ -189,6 +195,7 @@ def deterministic_handlers():
         ("chain", chain),
         ("message", message),
         ("video", video),
+        ("screen_follow_up", screen_follow_up),
         ("teach", teach),
         ("modes", modes),
         ("system", system),

@@ -109,6 +109,9 @@ def speakable(reply: str) -> str:
         return "I can't reach my brain right now, sir. The backend isn't answering."
     if text.startswith("[") and ("error" in low[:40] or "exception" in low[:80]) or "traceback (most recent" in low:
         return "Something went wrong on my side, sir. The details are on screen."
+    from .speech_text import leaks_internals, without_internals
+    if leaks_internals(text):
+        text = without_internals(text) or "Sorry, sir, I got muddled on that one. Could you say it again?"
     return text
 
 
@@ -400,7 +403,7 @@ class VoiceSession:
         # to find this message and whatsapp_send / phone_reply to answer.
         self._last_message = {
             "app": app, "who": who, "text": msg,
-            "id": event.get("id"), "repliable": event.get("repliable"),
+            "id": event.get("id"), "repliable": event.get("repliable"), "at": time.time(),
         }
         if not away_now and notifications_enabled():  # while away, handle silently; muted = no readout
             # Not spoken yet: held until the conversation goes quiet, so a burst is said once.
@@ -1503,10 +1506,10 @@ class VoiceSession:
                 else:
                     prefix += f"[Live screen-share is ON; screenshot saved at {path}.]\n"
         last = getattr(self, "_last_message", None)
-        if last:
+        if last and about_the_message(transcript, last):
             prefix += (
                 f"[Most recent incoming {last['app']} message from {last['who']}: \"{last['text']}\". "
-                f"If {self.config.user_name} wants to reply, use whatsapp_send with the name '{last['who']}'.]\n"
+                f"This is context for a reply only if {self.config.user_name} asks for one.]\n"
             )
         return f"{prefix}\n{transcript}" if prefix else transcript
 
@@ -2048,6 +2051,31 @@ class VoiceSession:
             self.mic.stop()
             self.mic.delete()
             self.wake.delete()
+
+
+_REPLY_WORDS = re.compile(
+    r"(?i)\b(?:repl(?:y|ies)|respond|answer\s+(?:him|her|them)|tell\s+(?:him|her|them)|text\s+(?:him|her|them|back)|"
+    r"message\s+(?:him|her|them|back)|write\s+back|say\s+back|what\s+did\s+(?:he|she|they)\s+(?:say|send|write)|"
+    r"(?:his|her|their|the|that|last)\s+(?:message|text)|jawab|reply\s+kar|usko|use\s+bol|unko|bol\s+do|likh\s+do)\b|"
+    r"जवाब|उसे|उसको|उनको|बोल\s+दो|लिख\s+दो")
+MESSAGE_CONTEXT_S = 600.0
+
+
+def about_the_message(transcript: str, last: dict, now: Optional[float] = None) -> bool:
+    """Whether a spoken turn is about the last incoming message.
+
+    It used to be attached to every turn for as long as the process lived. Found in the history:
+    "Is Claude completed?" was answered "I'll send that message to the unknown number…", and a
+    sentence it did not understand got "use whatsapp_send to reply" — the model read the note as
+    the request. Now it goes with a turn only when the message is recent and the turn is about
+    replying or names the sender."""
+    if not last or (now or time.time()) - float(last.get("at") or 0) > MESSAGE_CONTEXT_S:
+        return False
+    said = transcript or ""
+    if _REPLY_WORDS.search(said):
+        return True
+    first = re.split(r"\s+", str(last.get("who") or "").strip())[0]
+    return len(first) >= 3 and re.search(rf"(?i)\b{re.escape(first)}\b", said) is not None
 
 
 class _LessonVoice:

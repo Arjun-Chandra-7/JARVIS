@@ -467,9 +467,10 @@ async def _answer(kind: str, text: str, state: yt.PlayerState, player: yt.YouTub
     context = "youtube_transcript" if excerpt else "live_caption"
     _log(kind, lang, context, "explain", state, span)
     from .llm import complete_detailed
-    done = await complete_detailed(_TUTOR, build_prompt(kind, text, state, excerpt, source, span), config,
-                                   temperature=0.3, strength="strong")
+    material = build_prompt(kind, text, state, excerpt, source, span)
+    done = await complete_detailed(_TUTOR, material, config, temperature=0.3, strength="strong")
     if done.ok:
+        remember_explanation(text, material, done.text)
         return paused_note + done.text
     # No strong model: say so, and give what the video actually said — the words need no model.
     said = " ".join(s.text for s in excerpt[-6:]) or state.live_caption
@@ -538,7 +539,78 @@ async def _ask(text: str, header: list[str], task: str, lang: str, config) -> tu
     from .llm import complete_detailed
     prompt = "\n".join(header + ["", f"Task: {task}", f"They asked: \"{text}\"", _LANGUAGE_INSTRUCTION[lang]])
     done = await complete_detailed(_EXPLAINER, prompt, config, temperature=0.3, strength="strong")
+    if done.ok:
+        remember_explanation(text, "\n".join(header), done.text)
     return done.ok, done.text
+
+
+# =========================================================================== follow-ups
+#
+# "So what values does this show about Nicola and Jippo?", asked right after the chapter on the
+# screen had been explained, was answered "I don't have specific values for Nicola and Jippo —
+# who are these?", four times over: the explanation came from here, and the follow-up went to the
+# brain, which had never seen the page. "यह step English में समझाओ" got a sentence about providing
+# succinct responses. What was explained is now kept for ten minutes, and a question that follows
+# it is answered from the same material.
+
+SCREEN_FOLLOW_S = 600.0
+_LAST_SCREEN: dict[str, dict] = {}
+
+_FOLLOWISH = re.compile(
+    r"(?i)\?|\b(?:what|why|how|who|which|when|where|explain|again|example|examples|simpler|simply|meaning|means|mean|"
+    r"summar\w*|values?|moral|lesson|theme|character|story|chapter|poem|teacher|step|part|this|that|they|them|he|she|"
+    r"his|her|their|it|in\s+(?:english|hindi|hinglish)|(?:english|hindi|hinglish)\s+(?:mein|me)|kya|kyu|kyun|kaise|"
+    r"kaun|samjha\w*|batao|dobara|phir\s+se)\b|क्या|क्यों|कैसे|कौन|समझा|बताओ|दोबारा|यह|ये|इस|उस|English|हिंदी")
+_NOT_ABOUT_IT = re.compile(
+    r"(?i)\b(?:time|date|weather|temperature|news|score|battery|volume|brightness|remind|reminder|timer|alarm|"
+    r"whatsapp|call|email|open|play|search|send|music|song)\b|समय|मौसम")
+
+
+def remember_explanation(question: str, material: str, answer: str) -> None:
+    from . import context
+    _LAST_SCREEN[context.current()] = {"at": time.time(), "question": (question or "").strip()[:300],
+                                       "material": (material or "")[:4000], "answer": (answer or "")[:1500]}
+
+
+def follows_explanation(text: str, session: str, now: Optional[float] = None) -> bool:
+    last = _LAST_SCREEN.get(session)
+    said = (text or "").strip()
+    if not last or (now or time.time()) - last["at"] > SCREEN_FOLLOW_S or len(said.split()) < 2:
+        return False
+    if intent(said) is not None or _NOT_ABOUT_IT.search(said):
+        return False                      # a new screen question, or something else entirely
+    from .agent.gate import wants_something_done
+    if wants_something_done(said):
+        return False
+    if _FOLLOWISH.search(said):
+        return True
+    # A name from the material, heard wrong or right: "Nicola", "Jippo".
+    words = {w for w in re.findall(r"[A-Za-z]{4,}", said.lower())}
+    return bool(words & {w for w in re.findall(r"[A-Za-z]{4,}", last["material"].lower())})
+
+
+async def follow_up(text: str, config=None) -> Optional[str]:
+    from . import context
+    from .llm import complete_detailed
+
+    session = context.current()
+    if not follows_explanation(text, session):
+        return None
+    last = _LAST_SCREEN[session]
+    lang = reply_language(text)
+    prompt = "\n".join([
+        "What was on their screen:", last["material"], "",
+        f"They asked: \"{last['question']}\"", f"You explained: \"{last['answer']}\"", "",
+        f"Now they say: \"{text.strip()}\"",
+        "Answer that from the same material, adding something new rather than repeating. Names in their "
+        "question may be misheard versions of names in the material — match them. If it plainly is not about "
+        "this material, just answer it.", _LANGUAGE_INSTRUCTION[lang]])
+    done = await complete_detailed(_EXPLAINER, prompt, config, temperature=0.3, strength="strong")
+    _log("follow_up", lang, "screen_memory", "explain" if done.ok else "no_model")
+    if not done.ok:
+        return None
+    last.update(at=time.time(), answer=done.text[:1500])
+    return done.text
 
 
 async def _explain_page(kind: str, text: str, page, config, lang: str) -> str:

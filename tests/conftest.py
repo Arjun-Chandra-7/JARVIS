@@ -11,6 +11,17 @@ def _no_leftover_approvals():
 
 
 @pytest.fixture(autouse=True)
+def _no_real_history(monkeypatch, tmp_path):
+    """No test writes to the real conversation history. They did: the HUD's history file held
+    dozens of turns from test runs — "Sent to the number ending 0001 on WhatsApp", made-up
+    requests — mixed in with the person's own, and the HUD restores that file on reload."""
+    from jarvis import hud_state
+    monkeypatch.setattr(hud_state, "_HISTORY", tmp_path / "hud-history.jsonl")
+    monkeypatch.setattr(hud_state, "_STATE_DIR", tmp_path)
+    hud_state._RECENT.clear()
+
+
+@pytest.fixture(autouse=True)
 def _no_real_youtube(monkeypatch):
     """No test fetches captions from YouTube or finds a real browser tab, and no transcript is
     remembered from one test to the next."""
