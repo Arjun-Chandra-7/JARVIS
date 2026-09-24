@@ -5,7 +5,7 @@ set -u
 node_id() {
     # The numeric id of a node by name, from pw-cli's listing.
     pw-cli ls Node 2>/dev/null | awk -v want="node.name = \"$1\"" '
-        /^\s*id [0-9]+,/ { id=$2; sub(",", "", id) }
+        /^[ \t]*id [0-9]+,/ { id=$2; sub(",", "", id) }
         index($0, want) { print id; exit }'
 }
 case "${1:-start}" in
@@ -20,7 +20,7 @@ case "${1:-start}" in
         ;;
     stop)
         hw=$(pw-cli ls Node 2>/dev/null | awk '
-            /^\s*id [0-9]+,/ { id=$2; sub(",", "", id) }
+            /^[ \t]*id [0-9]+,/ { id=$2; sub(",", "", id) }
             /node.name = "alsa_output/ { print id; exit }')
         [ -n "$hw" ] && wpctl set-default "$hw"
         ;;
