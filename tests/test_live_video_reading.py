@@ -233,6 +233,27 @@ def test_the_model_can_never_send_a_message_unseen(monkeypatch):
     import jarvis.agent.groq_tools as tools
     monkeypatch.setattr(tools, "_compose_message", compose, raising=False)
     _, dispatch = build_registry(Config(), job_runner=None, confirm_fn=None)
+    monkeypatch.setitem(tools.CURRENT_REQUEST, "text", "message Papa hi, and ask Papa how he is")
     asyncio.run(dispatch("whatsapp_send", {"to": "Papa", "message": "hi"}))
     asyncio.run(dispatch("message_person", {"name": "Papa", "about": "ask how he is"}))
     assert seen == [{"confirm": True}, {"confirm": True}]
+
+
+def test_the_model_cannot_draft_to_someone_the_person_never_named(monkeypatch):
+    # Found live: "Oh, message papa hai" became a draft to a different contact, carrying the
+    # model's own previous reply as the text.
+    from jarvis.agent.groq_tools import build_registry
+    from jarvis.config import Config
+    from jarvis.integrations import whatsapp
+    import jarvis.agent.groq_tools as tools
+    seen = []
+    monkeypatch.setattr(whatsapp, "smart_send", lambda to, message, **kw: seen.append(to) or {"message": "x"})
+    monkeypatch.setitem(tools.CURRENT_REQUEST, "text", "Oh, message papa hai.")
+    _, dispatch = build_registry(Config(), job_runner=None, confirm_fn=None)
+    out = asyncio.run(dispatch("whatsapp_send", {"to": "Pradhuman",
+                                                 "message": "Oh, I see. Is there anything specific?"}))
+    out2 = asyncio.run(dispatch("message_person", {"name": "Pradhuman", "about": "health"}))
+    out3 = asyncio.run(dispatch("whatsapp_send", {"to": "Papa", "message": "Is there anything specific?"}))
+    assert seen == []
+    assert "didn't hear you name them" in str(out) and "didn't hear you name them" in str(out2)
+    assert "didn't hear the words" in str(out3)

@@ -63,6 +63,35 @@ async def _compose_message(config: Config, name: str, about: str) -> str:
     return f"Hey {first}, {about}".strip()
 
 
+# What the person said this turn, set by the brain before it runs. The messaging tool checks
+# against it: found live, "Oh, message papa hai" (a mis-heard "message Papa") reached the model,
+# which proposed sending "Oh, I see. Is there anything specific you need help with today?" — its
+# own previous reply — to somebody else entirely.
+CURRENT_REQUEST = {"text": ""}
+
+
+def said_it(to: str, message: str, request: str) -> str:
+    """"" when the person named this recipient and said (most of) this message this turn;
+    otherwise what to say instead of drafting it."""
+    import re as _re
+
+    heard = " ".join(l for l in (request or "").splitlines() if not l.strip().startswith(("[", "(")))
+    heard_words = set(_re.findall(r"[\w']+", heard.lower()))
+    digits = _re.sub(r"\D", "", heard)
+    name_words = [w for w in _re.findall(r"[a-z\u0900-\u097f]{3,}", (to or "").lower())]
+    to_digits = _re.sub(r"\D", "", to or "")
+    named = (to_digits and len(to_digits) >= 6 and to_digits[-6:] in digits) or \
+        any(w in heard_words for w in name_words)
+    if not named:
+        return (f"I won't draft a message to {to or 'someone'} — I didn't hear you name them. "
+                "Who should it go to, and what should it say?")
+    body = _re.findall(r"[\w']+", (message or "").lower())
+    if body and sum(w in heard_words for w in body) < 0.6 * len(body):
+        return ("I didn't hear the words you want sent, so I haven't drafted anything. "
+                "What should the message say?")
+    return ""
+
+
 def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[str], Awaitable[bool]]]):
     """Return (schemas, dispatch). `dispatch(name, args)` runs a tool and returns text."""
     reg: dict[str, tuple[dict, Callable]] = {}
@@ -354,6 +383,9 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
           {"to": {"type": "string"}, "message": {"type": "string"}}, ["to", "message"])
     async def whatsapp_send(a):
         from ..integrations import whatsapp
+        refusal = said_it(a.get("to", ""), a.get("message", ""), CURRENT_REQUEST["text"])
+        if refusal:
+            return refusal
         # The model chose to send, so the owner sees it first — always, known contact or not.
         # "Yeah, message Papa" once went out as text the model wrote itself, unseen.
         return (await asyncio.to_thread(lambda: whatsapp.smart_send(
@@ -569,12 +601,17 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     @tool("message_person",
           "Message someone by INTENT — you give the person's name and what the message is ABOUT, and "
           "Jarvis composes a natural, friendly WhatsApp message and sends it. Use this for requests like "
-          "'message Pradhuman about his health' (about='ask how his health is'). For exact dictated text "
-          "use whatsapp_send instead.",
+          "'message <name> about <topic>' (about='ask how they are'). Only ever the person the user "
+          "named in this request. For exact dictated text use whatsapp_send instead.",
           {"name": {"type": "string"}, "about": {"type": "string"}}, ["name", "about"])
     async def message_person(a):
         from ..integrations import whatsapp
         name, about = a.get("name", ""), a.get("about", "")
+        # Found live: the example here used to be a real contact's name, and a vague "message papa"
+        # became a draft to that contact. The recipient must be one the person just named.
+        refusal = said_it(name, "", CURRENT_REQUEST["text"])
+        if refusal:
+            return refusal
         text = await _compose_message(config, name, about)
         # Words the model composed are never sent unseen.
         res = await asyncio.to_thread(lambda: whatsapp.smart_send(name, text, confirm=True))

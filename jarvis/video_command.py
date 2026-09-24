@@ -67,7 +67,8 @@ _JUST_SAID_MORE = re.compile(
     r"(?ix)\b(?:(?:ab|abhi)\s+(?:kya\s+)?(?:bola|bole|kaha|bataya|samjhaya)|"
     r"(?:ye|yeh|woh?)\s+kya\s+(?:samjha|bata|padha)\s*(?:raha|rahe|rahi)|"
     r"(?:ye|yeh|is|abhi|ab)\s+(?:wala\s+|wale\s+|wali\s+)?(?:part|step|hissa|line)\s+"
-    r"(?:ko\s+)?(?:samjhao|samjha\s+do|samjhana|samjha|explain|kya\s+tha|batao)|"
+    r"(?:ko\s+)?(?:(?:mujhe\s+)?(?:hindi|hinglish|english)\s+(?:mein|me|mai)\s+)?"
+    r"(?:samjhao|samjha\s+do|samjhana|samjha|samjao|samjau|explain|kya\s+tha|batao)|"
     r"(?:explain|repeat)\s+(?:this|that|the\s+last)\s+(?:part|step|bit|section|line)|"
     r"what\s+(?:did|was)\s+(?:he|she|they)\s+just\s+(?:say|said|explain)|"
     r"what\s+(?:is|was)\s+(?:he|she|they)\s+(?:just\s+)?(?:explaining|saying)(?:\s+(?:now|right\s+now))?)")
@@ -98,10 +99,13 @@ _SCREEN_REF = re.compile(
     r"in\s+this\s+(?:scenario|context|diagram|slide|example|case|video|lecture|chapter|part)|"
     r"screenshot|(?:what(?:'s|\s+is)|whatever\s+is)\s+on\s+(?:my|the)\s+screen|"
     r"screen\s+(?:pe|par|mein)|is\s+video\s+(?:mein|me)|is\s+(?:diagram|slide)\s+(?:mein|me))\b")
-_SCREEN_REF_HI = re.compile(r"(?:स्क्रीन|screen)\s+(?:पे|पर|में)|इस\s+(?:वीडियो|video|diagram|डायग्राम)\s+में")
+_SCREEN_REF_HI = re.compile(
+    r"(?:स्क्रीन|screen)\s+(?:पे|पर|में)|(?:इस|मेरी|मेरे|मेरा|यह|ये)\s+(?:वीडियो|video|diagram|डायग्राम|स्क्रीन|screen)\s+(?:में|पे|पर)"
+    r"|(?:वीडियो|video)\s+में\s+(?:चल|आ)\s+रह")
 _QUESTIONISH = re.compile(
     r"(?i)\?|\b(?:what|why|how|which|who|when|where|explain|describe|summari[sz]e|tell\s+me|teach|"
-    r"kya|kyu|kyun|kaise|kaun|samjhao|samjha|batao)\b|क्या|क्यों|कैसे|समझाओ|बताओ")
+    r"kya|kyu|kyun|kaise|kaun|samjhao|samjha|batao|sam[jz]h?a+[ouw]?|samjha+o|samajh\w*|"
+    r"bata+o|bataa)\b|क्या|क्यों|कैसे|समझाओ|समजाओ|समझा|समजा|बताओ")
 
 # Asked about the past on purpose: "what did he say yesterday", "kal wale video mein kya bola".
 # Only then is this a question for memory rather than for the screen.
@@ -110,6 +114,9 @@ _EXPLICIT_PAST = re.compile(
     r"kal|pichli\s+baar|parso)\b|कल|पिछली\s+बार|परसों")
 
 _PURE_HINDI = re.compile(r"(?i)\b(?:pure|shuddh|only|sirf|keval)\s+hindi\b|शुद्ध\s+हिंदी|सिर्फ़?\s+हिंदी|केवल\s+हिंदी")
+_ASKS_HINDI = re.compile(
+    r"(?i)\b(?:in\s+hindi|hindi\s+(?:mein|me|mai|mei|main)|hindi\s+mein?\s+(?:samjh|samj|bata|explain))\b"
+    r"|हिंदी\s+में|हिन्दी\s+में")
 _ASKS_ENGLISH = re.compile(r"(?i)\b(?:in\s+english|english\s+(?:mein|me|mai))\b|अंग्रेज़?ी\s+में")
 
 _WORDS = {"a": 1, "one": 1, "ek": 1, "two": 2, "do": 2, "three": 3, "teen": 3, "four": 4, "five": 5,
@@ -220,7 +227,7 @@ def reply_language(text: str) -> str:
         return "hi-pure"
     if _ASKS_ENGLISH.search(said):
         return "en"
-    if _DEVANAGARI.search(said):
+    if _DEVANAGARI.search(said) or _ASKS_HINDI.search(said):
         return "hi"
     if language_of(said).startswith("Hinglish") or re.search(r"(?i)\bhinglish\b", said):
         return "hinglish"

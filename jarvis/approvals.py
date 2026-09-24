@@ -278,6 +278,22 @@ class ApprovalManager:
             return None
         m_yes, m_no = _YES.match(said), _NO.match(said)
         if not (m_yes or m_no):
+            # Found live: "cancel", misheard as "Gantel", went to the model while a WhatsApp
+            # message waited for a yes. A short reply that sounds like "cancel" cancels — fuzzy
+            # matching is never used to say yes — and any other short reply is asked about
+            # again rather than handed to a model beside a message waiting to be sent.
+            words = re.findall(r"[\w']+", said.lower())
+            command = words and words[0] in {
+                "open", "play", "pause", "search", "find", "stop", "close", "show", "what", "who",
+                "how", "why", "when", "where", "explain", "turn", "set", "call", "message", "tell",
+                "read", "go", "next", "resume", "mute", "volume", "take", "start"}
+            if 0 < len(words) <= 3 and not command:
+                import difflib
+                if any(difflib.SequenceMatcher(None, w, target).ratio() >= 0.6
+                       for w in words for target in ("cancel", "cancelled")):
+                    return self.cancel(waiting[-1].id)
+                return Outcome("unclear", "I didn't catch that — say yes to go ahead, or cancel. "
+                                          "Nothing has been done yet.")
             return None
         yes = bool(m_yes) and not (m_no and not said.lower().startswith(("yes", "haan", "han", "send", "confirm")))
         match = m_yes if yes else m_no

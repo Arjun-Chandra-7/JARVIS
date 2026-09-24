@@ -87,6 +87,19 @@ def instant_intercept(command: str) -> Optional[str]:
     return None
 
 
+def strip_stray_hai(text: str) -> str:
+    """"Message Papa on WhatsApp hai." → "Message Papa on WhatsApp." A lone "hai" tacked onto an
+    otherwise English sentence is the recogniser's, not the person's; in Hinglish ("theek hai",
+    "kya hota hai") it belongs and stays."""
+    import re as _re
+    from .speech_text import language_of
+
+    m = _re.match(r"(?is)^(?P<body>.*?\w)[,\s]+hai[.!?]?$", (text or "").strip())
+    if m and language_of(m.group("body")) == "en":
+        return m.group("body") + "."
+    return text
+
+
 def speakable(reply: str) -> str:
     """A reply as it may be said aloud. Stack traces, provider errors and bracketed internal
     messages are shown on screen and summarised in one sentence — never read out."""
@@ -688,10 +701,13 @@ class VoiceSession:
                                         self.config.stt_vocabulary), ""
 
         def groq(pcm_, rate, vocabulary, language):
-            # Primed with a line of Roman Hinglish (Hindi words stay Hindi, English stays
-            # English) and the command vocabulary.
-            prompt = f"{flow_stt.ROMAN_HINGLISH_HINT} {self.config.stt_vocabulary or local_stt.DEFAULT_VOCABULARY}"
-            return flow_stt.groq(pcm_, rate, vocabulary=prompt[:800], timeout=6.0)
+            # The command vocabulary only. Primed with a line of Roman Hinglish ("Haan theek
+            # hai…") Whisper began ending English commands with "hai" — found live: "Message Papa
+            # on WhatsApp hai" made a recipient of "Papa on WhatsApp hai". Hindi then arrives in
+            # Devanagari, which every handler accepts.
+            prompt = self.config.stt_vocabulary or local_stt.DEFAULT_VOCABULARY
+            text, lang = flow_stt.groq(pcm_, rate, vocabulary=prompt[:800], timeout=6.0)
+            return strip_stray_hai(text), lang
 
         order = [n.strip() for n in os.environ.get("JARVIS_ASSISTANT_STT", "groq,local").split(",")
                  if n.strip() in {"groq", "local"}] or ["local"]

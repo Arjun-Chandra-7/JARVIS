@@ -45,8 +45,14 @@ _ENGLISH = re.compile(
 _HINGLISH = re.compile(
     rf"""(?ix)^(?P<who>.+?)\s+ko\s+
     (?:(?:{_PLATFORM}|message|msg|text)\s+(?:kar|bhej)(?:\s+dena|\s+do|\s+de|dena|o)?|
-       (?:bol|keh|bata)(?:\s+dena|\s+do|\s+de|dena|o)?)
-    (?:\s+(?:ki|ke)\b)?\s*[:,]?\s*(?P<msg>\S.*)$""")
+       (?:bol|keh|bata)(?:\s+dena|\s+do|\s+de|dena|o)?)\b
+    (?:\s+(?:ki|ke)\b)?(?:\s*[:,]\s*|\s+)(?P<msg>\S.*)$""")
+
+# "papa ko message karo" — who, and no text yet. Found live: the pattern above let "karo" end at
+# "kar" and took the "o" as the message to send.
+_HINGLISH_NO_BODY = re.compile(
+    rf"""(?ix)^(?P<who>.+?)\s+ko\s+(?:{_PLATFORM}|message|msg|text)
+    (?:\s+(?:kar|bhej)(?:o|na|\s+do|\s+de|dena|\s+dena)?)?\s*$""")
 
 # A request that names who but not what: "message 98…", "send a WhatsApp to Papa", "text Rohit".
 # "tell" and "ping" are left out: "tell Rohit" with nothing after it is not a message request.
@@ -64,8 +70,8 @@ _TEXT_FIRST = re.compile(
 
 # Talk around the request that is not part of it.
 _LEADING_FILLER = re.compile(
-    r"(?i)^(?:(?:ok(?:ay)?|alright|all\s+right|so|now|right|and|then|hmm|umm?|please|"
-    r"yeah|yes|yep|haan|han|ji|jarvis|hey\s+jarvis|also|next|acha|achha|chalo)[,.!\s]+)+")
+    r"(?i)^(?:(?:ok(?:ay)?|alright|all\s+right|so|now|right|and|then|hmm|umm?|please|oh|arre|arey|"
+    r"yeah|yes|yep|haan|han|ji|jarvis|hey\s+jarvis|also|next|acha|achha|accha|chalo)[,.!\s]+)+")
 
 # What a reply of only these words means is "nothing yet", not the message text.
 _NOT_A_BODY = re.compile(
@@ -157,7 +163,7 @@ def read(text: str) -> Optional[Request]:
             if got is not None:
                 return got
 
-    m = _NO_BODY.match(said)
+    m = _NO_BODY.match(said) or _HINGLISH_NO_BODY.match(said)
     if m:
         who, body = m.group("who"), ""
         # "Message Papa hi." — a greeting at the end is what to send, not part of the name.

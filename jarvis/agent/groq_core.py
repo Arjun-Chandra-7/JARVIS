@@ -653,6 +653,8 @@ class GroqAgent:
         from ..approvals import MANAGER
         held_before = {a.id for a in MANAGER.pending(session)}
         self._route_query = user_text   # pick this turn's tool shortlist from what was asked
+        from . import groq_tools as _tools
+        _tools.CURRENT_REQUEST["text"] = user_text      # what the messaging tool checks against
         self._failed_calls.clear()
         self._failed_calls_advice.clear()
         self._tools_ran_this_turn = False
