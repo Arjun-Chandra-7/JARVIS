@@ -31,6 +31,8 @@ DEFAULT_GROQ_MODEL = "qwen/qwen3.8-27b"
 DEFAULT_GROQ_FALLBACK = "openai/gpt-oss-20b"
 DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
 DEFAULT_OLLAMA_MODEL = "qwen2.5:3b"
+OPEN_STRONG = tuple(m.strip() for m in os.environ.get(
+    "JARVIS_OPEN_MODELS", "openai/gpt-oss-120b,openai/gpt-oss-20b").split(",") if m.strip())
 
 GROQ_URL = "https://api.groq.com/openai/v1"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
@@ -181,9 +183,12 @@ def configured(config) -> list[Provider]:
     out = []
     strong_override = os.environ.get("JARVIS_STRONG_MODEL", "").strip()
     if config.groq_api_key:
-        # The configured model, then the known-current default, so a retired name in .env costs
+        # Open-weight models on Groq, each with its own per-minute quota, so one running dry is not
+        # "no model is reachable". GPT-OSS first: measured 24 Sep, qwen3.8-27b answered 429 "request
+        # too large" to a one-word prompt on this plan while gpt-oss-120b answered in 1.1 s.
+        # Then the configured model and the known-current default, so a retired name in .env costs
         # one classified 404 (and a paused breaker) rather than every answer.
-        for model in dict.fromkeys(m for m in (strong_override, config.groq_model, DEFAULT_GROQ_MODEL) if m):
+        for model in dict.fromkeys(m for m in (strong_override, *OPEN_STRONG, config.groq_model, DEFAULT_GROQ_MODEL) if m):
             out.append(Provider("groq", GROQ_URL, config.groq_api_key, model, "strong"))
     if config.gemini_api_key:
         out.append(Provider("gemini", GEMINI_URL, config.gemini_api_key, config.gemini_model, "strong"))

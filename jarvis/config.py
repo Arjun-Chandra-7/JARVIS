@@ -89,6 +89,18 @@ class Config:
     ollama_base: str = field(default_factory=lambda: os.environ.get("JARVIS_OLLAMA_BASE", "http://localhost:11434/v1"))
     ollama_model: str = field(default_factory=lambda: os.environ.get("JARVIS_OLLAMA_MODEL", _DEFAULTS.DEFAULT_OLLAMA_MODEL))
 
+    def __post_init__(self) -> None:
+        # JARVIS_BRAIN=ollama means "open-source models", not "only the 3B one on this laptop".
+        # Asked for on 24 Sep ("use open source models"), after the history showed the local
+        # qwen2.5:3b answering most turns with filler ("I see a text document… what can I assist
+        # you with now?"). With a Groq key the brain runs on open-weight models hosted there —
+        # gpt-oss-120b, falling back to gpt-oss-20b on a rate limit — and the local model is still
+        # the last resort when neither answers. JARVIS_BRAIN_LOCAL_ONLY=1 keeps it on this machine.
+        local_only = os.environ.get("JARVIS_BRAIN_LOCAL_ONLY", "").lower() in {"1", "true", "yes"}
+        if self.brain == "ollama" and self.groq_api_key and not local_only and _DEFAULTS.OPEN_STRONG:
+            self.brain = "groq"
+            self.groq_model = _DEFAULTS.OPEN_STRONG[0]
+
     # --- image understanding (screen vision; optional) ---
     # "auto"/"gemini" use Gemini (needs GEMINI_API_KEY); the local moondream path stays as a
     # graceful fallback only if you happen to run it. "none" disables vision.

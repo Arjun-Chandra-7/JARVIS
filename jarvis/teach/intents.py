@@ -113,12 +113,33 @@ _TEACH_SCREEN = re.compile(
     rf"(?:\s+(?:to\s+me|please|properly|simply|like\s+a\s+teacher|in\s+(?:english|hindi|hinglish)|(?:english|hindi|hinglish)\s+(?:mein|me|में)))*$")
 
 
+# Any "explain <anything> on my screen", however speech recognition bends the verb. From the log:
+# "I explained the poem on my screen.", "explained the part of the poem on my screen." and
+# "Explain me the poem on my screen." all missed, because only a fixed list of nouns was accepted
+# and "explained" is not "explain". A specific question ("why were they reluctant…") is excluded.
+_EXPLAIN_FORMS = (r"(?:i\s+)?(?:explain(?:ed|s|ing)?|teach(?:es|ing)?|taught|describe|break\s+down|walk\s+me\s+through|"
+                  r"help\s+me\s+understand|samjha\w*|sikha\w*|padha\w*|समझा\w*|सिखा\w*|पढ़ा\w*)")
+_ON_SCREEN = r"(?:on|in|from)\s+(?:my|the|this)\s+screen|(?:screen|स्क्रीन)\s+(?:pe|par|पे|पर)(?:\s+(?:wala|wali|jo|वाला|वाली|जो))?"
+_ANY_ON_SCREEN = re.compile(
+    rf"(?ix)^(?:(?:jarvis|hey)[\s,]+)*(?:(?:{_ON_SCREEN})[\s,]+)?{_EXPLAIN_FORMS}\b(?:\s+(?:me|to\s+me|us))?"
+    rf"(?:\s+(?!why\b|how\b|who\b|when\b|which\b)\S+){{0,10}}?\s*(?:(?:{_ON_SCREEN})\b.*)?$")
+_SPECIFIC_Q = re.compile(r"(?i)\b(?:why|how\s+come|who|when|which|what\s+does|what\s+did|what\s+values|also)\b|\?")
+
+
+def teaches_the_screen(s: str) -> bool:
+    if _TEACH_SCREEN.match(s):
+        return True
+    if not re.search(rf"(?i){_ON_SCREEN}", s) or _SPECIFIC_Q.search(s):
+        return False
+    return bool(_ANY_ON_SCREEN.match(s))
+
+
 def lesson(text: str) -> Optional[Intent]:
     """A request for a drawn lesson — on a named subject, or on whatever is on the screen."""
     s = _clean(text)
     if not s:
         return None
-    if _TEACH_SCREEN.match(s) and os.environ.get("JARVIS_VISUAL_EXPLAIN", "1") != "0":
+    if teaches_the_screen(s) and os.environ.get("JARVIS_VISUAL_EXPLAIN", "1") != "0":
         # Asked to be taught, not asked for a picture: if the drawing can't be made, the spoken
         # explanation still happens (``auto`` tells the caller to fall back rather than refuse).
         return Intent("lesson", "screen", topic_of(s), {"pause_first": bool(re.search(r"(?i)\bpause\b", s)), "auto": True})
@@ -129,7 +150,9 @@ def lesson(text: str) -> Optional[Intent]:
         return None
     subject = subject_of(s)
     topic = topic_of(s)
-    if not subject or _DEICTIC.match(subject) or len(subject) < 2:
+    # "The poem on the screen" is the poem on the screen — not a lesson about poems. Found in the
+    # log: it drew stanzas and rhyme in general while the poem itself sat unexplained.
+    if not subject or _DEICTIC.match(subject) or len(subject) < 2 or re.search(rf"(?i){_ON_SCREEN}", subject):
         return Intent("lesson", "screen", topic, {"pause_first": pause_first})
     if len(subject.split()) > 12:
         return None                           # a sentence, not a subject: leave it to the tutor

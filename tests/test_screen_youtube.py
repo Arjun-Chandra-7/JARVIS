@@ -354,7 +354,9 @@ def test_strong_tier_prefers_cloud_and_keeps_the_brain_last(monkeypatch):
     c.brain, c.groq_api_key, c.gemini_api_key, c.groq_model = "ollama", "g", "m", "retired/model"
     monkeypatch.delenv("JARVIS_STRONG_MODEL", raising=False)
     ids = [p.id for p in llm.candidates(c, "strong")]
-    assert ids[:2] == ["groq:retired/model", f"groq:{providers.DEFAULT_GROQ_MODEL}"]
+    # Open-weight models on Groq first (each its own quota), then the configured model.
+    assert ids[:4] == [*(f"groq:{m}" for m in providers.OPEN_STRONG), "groq:retired/model",
+                       f"groq:{providers.DEFAULT_GROQ_MODEL}"]
     assert ids[-1] == f"ollama:{c.ollama_model}" and f"gemini:{c.gemini_model}" in ids
     assert [p.id for p in llm.candidates(c)] == [f"ollama:{c.ollama_model}"]
     monkeypatch.setenv("JARVIS_STRONG_MODEL", "openai/gpt-oss-120b")

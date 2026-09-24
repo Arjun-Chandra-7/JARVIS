@@ -109,9 +109,13 @@ def speakable(reply: str) -> str:
         return "I can't reach my brain right now, sir. The backend isn't answering."
     if text.startswith("[") and ("error" in low[:40] or "exception" in low[:80]) or "traceback (most recent" in low:
         return "Something went wrong on my side, sir. The details are on screen."
-    from .speech_text import leaks_internals, without_internals
+    from .speech_text import is_filler, leaks_internals, without_internals
     if leaks_internals(text):
         text = without_internals(text) or "Sorry, sir, I got muddled on that one. Could you say it again?"
+    parts = re.split(r"(?<=[.!?।])\s+", text)
+    kept = [p for p in parts if p and not is_filler(p)]
+    if kept and len(kept) < len(parts):
+        text = " ".join(kept)
     return text
 
 
@@ -809,10 +813,44 @@ class VoiceSession:
         from .speech_text import normalize
         return normalize(text)
 
+    def _note_said(self, text: str) -> None:
+        """What Jarvis just said, kept briefly so its echo is not taken for the person."""
+        said = getattr(self, "_recently_said", None)
+        if said is None:
+            said = self._recently_said = []
+        now = time.monotonic()
+        for piece in re.split(r"(?<=[.!?।])\s+", text or ""):
+            words = _words(piece)
+            if words:
+                said.append((now, words))
+        del said[:-40]
+
+    def _is_own_echo(self, transcript: str) -> bool:
+        heard = _words(transcript)
+        if not heard:
+            return False
+        now = time.monotonic()
+        recent = [w for at, w in getattr(self, "_recently_said", []) if now - at < ECHO_WINDOW_S]
+        joined = " ".join(heard)
+        for words in recent:
+            said = " ".join(words)
+            if joined == said:
+                return True
+            # Three words or more inside something just said: "what would you like" inside "what
+            # would you like to do next". Shorter ones ("clear", "yes") are the person's.
+            if len(heard) >= 3 and joined in said:
+                return True
+            if len(heard) >= 3:
+                import difflib
+                if difflib.SequenceMatcher(None, joined, said).ratio() >= 0.82:
+                    return True
+        return False
+
     def _speak(self, text: str, force: bool = False) -> None:
         text = self._clean_for_speech(text)
         if not text.strip():
             return
+        self._note_said(text)
         self._speaking_text = text
 
         def play(stop, on_first_audio, on_level):
@@ -846,6 +884,7 @@ class VoiceSession:
 
         def begin(i: int, at_ms: float) -> None:
             started.append(i)
+            self._note_said(phrases[i])
             # The words reach the HUD as they are said, like a streamed reply's.
             self.on_event("reply", phrases[i])
             on_start(i, at_ms)
@@ -935,6 +974,8 @@ class VoiceSession:
                         from .speech_text import with_honorific
                         ack = with_honorific(ACKNOWLEDGEMENTS[1])
                         acked.append(ack)
+                        if hasattr(self, "_note_said"):
+                            self._note_said(ack)
                         yield ack + " "
                         piece = fragments.get()
                     first = False
@@ -953,7 +994,13 @@ class VoiceSession:
             # screen, and then read it as Jarvis fell silent.
             if acked and sentence.strip() in acked[0]:
                 return
+            from .speech_text import is_filler
+            if is_filler(sentence):
+                return                  # not said (local_tts drops it too), so not shown
             self.on_event("reply", sentence)
+            note = getattr(self, "_note_said", None)     # bookkeeping never stands in the way
+            if note:
+                note(sentence)
 
         speaker = threading.Thread(
             target=lambda: spoken.append(
@@ -1701,6 +1748,20 @@ class VoiceSession:
         from .speech_text import language_of
 
         while transcript:
+            # His own voice, heard back through the microphone. From the history: "you> Give me a
+            # moment." and "you> What would you like?" — both Jarvis's words — answered as requests.
+            if not self._dictating and self._is_own_echo(transcript):
+                voice_log.metric("ignored", stage="own_echo")
+                self.on_event("timing", "ignored: my own voice")
+                transcript = self._record_transcript(wait_s=self._conversation.window_s)
+                continue
+            # Only the name: "Hey Jarvis." A brain asked this answers "Hello… Good evening… how can
+            # I assist?" every time. A plain "Yes?" and listening is what the name asks for.
+            if _ONLY_THE_NAME.match(transcript.strip()):
+                self.on_event("heard", transcript)
+                self._say("Yes?")
+                transcript = self._record_transcript(wait_s=max(8.0, self._conversation.window_s))
+                continue
             self.on_event("heard", "(dictated text)" if self._dictating else transcript)
 
             # --- dictation: every word is typed, nothing is obeyed ---
@@ -2030,7 +2091,16 @@ class VoiceSession:
             if self._ptt is not None:
                 hint += f"  ·  or press {self.config.ptt_key}"
             self.on_event("ready", hint)
-            self._speak(self._greeting())  # Jarvis speaks first
+            # Once per login, not on every restart: restarted after every change, "Good evening,
+            # sir. Jarvis online" was heard again and again. The marker lives in the runtime
+            # directory, which is emptied at logout and reboot.
+            marker = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "jarvis-greeted"
+            if not marker.exists():
+                self._speak(self._greeting())
+                try:
+                    marker.touch()
+                except OSError:
+                    pass
             while True:
                 try:
                     kind, payload = await self._wait_for_wake_or_event()
@@ -2052,6 +2122,15 @@ class VoiceSession:
             self.mic.stop()
             self.mic.delete()
             self.wake.delete()
+
+
+ECHO_WINDOW_S = 12.0
+_ONLY_THE_NAME = re.compile(
+    r"(?i)^(?:(?:hey|hi|hello|ok|okay|yo)[\s,]+)?(?:jarvis|javis|jarvi|jarves|jarviz|jars|jervis|travis|h\.?r\.?i\.?s)[\s.!?,]*$")
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9ऀ-ॿ']+", (text or "").lower())
 
 
 _REPLY_WORDS = re.compile(

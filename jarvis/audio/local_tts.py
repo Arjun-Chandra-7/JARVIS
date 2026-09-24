@@ -354,13 +354,13 @@ def speak_as_it_arrives(
     said: list[str] = []
 
     def pieces() -> Iterator[str]:
-        from .speech_text import leaks_internals
+        from .speech_text import is_filler, leaks_internals
 
         for sentence in sentences_as_they_arrive(deltas):
             if stop_event is not None and stop_event.is_set():
                 return
-            if leaks_internals(sentence):
-                continue                  # a tool name or a written-out call: never said aloud
+            if leaks_internals(sentence) or is_filler(sentence):
+                continue                  # a tool name, a greeting, an offer of help: never said
             said.append(sentence)
             if on_sentence is not None:
                 # Here, and not around `deltas`: this is where whole sentences exist. Reporting

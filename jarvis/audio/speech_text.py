@@ -242,6 +242,25 @@ def _apply_pronunciations(t: str, pairs: Iterable[tuple[str, str]]) -> str:
 _INTERNALS = re.compile(r"<\s*/?\s*function\b|\bfunction=|\b[a-z]{2,}(?:_[a-z]{2,})+\b|\btool[_\s]call\b|\bsystem\s+prompt\b")
 
 
+# Greetings and offers of help the model tacks on. From the history, after the wake word alone:
+# "Hello. Is there a particular task or information you need help with tonight?", "Good evening.",
+# "Evening.", "What can I assist you with now?", "What would you like to do next?" — said on almost
+# every turn, and then heard back through the microphone as if the person had said them.
+_FILLER = re.compile(
+    r"(?ix)^(?:(?:hello|hi|hey)(?:\s+there)?|(?:good\s+)?(?:morning|afternoon|evening|night)(?:\s+sir)?|i'?m\s+here(?:,?\s+sir)?|"
+    r"(?:how|what)\s+(?:can|may)\s+i\s+(?:help|assist)(?:\s+you)?(?:\s+with)?(?:\s+(?:today|tonight|now|next))?|"
+    r"what\s+can\s+i\s+(?:help|assist)\s+(?:you\s+)?with(?:\s+(?:today|tonight|now|next))?|"
+    r"what\s+would\s+you\s+like(?:\s+(?:to\s+(?:do|discuss|know)|me\s+to\s+do))?(?:\s+(?:next|now|today))?|"
+    r"is\s+there\s+(?:anything|something)(?:\s+else)?\s+(?:i\s+can\s+(?:help|do)|you\s+need).*|"
+    r"is\s+there\s+a\s+particular\s+task.*|(?:let\s+me\s+know|feel\s+free\s+to\s+(?:ask|call)).*|"
+    r"how\s+can\s+i\s+be\s+of\s+(?:help|assistance).*)[\s.!?,]*(?:sir)?[\s.!?]*$")
+
+
+def is_filler(sentence: str) -> bool:
+    """A standalone greeting or offer of help: never worth saying."""
+    return bool(_FILLER.match((sentence or "").strip()))
+
+
 def leaks_internals(sentence: str) -> bool:
     return bool(_INTERNALS.search(sentence or ""))
 

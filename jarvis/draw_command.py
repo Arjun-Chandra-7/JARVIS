@@ -82,6 +82,7 @@ def parse(text: str) -> Optional[str]:
     # phrase finds pictures of picture frames.
     subject = re.sub(r"^(?:a\s+|an\s+|the\s+)?(?:picture|image|photo|drawing|sketch)\s+of\s+"
                      r"(?:a\s+|an\s+|the\s+)?", "", subject, flags=re.IGNORECASE).strip()
+    subject = re.sub(r"(?i)\s+(?:for\s+me|for\s+us|please|quickly|here|now)$", "", subject).strip()
     # "draw a line", "draw the curtains" — not requests for a picture of something.
     if not subject:
         return None
