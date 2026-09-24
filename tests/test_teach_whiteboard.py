@@ -133,3 +133,25 @@ def test_outline_only_tracing_skips_hatching(tmp_path):
     with_hatch = strokes.from_image(p, 20000)
     outline = strokes.from_image(p, 20000, hatch=False)
     assert outline is not None and len(outline.strokes) <= len(with_hatch.strokes)
+
+
+# --------------------------------------------------------------------------- from the log, 24 Sep 21:46–21:47
+@pytest.mark.parametrize("heard,subject", [("H.R.I.S, draw me a dragon.", "dragon"), ("Armi de Mona Lisa.", "mona lisa"),
+                                           ("Hey Javis, draw me a cat", "cat")])
+def test_misheard_draw_requests_still_draw(heard, subject):
+    assert draw_command.parse(heard) == subject
+
+
+def test_the_brain_has_a_drawing_tool():
+    from jarvis.agent import chatgpt_core, prompt
+    assert "draw_picture" in (ROOT / "jarvis/agent/groq_tools.py").read_text(encoding="utf-8")
+    assert "draw_picture" in (ROOT / "jarvis/agent/chatgpt_core.py").read_text(encoding="utf-8")
+    assert "draw_picture" in (ROOT / "jarvis/agent/prompt.py").read_text(encoding="utf-8")
+
+
+def test_one_word_clear_in_the_follow_up_window_is_a_request():
+    from jarvis.audio.conversation import ACT, ConversationSession
+    c = ConversationSession(window_s=8)
+    c.wake()
+    c.replied("Drew cat on the screen.")
+    assert c.judge("clear.") == ACT

@@ -80,6 +80,7 @@ ALIASES: dict[str, str] = {
     "capture_screen": "look at my screen, what's on screen, screenshot, read this error, "
                       "observe a desktop app or game before and after acting, see the basket",
     "set_timer": "timer, countdown, remind me in n minutes, alarm for n minutes",
+    "draw_picture": "draw, sketch, draw me, drawing of, whiteboard, draw it on screen, show me a drawing",
     "set_reminder": "remind me at a time, reminder, don't let me forget, at six pm",
     "media_control": "pause music, play, next track, skip song, resume playback",
     "set_volume": "volume, louder, quieter, mute level",

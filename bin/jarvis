@@ -109,6 +109,26 @@ case "$1" in
         # :8770 to actually free up before bringing the backend back, and clears any
         # unit left in `failed` so it can start cleanly.
         shift || true
+        # Take the latest pushed work first, so "jarvis restart" is the whole update: fetch the
+        # branch work is published to and fast-forward onto it. Only a fast-forward, only on a
+        # clean checkout — local edits are never touched — and a failure here never stops the
+        # restart. JARVIS_UPDATE_FROM picks the branch; JARVIS_UPDATE_FROM=none turns it off.
+        UPDATE_FROM="${JARVIS_UPDATE_FROM:-origin/live-failure-repair}"
+        if [ "$UPDATE_FROM" != "none" ] && git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
+            if [ -z "$(git -C "$REPO" status --porcelain --untracked-files=no)" ]; then
+                before="$(git -C "$REPO" rev-parse --short HEAD)"
+                if git -C "$REPO" fetch --quiet "${UPDATE_FROM%%/*}" "${UPDATE_FROM#*/}" 2>/dev/null \
+                   && git -C "$REPO" merge --ff-only --quiet "$UPDATE_FROM" 2>/dev/null; then
+                    after="$(git -C "$REPO" rev-parse --short HEAD)"
+                    [ "$before" != "$after" ] && echo "Updated $before → $after:" \
+                        && git -C "$REPO" log --oneline "$before..$after" | sed 's/^/  /'
+                else
+                    echo "Not updated: $UPDATE_FROM can't be fast-forwarded onto this checkout."
+                fi
+            else
+                echo "Not updated: the checkout has local changes."
+            fi
+        fi
         exec "$REPO/scripts/start.sh" --restart "$@"
         ;;
     sleep|--sleep|wake|--wake)

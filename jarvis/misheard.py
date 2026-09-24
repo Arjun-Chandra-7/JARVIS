@@ -22,6 +22,8 @@ _FIXES: list[tuple[re.Pattern, str]] = [
     # "Drone the Mona Lisa here!"  /  "runnyam onarisa"
     (re.compile(r"\b(?:drone|drawn|drow|throw)\s+(?=me\b|the\b|a\b|an\b)", re.I), "draw "),
     (re.compile(r"\brunny\s*am\b", re.I), "draw me"),
+    # Heard live for "draw me the Mona Lisa": "Armi de Mona Lisa." At the start of a sentence only.
+    (re.compile(r"^(?:armi|arme|drami|dromi|jaw\s+me|dra\s+me)\s+(?:de|the|da|a)\b", re.I), "draw me the"),
     # "…website and Romina Mona Lisa" — "draw me" as it arrives. Not "Android", which is a real
     # word that turns "open android studio" into nonsense; that one is handled where the sentence
     # is known to be about a drawing surface.

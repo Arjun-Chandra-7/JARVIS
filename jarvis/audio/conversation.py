@@ -127,7 +127,9 @@ _FILLER = {"hmm", "hm", "mm", "mhm", "uh", "um", "uhh", "umm", "ah", "oh", "huh"
 
 # One word that is a whole request on its own, even without the name.
 _ONE_WORD_COMMANDS = {"pause", "play", "stop", "next", "previous", "skip", "louder", "quieter",
-                      "mute", "unmute", "resume", "back", "cancel", "again", "repeat", "search"}
+                      "mute", "unmute", "resume", "back", "cancel", "again", "repeat", "search",
+                      # The drawing on screen: "clear." was heard and ignored as noise in the log.
+                      "clear", "undo", "redo", "continue", "bigger", "smaller", "hide", "erase"}
 
 # Whisper's well-known hallucinations on silence and background audio.
 _PHANTOM = re.compile(

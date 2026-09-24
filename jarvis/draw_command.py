@@ -69,7 +69,11 @@ async def generate_then_draw(subject: str) -> str:
 def parse(text: str) -> Optional[str]:
     # "Find a free whiteboard site online and draw me the Mona Lisa" is a request to draw the
     # Mona Lisa; the whiteboard was the means. It reached a browser path that assumed Chromium.
-    text = _FIND_A_BOARD.sub("", (text or "").strip())
+    from .misheard import fix
+    text = _FIND_A_BOARD.sub("", fix((text or "").strip()))
+    # A misheard wake word in front — "H.R.I.S, draw me a dragon", found in the log — is a name
+    # being called, not part of the request: one short vocative before a comma is dropped.
+    text = re.sub(r"^(?:hey\s+)?[\w.]{1,10}(?:\s+[\w.]{1,10})?,\s*(?=(?:please\s+)?(?:draw|sketch|paint)\b)", "", text, flags=re.I)
     match = _DRAW.match((text or "").strip().rstrip(".!?"))
     if not match:
         return None

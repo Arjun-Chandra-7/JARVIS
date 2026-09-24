@@ -236,5 +236,5 @@ def test_a_follow_up_about_what_was_on_screen_keeps_its_material(monkeypatch):
 
 def test_find_a_whiteboard_and_draw_is_a_drawing():
     from jarvis.draw_command import parse
-    assert parse("Find a free whiteboard site online and draw me the Mona Lisa.") == "Mona Lisa"
-    assert parse("Hey Jarvis, find an online whiteboard site and draw me the Mona Lisa") == "Mona Lisa"
+    assert parse("Find a free whiteboard site online and draw me the Mona Lisa.").lower() == "mona lisa"
+    assert parse("Hey Jarvis, find an online whiteboard site and draw me the Mona Lisa").lower() == "mona lisa"

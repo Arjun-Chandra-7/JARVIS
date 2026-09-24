@@ -369,6 +369,16 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         tid = timers.set_timer(_i(a.get("seconds"), 60), a.get("label", ""))
         return f"timer #{tid} set."
 
+    @tool("draw_picture",
+          "Draw a picture ON THE USER'S SCREEN, like a whiteboard. Jarvis makes a line drawing of "
+          "'subject' with the local image generator and draws it as pen strokes. Use for any request to "
+          "draw, sketch or show a drawing of something. subject = what to draw, e.g. 'a dragon'. "
+          "subject 'it' draws the last picture Jarvis generated.",
+          {"subject": {"type": "string"}}, ["subject"])
+    async def draw_picture(a):
+        from ..draw_command import run as draw_run
+        return await draw_run((a.get("subject") or "").strip() or "it")
+
     @tool("set_reminder", "Reminder at an ISO-8601 time (persists).",
           {"when": {"type": "string"}, "text": {"type": "string"}}, ["when", "text"])
     async def set_reminder(a):
