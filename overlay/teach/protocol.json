@@ -31,8 +31,8 @@
     "cmds": "commands"
   },
   "ops": {
-    "scene.create": {"scene": "id", "monitor": "monitor", "theme": "?theme", "region": "?rect", "objects": "?objects"},
-    "scene.update": {"theme": "?theme", "transform": "?transform"},
+    "scene.create": {"scene": "id", "monitor": "monitor", "theme": "?theme", "region": "?rect", "objects": "?objects", "hold_s": "?int:5..3600"},
+    "scene.update": {"theme": "?theme", "transform": "?transform", "hold_s": "?int:5..3600"},
     "scene.clear": {"group": "?id", "keep_groups": "?ids"},
     "shape.add": {"object": "object"},
     "shape.update": {"id": "id", "patch": "patch"},

@@ -23,7 +23,8 @@ const path = require("path");
 const { make } = require("./protocol.js");
 
 const SPEC = JSON.parse(fs.readFileSync(path.join(__dirname, "protocol.json"), "utf8"));
-const CONTROL_ACTIONS = new Set(["dismiss", "pen", "pen-on", "pen-off", "reset", "pen-undo", "pen-redo", "displays"]);
+const CONTROL_ACTIONS = new Set(["dismiss", "pen", "pen-on", "pen-off", "reset", "pen-undo", "pen-redo", "displays", "state", "clear"]);
+const DEFAULT_HOLD_S = 150;
 const PEN_CEILING_MS = 5 * 60 * 1000;
 
 function setup({ app, BrowserWindow, ipcMain, screen, globalShortcut, port, shortcuts, log }) {
@@ -35,6 +36,8 @@ function setup({ app, BrowserWindow, ipcMain, screen, globalShortcut, port, shor
   let penTimer = null;
   let monitor = null;           // the Display the scene is on
   let quitting = false;
+  let holdS = DEFAULT_HOLD_S;
+  let holdTimer = null;
   const stats = { batches: 0, rejected: 0, dismissals: 0 };
 
   // ------------------------------------------------------------------ backend
@@ -149,15 +152,18 @@ function setup({ app, BrowserWindow, ipcMain, screen, globalShortcut, port, shor
     win.showInactive();
     win.setAlwaysOnTop(true, "screen-saver");
     win.webContents.send("teach-control", "visible", true);
+    post("teach_event", { type: "visibility", shown: true });
   }
 
   function hide() {
     if (!win || win.isDestroyed()) return;
     win.setIgnoreMouseEvents(true);
+    clearTimeout(holdTimer);
     if (shown) {
       shown = false;
       win.hide();
       win.webContents.send("teach-control", "visible", false);
+      post("teach_event", { type: "visibility", shown: false });
     }
   }
 
@@ -213,8 +219,27 @@ function setup({ app, BrowserWindow, ipcMain, screen, globalShortcut, port, shor
       place(d);
     }
     stats.batches++;
+    for (const c of batch.cmds) {
+      if (c.op === "scene.create") holdS = c.hold_s || DEFAULT_HOLD_S;
+      else if (c.op === "scene.update" && c.hold_s) holdS = c.hold_s;
+    }
     show();
+    armHold();
     win.webContents.send("teach-batch", batch, recvAt);
+  }
+
+  // A scene nobody is updating goes away by itself. Its owner's own clean-up lives in the process
+  // that drew it; when that process has gone — found live: a lesson left on screen after the
+  // script that drew it exited, with nothing that could clear it — this is the clean-up.
+  // "Leave it" and requested drawings ask for a long hold instead of the default.
+  function armHold() {
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(() => {
+      if (pen || !shown) return;
+      hide();
+      if (win && !win.isDestroyed()) win.webContents.send("teach-control", "dismiss");
+      post("teach_event", { type: "expired", after_s: holdS });
+    }, holdS * 1000);
   }
 
   function handleControl(text) {
@@ -226,6 +251,14 @@ function setup({ app, BrowserWindow, ipcMain, screen, globalShortcut, port, shor
     }
     if (!c || !CONTROL_ACTIONS.has(c.action)) return;
     if (c.action === "displays") post("teach_event", { type: "displays", displays: describeDisplays() });
+    else if (c.action === "state") post("teach_event", { type: "visibility", shown, pen });
+    else if (c.action === "clear") {
+      // "Clear the screen" from a process that did not draw what is there: it knows nothing to
+      // clear, so the overlay does it. Unlike dismiss, the voice is left alone.
+      setPen(false, true);
+      hide();
+      if (win && !win.isDestroyed()) win.webContents.send("teach-control", "dismiss");
+    }
     else if (c.action === "dismiss") dismiss(c.by === "voice" ? "voice" : "command");
     else if (c.action === "reset") {
       // A restarted voice process: whatever it drew before is nobody's any more.

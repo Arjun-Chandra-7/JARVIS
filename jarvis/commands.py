@@ -80,6 +80,11 @@ def deterministic_handlers():
         reply = await f(text, background=True)
         return reply.text if reply else None
 
+    async def generate_and_draw(text, config):
+        from .draw_command import generate_then_draw, make_and_draw
+        subject = make_and_draw(text)
+        return await generate_then_draw(subject) if subject else None
+
     async def screen_follow_up(text, config):
         # "What values does this show about Nicola?" right after the chapter on screen was
         # explained: answered from the same material, not by a brain that never saw it.
@@ -189,6 +194,9 @@ def deterministic_handlers():
         # "visually", or a control while a lesson is on screen), and "pause and explain this step
         # visually" would otherwise be split by chain into a pause and a question.
         ("overlay_lesson", overlay_lesson),
+        # "Generate an image of a dragon and draw it": one request, not two for chain to split —
+        # the generator's picture is recreated on the overlay as pen strokes.
+        ("generate_and_draw", generate_and_draw),
         # YouTube before chain: "open YouTube and open a lecture on X" is one request, and the
         # chain splitter answered its second half with "I couldn't make a start".
         ("youtube", youtube),

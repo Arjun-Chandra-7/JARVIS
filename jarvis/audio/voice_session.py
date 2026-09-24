@@ -1943,6 +1943,7 @@ class VoiceSession:
             # Whatever a previous voice process drew is nobody's lesson now.
             from ..teach.bus import overlay as _overlay
             threading.Thread(target=_overlay().control, args=("reset",), daemon=True).start()
+            _overlay().listen()          # knows what is on the overlay before anyone asks
         except Exception:  # noqa: BLE001
             pass
         self.mic.start()

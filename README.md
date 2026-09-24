@@ -194,6 +194,13 @@ he speaks, each picture appearing as its words are heard.
   again, undo, redo, make it bigger/smaller, move it left/right, leave it, clear it. Talking over
   him pauses the pictures with the voice; a cough does not end the lesson. A finished lesson
   clears itself after a few seconds unless you say "leave it".
+* **A whiteboard for the image generator.** "Draw me a cat" makes a clean line drawing with the
+  image generator on this machine (about 5 seconds) and traces it onto the screen, outlines first.
+  "Generate an image of a dragon and draw it" draws the generator's own picture; "draw it" after
+  making one uses that. Without the generator, a reference picture found online is traced instead.
+* **Nothing stays stuck.** A drawing nobody updates clears itself after a few minutes (a lesson
+  you said "leave it" to, or a drawing you asked for, after an hour), and "clear the screen" or
+  "remove the drawing" works whichever part of Jarvis drew it.
 * **Drawing:** "draw a triangle / circle / arrow", "circle this", "highlight this", "label this as
   X", "erase that", "arrow from this to that". "This" means the thing most recently drawn or
   pointed at on the overlay; with nothing there he asks which.

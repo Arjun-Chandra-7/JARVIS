@@ -5,6 +5,23 @@ piece was actually taken, and what is next.
 
 ---
 
+## Eighth pass (2026-09-24): the generator as a whiteboard; drawings that never stick
+
+* **Stuck drawing, root-caused:** the auto-clear timer lived in the process that drew; when it
+  exited, nothing could clear the scene, and "clear it" failed because the voice's own runner
+  had drawn nothing. Now the overlay expires a scene after `hold_s` without updates (150 s
+  default, 3600 s for "leave it" and requested drawings), reports its visibility, and "clear the
+  screen" works from any process (`teach_control: clear`). Verified live: a 5 s hold expired an
+  orphaned scene; a fresh process cleared another's drawing in 0.2 s.
+* **Image generator → overlay:** "draw me X" generates line art locally (SD-Turbo, 4.4–4.6 s)
+  and traces its outlines onto the overlay; "generate an image of X and draw it" traces the
+  generator's own picture; "draw it" uses the last one. The first live cat came out as a band of
+  hatching — hatch strokes were listed first and spent the budget — so the overlay traces
+  outlines only (`strokes.from_image(hatch=False)`, 20 000 points). Live: 238 strokes, a
+  recognisable cat, 15 s end to end.
+
+Suite: 2556 → 2564 passing.
+
 ## Seventh pass (2026-09-24): lessons on any subject; wrong answers found in the history
 
 **Any subject.** `jarvis/teach/lessons/generic.py`: the strong model writes the lesson as JSON,

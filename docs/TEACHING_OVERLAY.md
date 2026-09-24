@@ -126,5 +126,6 @@ or the renderer crashes (the voice process is told and redraws the current step)
   lesson-sized requests a minute; Gemini currently answers `permission_denied` for the configured
   key. When neither answers, Jarvis says so and draws nothing. Pythagoras and RAG are hand-built
   and work offline.
-* **A lesson owner that exits without clearing leaves its drawing** until the next lesson, a
-  voice-process restart (which resets the overlay) or the emergency shortcut.
+* **Scene expiry is by silence, not by owner.** The overlay clears a scene 150 s after its last
+  update (`hold_s` on `scene.create`/`scene.update`; "leave it" and requested drawings ask for
+  3600 s). A lesson whose owner died mid-way disappears after that delay, not at once.

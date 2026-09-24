@@ -77,6 +77,16 @@ def language_of(text: str) -> str:
     return reply_language(text)
 
 
+CLEARING = ("clear", "hide", "clear_mine")
+
+
+def on_screen() -> bool:
+    """Whether the overlay shows anything at all — whichever process drew it. Found live: a lesson
+    left up by a process that had exited could not be cleared by voice, because the voice's own
+    runner had drawn nothing and so had nothing to clear."""
+    return overlay().is_visible()
+
+
 def wants(text: str, r: Optional[LessonRunner] = None) -> bool:
     """Cheap first look: could this be for the overlay at all?"""
     r = r or runner()
@@ -88,6 +98,8 @@ def wants(text: str, r: Optional[LessonRunner] = None) -> bool:
     busy = r.active or not r.scene.empty()
     if busy and c:
         return True
+    if c and c.name in CLEARING and on_screen():
+        return True                    # drawn by another process, or one that has gone: still clearable
     if busy and r.lesson and r.lesson.extras.get("generic"):
         return about_the_lesson(text)
     return bool(busy and r.lesson and intents.follow_up(text, r.lesson.topic))
@@ -266,6 +278,9 @@ async def _control(c: intents.Intent, speaker: Speaker, lang: str, background: b
     if n == "pen_off":
         ov.control("pen-off")
         return Reply(_say("pen_off", lang))
+    if not busy and n in CLEARING and on_screen():
+        ov.control("clear")
+        return Reply(_say("cleared", lang))
     if not busy:
         return None
     if n == "pause":

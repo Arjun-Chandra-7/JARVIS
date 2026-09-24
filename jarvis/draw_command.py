@@ -35,6 +35,37 @@ _FIND_A_BOARD = re.compile(
     r"(?:whiteboard|drawing|canvas)(?:\s+(?:site|website|app))?(?:\s+online)?\s*(?:,\s*)?(?:and|then)\s+")
 
 
+# "Generate an image of a dragon and draw it (on the whiteboard / on screen)": the generator's own
+# picture, recreated as pen strokes. Not line art made for tracing — the picture that was asked for.
+_MAKE_AND_DRAW = re.compile(
+    r"""(?ix)^(?:(?:hey\s+)?jarvis[,\s]+)?(?:please\s+)?(?:can\s+you\s+)?
+        (?:generate|create|make|imagine|render)\s+(?:me\s+)?(?:a\s+|an\s+)?(?:ai\s+)?
+        (?:image|picture|photo|painting|illustration|drawing)\s+(?:of\s+)?(?P<subject>.+?)\s*,?\s+
+        (?:and|then|and\s+then)\s+(?:draw|sketch|recreate|redraw|trace)\s+(?:it|that|this)
+        (?:\s+(?:on|onto|in)\s+(?:the\s+|my\s+|a\s+)?(?:whiteboard|screen|board|overlay|canvas))?
+        (?:\s+please)?$""")
+
+
+def make_and_draw(text: str) -> Optional[str]:
+    m = _MAKE_AND_DRAW.match((text or "").strip().rstrip(".!?"))
+    return m.group("subject").strip().strip("\"'") if m else None
+
+
+async def generate_then_draw(subject: str) -> str:
+    """Make the picture with the image generator, then recreate that same picture on the overlay."""
+    from . import context
+    from .vision import imagine, reference, strokes
+
+    try:
+        made = await asyncio.to_thread(imagine.generate, subject)
+    except imagine.Unavailable as exc:
+        return f"I can't make pictures right now — {exc}"
+    except Exception as exc:  # noqa: BLE001
+        return f"I couldn't make that picture — {type(exc).__name__}."
+    context.note_picture(str(made.path))
+    return await _draw_on_overlay("it", reference, strokes, title=subject)
+
+
 def parse(text: str) -> Optional[str]:
     # "Find a free whiteboard site online and draw me the Mona Lisa" is a request to draw the
     # Mona Lisa; the whiteboard was the means. It reached a browser path that assumed Chromium.
@@ -120,11 +151,11 @@ async def run(subject: str, config=None) -> str:
             f"It's a line rendering, not a copy.")
 
 
-OVERLAY_BUDGET = 12000        # points: what the overlay carries comfortably in a few batches
+OVERLAY_BUDGET = 20000        # points: outlines only; sent in batches of ≤ 6000
 OVERLAY_STROKES = 380         # under the overlay's 400-object limit, leaving room for the frame
 
 
-async def _draw_on_overlay(subject: str, reference, strokes) -> str:
+async def _draw_on_overlay(subject: str, reference, strokes, title: str = "") -> str:
     """The same line drawing, on the teaching overlay: a panel at the side of the screen, strokes
     drawn in batches so the picture builds up rather than appearing all at once."""
     from .teach import layout
@@ -132,12 +163,14 @@ async def _draw_on_overlay(subject: str, reference, strokes) -> str:
     from .teach.runner import runner
     from .teach.scene import add, anim, create, obj
 
-    picture = await asyncio.to_thread(reference.find, subject)
+    picture, source = await _picture_for(subject, reference)
     if picture is None:
-        return f"I couldn't find a picture of {subject} to work from."
-    plan = await asyncio.to_thread(strokes.from_image, picture, OVERLAY_BUDGET)
+        return source
+    # Outlines only, longest first: hatching listed first used to spend the whole budget on the
+    # top band of shading — found live, "draw me a cat" came out as a strip of diagonal lines.
+    plan = await asyncio.to_thread(lambda: strokes.from_image(picture, OVERLAY_BUDGET, hatch=False))
     if plan is None:
-        return f"I found a picture of {subject} but couldn't get any lines out of it."
+        return f"I got a picture of {subject} but couldn't get any lines out of it."
     area = await asyncio.to_thread(overlay().work_area)
     k = layout.scale_for(area)
     P = layout.panel(area, 760 * k, 900 * k)
@@ -149,7 +182,7 @@ async def _draw_on_overlay(subject: str, reference, strokes) -> str:
     if r.active or not r.scene.empty():
         r.clear()
     r.draw([create("drawing", area.get("index", 0)),
-            add(obj("draw-panel", "panel", x=P["x"], y=P["y"], w=P["w"], h=P["h"], title=subject[:40], anim=anim("fade", 200)))])
+            add(obj("draw-panel", "panel", x=P["x"], y=P["y"], w=P["w"], h=P["h"], title=(title or subject)[:40], anim=anim("fade", 200)))])
     batch, points, sent = [], 0, 0
     for i, s in enumerate(kept):
         pts = [[round(float(x), 1), round(float(y), 1)] for x, y in s[:4000]]
@@ -163,12 +196,49 @@ async def _draw_on_overlay(subject: str, reference, strokes) -> str:
             batch, points = [], 0
     if batch:
         r.draw(batch, checkpoint=False)
-    return (f"Drew {subject} on the screen — {len(kept)} strokes, from a reference picture. "
-            "It's a line rendering, not a copy. Say “clear it” when you're done.")
+    return (f"Drew {title or subject} on the screen — {len(kept)} strokes, from {source}. "
+            "Say “clear it” when you're done.")
+
+
+# Line art traces far better than a photograph or a shaded render: one clean outline becomes one
+# stroke, where shading becomes hundreds of hatches that read as noise on the overlay.
+LINE_ART = ("{subject}, clean black ink line drawing on a plain white background, bold simple outlines, "
+            "no shading, no text, whiteboard sketch style")
+
+
+async def _picture_for(subject: str, reference) -> tuple[Optional[Path], str]:
+    """(picture, where it came from) — or (None, what to say).
+
+    In order: the picture Jarvis just generated, when the request points at it ("draw it");
+    otherwise a new line drawing from the image generator on this machine; otherwise a reference
+    picture found online. The generator comes first because what it makes is drawn to be traced,
+    and because it needs no network."""
+    from . import context
+
+    if _POINTS_AT_A_PICTURE.match(subject.strip()):
+        made = context.last_picture()
+        if made and Path(made).exists():
+            return Path(made), "the picture I just generated"
+        return None, "I don't have a picture to draw, sir — ask me to generate one first, or name what to draw."
+    try:
+        from .vision import imagine
+        if imagine.ready():
+            made = await asyncio.to_thread(imagine.generate, LINE_ART.format(subject=subject))
+            context.note_picture(str(made.path))
+            return Path(made.path), f"a line drawing I generated ({made.seconds} seconds)"
+    except Exception:  # noqa: BLE001 — no generator here: a reference picture will do
+        pass
+    picture = await asyncio.to_thread(reference.find, subject)
+    if picture is None:
+        return None, f"I couldn't make or find a picture of {subject} to work from."
+    return picture, "a reference picture"
 
 
 async def handle(text: str, config=None) -> Optional[str]:
     """None means 'not a drawing request'."""
+    both = make_and_draw(text)
+    if both:
+        return await generate_then_draw(both)
     subject = parse(text)
     if subject is None:
         return None

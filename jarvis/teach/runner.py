@@ -85,6 +85,9 @@ def instant(cmds: list) -> list:
     return out
 
 
+KEEP_HOLD_S = 3600      # "leave it" and requested drawings: kept for an hour, not forever
+
+
 class LessonRunner:
     IDLE, PLAYING, PAUSED, DONE = "idle", "playing", "paused", "done"
 
@@ -359,10 +362,12 @@ class LessonRunner:
             if self.lesson is None and self.scene.empty():
                 self.overlay.new_generation("draw")
             self._watch()
-            self._send(cmds)
+            # A drawing the person asked for stays until cleared — the overlay is told to hold it
+            # for an hour rather than expire it as an abandoned scene.
+            self._send(list(cmds) + [{"op": "scene.update", "hold_s": KEEP_HOLD_S}])
             if self.status == self.IDLE:
                 self.status = self.DONE
-            self.keep = True                  # a drawing the person asked for stays until cleared
+            self.keep = True
 
     def undo(self) -> bool:
         with self.lock:
@@ -384,6 +389,8 @@ class LessonRunner:
         with self.lock:
             self.keep = True
             self._cancel_cleanup()
+            if self.lesson is not None or not self.scene.empty():
+                self._send([{"op": "scene.update", "hold_s": KEEP_HOLD_S}])
 
     def clear(self, group: Optional[str] = None) -> None:
         with self.lock:

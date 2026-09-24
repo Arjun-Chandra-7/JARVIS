@@ -109,6 +109,8 @@ class Overlay:
         self.listeners: list[Callable[[dict], None]] = []
         self.displays: list[dict] = []
         self.pen = False
+        self.visible = False          # whether the overlay has anything on it, whoever drew it
+        self.state_known = threading.Event()
         self.last_dismissed = 0.0
         self._listening = False
 
@@ -163,6 +165,11 @@ class Overlay:
             self.displays = evt["displays"]
         elif t == "pen":
             self.pen = bool(evt.get("on"))
+        elif t == "visibility":
+            self.visible = bool(evt.get("shown"))
+            self.state_known.set()
+        elif t in ("expired", "dismissed"):
+            self.visible = False
         elif t == "dismissed":
             self.last_dismissed = self.clock()
         for fn in list(self.listeners):
@@ -177,6 +184,10 @@ class Overlay:
             return
         self._listening = True
         threading.Thread(target=self._follow, name="teach-events", daemon=True).start()
+        # What is on the overlay now, drawn by whom ever: asked once the stream is up.
+        ask = threading.Timer(1.0, lambda: self.control("state"))
+        ask.daemon = True
+        ask.start()
 
     def _follow(self) -> None:
         import httpx
@@ -205,6 +216,17 @@ class Overlay:
                 pass
             time.sleep(backoff)
             backoff = min(backoff * 2, 15.0)
+
+    def is_visible(self, wait_s: float = 1.2) -> bool:
+        """Whether the overlay shows anything, asking it when this process does not know yet."""
+        if isinstance(self.transport, _NullTransport):
+            return self.visible
+        self.listen()
+        deadline = time.monotonic() + wait_s
+        while not self.state_known.is_set() and time.monotonic() < deadline:
+            self.control("state")
+            self.state_known.wait(0.3)
+        return self.visible
 
     # ------------------------------------------------------------------ displays
     def _ask_overlay(self, wait_s: float = 0.6) -> list:
