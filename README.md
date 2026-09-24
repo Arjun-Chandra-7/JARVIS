@@ -178,6 +178,11 @@ he speaks, each picture appearing as its words are heard.
   "Let me draw that out" at once, since writing takes a few seconds. "Explain the X again"
   replays that part; any other question about it is answered with the diagram as context. If no
   model is reachable, or the reply doesn't make sense, it says so and draws nothing.
+* **Taught like a teacher, without asking for a diagram.** "Explain the topic on my screen",
+  "teach me this chapter", "ye topic samjhao", "इस अध्याय को समझाओ" become drawn lessons from
+  what is on screen. Specific questions ("why were they reluctant…?") are still answered in words,
+  and if no drawing can be made the explanation comes in words anyway.
+  `JARVIS_VISUAL_EXPLAIN=0` turns this off.
 * **Whatever is on screen.** "Explain this visually" over a video on any subject draws a lesson
   from the captions around that moment (without captions, it says the lesson is general, not the
   teacher's words); over a page or an app, from what you've selected or what is in view.

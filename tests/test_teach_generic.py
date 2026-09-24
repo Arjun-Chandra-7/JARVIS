@@ -238,3 +238,57 @@ def test_find_a_whiteboard_and_draw_is_a_drawing():
     from jarvis.draw_command import parse
     assert parse("Find a free whiteboard site online and draw me the Mona Lisa.").lower() == "mona lisa"
     assert parse("Hey Jarvis, find an online whiteboard site and draw me the Mona Lisa").lower() == "mona lisa"
+
+
+# --------------------------------------------------------------------------- "explain the topic on my screen"
+@pytest.mark.parametrize("said", ["explain the topic on my screen", "Jarvis, explain the topic on my screen.",
+                                  "teach me this chapter", "explain what is on my screen", "ye topic samjhao",
+                                  "screen pe jo topic hai woh samjhao", "इस अध्याय को समझाओ",
+                                  "explain the chapter on my screen in hindi"])
+def test_being_taught_the_screen_draws_without_asking_for_a_diagram(said):
+    i = intents.lesson(said)
+    assert i and i.name == "screen" and i.args.get("auto")
+
+
+@pytest.mark.parametrize("said", ["why were they reluctant to tell about their struggle?", "explain what he just said",
+                                  "explain photosynthesis", "explain this"])
+def test_specific_screen_questions_stay_spoken(said):
+    i = intents.lesson(said)
+    assert i is None or not i.args.get("auto")
+
+
+def _screen_material(monkeypatch):
+    from jarvis.teach import screen_lesson
+    from jarvis.teach.plan import SourceContext
+
+    async def prepare(lang, area, want_topic=""):
+        return screen_lesson.Outcome(material=screen_lesson.Material(
+            "what the student is reading: The water cycle", "The water cycle\n\nWater evaporates, condenses, falls as rain...",
+            "Here's the part you're reading, drawn out.", SourceContext(kind="page", title="The water cycle")))
+    monkeypatch.setattr(screen_lesson, "prepare", prepare)
+
+
+def test_the_topic_on_screen_is_taught_with_a_diagram(ov, model, monkeypatch):
+    _screen_material(monkeypatch)
+    model.append(json.dumps(WATER))
+    sp = FakeSpeaker()
+    rep = asyncio.run(assistant.handle("explain the topic on my screen", speaker=sp))
+    assert rep.spoken and sp.said[1] == "Here's the part you're reading, drawn out."
+    assert any(c["op"] == "scene.create" for c in ov.transport.commands())
+
+
+def test_no_drawing_still_explains_in_words(ov, model, monkeypatch):
+    from jarvis import video_command
+    _screen_material(monkeypatch)                                  # the model gives nothing back
+
+    async def spoken(text, config=None):
+        return "The page explains how water moves between sea and sky."
+    monkeypatch.setattr(video_command, "handle", spoken)
+    rep = asyncio.run(assistant.handle("explain the topic on my screen", speaker=FakeSpeaker()))
+    assert rep.text == "The page explains how water moves between sea and sky." and not rep.spoken
+    assert not [c for c in ov.transport.commands() if c["op"] == "scene.create"]
+
+
+def test_visual_explaining_can_be_turned_off(monkeypatch):
+    monkeypatch.setenv("JARVIS_VISUAL_EXPLAIN", "0")
+    assert intents.lesson("explain the topic on my screen") is None

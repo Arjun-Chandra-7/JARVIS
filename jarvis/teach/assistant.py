@@ -197,6 +197,27 @@ async def generic_plan(subject: str, lang: str, area: dict, source_text: str = "
     return generic.build(spec, lang, area, subject, intro=intro, source=src), ""
 
 
+async def _spoken_instead(text: str, lang: str, why: str) -> Reply:
+    """"Explain the topic on my screen" when no drawing could be made: the explanation still comes,
+    in words, from the same screen — here, rather than handed on to be tried a second time."""
+    from .. import video_command
+
+    try:
+        said = await video_command.handle(text)
+    except Exception:  # noqa: BLE001
+        said = None
+    if not said:
+        # A phrasing the screen explainer does not know ("teach me this chapter"): the same ask,
+        # in words it does, in the same language.
+        same = {"en": "explain what's on my screen", "hinglish": "screen pe kya hai samjhao",
+                "hi": "स्क्रीन पर क्या है समझाओ", "hi-pure": "स्क्रीन पर क्या है समझाओ"}
+        try:
+            said = await video_command.handle(same.get(lang, same["en"]))
+        except Exception:  # noqa: BLE001
+            said = None
+    return Reply(said or (_no_lesson(lang, why) if why else video_command.say("nothing_readable", lang)))
+
+
 def _no_lesson(lang: str, why: str) -> str:
     return NO_LESSON.get(lang, NO_LESSON["en"]).format(why=WHY[why].get(lang, WHY[why]["en"]))
 
@@ -229,17 +250,27 @@ async def _lesson(intent: intents.Intent, text: str, speaker: Speaker, lang: str
     if r.active or not r.scene.empty():
         r.clear()
         await asyncio.sleep(0.25)
+    # Said before reading the screen, not after: reading (OCR when the browser can't be driven)
+    # and writing the lesson took 17.8 s live, and silence that long reads as not heard.
+    acked = bool(intent.args.get("auto"))
+    if acked:
+        await _ack(speaker, lang, background)
     out = await screen_lesson.prepare(lang, area, want_topic=intent.topic)
     if out.lesson is None and out.material:
         # Not Pythagoras: any other subject, drawn from what is actually on the screen.
-        await _ack(speaker, lang, background)
+        if not acked:
+            await _ack(speaker, lang, background)
         plan, why = await generic_plan(out.material.subject, lang, area, source_text=out.material.text,
                                        intro=[out.material.intro], src=out.material.source)
         if plan is None:
+            if intent.args.get("auto"):
+                return await _spoken_instead(text, lang, why)
             return Reply(_no_lesson(lang, why))
         await _run(r.start, plan, speaker, background=background)
         return Reply(plan.text(), spoken=not background)
     if out.lesson is None:
+        if intent.args.get("auto"):
+            return await _spoken_instead(text, lang, "")
         return Reply(out.message)
     tracker = None
     if out.lesson.source_context.triangle_from_screen and out.page is not None:

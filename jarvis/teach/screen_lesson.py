@@ -296,6 +296,17 @@ async def prepare(language: str, area: dict, page=None, capture=None, want_topic
             return await _text_material(front, language)
         else:
             page = await asyncio.to_thread(pages.find_video_page)
+            if page is None:
+                # A browser that cannot be driven is still a window with words in it: read it the
+                # way the spoken explainer does (accessibility text, else OCR). Found live — "explain
+                # the topic on my screen" over a Zen page said "I can't see a browser" while the
+                # spoken answer to the same request read the page fine.
+                try:
+                    await sc.fill_from_app(front)
+                except Exception:  # noqa: BLE001
+                    pass
+                if front.source == "app":
+                    return await _text_material(front, language)
     if page is None:
         return Outcome(message=say("no_page", language))
     yt = YouTube(page)

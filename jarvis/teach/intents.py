@@ -15,6 +15,7 @@ to whatever handled it before this existed.
 """
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Optional
@@ -94,11 +95,33 @@ def subject_of(text: str) -> str:
     return " ".join(words).strip()
 
 
+# "Explain the topic on my screen", "teach me this chapter", "screen wala topic samjhao",
+# "स्क्रीन पर जो है वो समझाओ": asking to be taught what is on screen is asked the way a student asks a
+# teacher, and a teacher draws. These become drawn lessons without anyone saying "diagram". A
+# specific question about the screen ("why were they reluctant…?") is not one of them — that is
+# answered in words.
+_TEACH_VERB = (r"explain|teach(?:\s+me)?|walk\s+me\s+through|break\s+down|help\s+me\s+understand|"
+               r"samjha(?:o|iye|do|na)|sikha(?:o|iye)|padhao|padha\s+do|समझा(?:ओ|इए|दो|ना)|सिखा(?:ओ|इए)|पढ़ा(?:ओ|इए|\s+दो)")
+_SCREEN_TOPIC = (r"(?:the\s+|this\s+)?(?:topic|chapter|concept|lesson|step|part|section|question|problem|slide|page|diagram|video|lecture|thing)"
+                 r"(?:\s+(?:that'?s|which\s+is|that\s+is))?\s+(?:on|in)\s+(?:my|the)\s+screen|"
+                 r"(?:what(?:'s|\s+is)|whatever(?:'s|\s+is)?)\s+on\s+(?:my|the)\s+screen|"
+                 r"this\s+(?:topic|chapter|concept|lesson|step|lecture)|"
+                 r"(?:screen|स्क्रीन)\s+(?:pe|par|पे|पर)\s+(?:wala|wali|jo|वाला|वाली|जो)\b.*|"
+                 r"(?:ye|yeh|is)\s+(?:topic|chapter|concept|step)(?:\s+ko)?|(?:यह|ये|इस)\s+(?:topic|chapter|अध्याय|पाठ|step)(?:\s+को)?")
+_TEACH_SCREEN = re.compile(
+    rf"(?ix)^(?:(?:{_TEACH_VERB})\s+(?:me\s+)?(?:{_SCREEN_TOPIC})|(?:{_SCREEN_TOPIC})\s+(?:ko\s+|को\s+)?(?:{_TEACH_VERB}))"
+    rf"(?:\s+(?:to\s+me|please|properly|simply|like\s+a\s+teacher|in\s+(?:english|hindi|hinglish)|(?:english|hindi|hinglish)\s+(?:mein|me|में)))*$")
+
+
 def lesson(text: str) -> Optional[Intent]:
     """A request for a drawn lesson — on a named subject, or on whatever is on the screen."""
     s = _clean(text)
     if not s:
         return None
+    if _TEACH_SCREEN.match(s) and os.environ.get("JARVIS_VISUAL_EXPLAIN", "1") != "0":
+        # Asked to be taught, not asked for a picture: if the drawing can't be made, the spoken
+        # explanation still happens (``auto`` tells the caller to fall back rather than refuse).
+        return Intent("lesson", "screen", topic_of(s), {"pause_first": bool(re.search(r"(?i)\bpause\b", s)), "auto": True})
     visual = _VISUAL_RX.search(s)
     explain = _EXPLAIN_RX.search(s)
     pause_first = bool(re.search(r"(?i)\bpause\b|\bruko\b|रोको|रोककर|pause\s+kar", s))
