@@ -354,10 +354,14 @@ class VoiceSession:
         self.on_event("phone", "phone connected — I'll speak up on messages and calls")
 
     async def _handle_phone_event(self, event: dict, agent) -> None:
-        from ..agent import away
+        from .. import away_mode
         from ..preferences import notifications_enabled
-        # Away state is set from another process (web /chat), so always read it from the shared file.
-        away_now = away.is_away(self.config)
+        # Away mode runs in the backend process, which replies and escalates; this process only
+        # speaks what it queued. Read from the shared state file, since it is set over there.
+        if event.get("type") == "away_alert":
+            self._speak(event.get("text", ""))
+            return
+        away_now = away_mode.is_active(self.config)
         if not notifications_enabled() and not away_now:
             return
 
@@ -372,16 +376,10 @@ class VoiceSession:
             from ..notifications import call_announcement, speakable_sender
             who = speakable_sender(event.get("name") or event.get("number") or "")
             number = event.get("number")
+            if away_now:
+                return      # the backend notes the call and alerts only if it is urgent
             if "missed" in (event.get("event") or "").lower():
                 self._speak(call_announcement(event.get("name", ""), number or "", "missed"))
-            elif away_now and number:
-                # Auto-attendant: text the caller that the user is unavailable.
-                try:
-                    if self._kc is not None:
-                        self._kc.send_sms(number, away.oneliner(self.config))
-                except Exception:  # noqa: BLE001
-                    pass
-                self._speak(f"{who} is calling. You're away, so I texted them you're unavailable.")
             else:
                 self._speak(call_announcement(event.get("name", ""), number or "", "ringing"))
             return
@@ -393,14 +391,6 @@ class VoiceSession:
         who = notice.who            # a name, never a raw JID or number
         msg = event.get("text", "")
         self.on_event("phone", f"{app} from {who}: {msg}")
-        # Auto-attendant for repliable notifications (Instagram/SMS), unless already handled (WhatsApp).
-        if away_now and event.get("repliable") and event.get("id") and not event.get("handled"):
-            try:
-                reply = await away.respond(self.config, str(event.get("id")), who, msg)
-                if self._kc is not None and reply:
-                    await self._kc.reply(str(event.get("id")), reply)
-            except Exception:  # noqa: BLE001
-                pass
         # Announce only — do NOT open a listening window. Otherwise anything the user happens
         # to say afterwards gets captured as a "reply". To respond, the user says the wake word
         # and asks explicitly ("Jarvis, reply to {who} that …"); the brain then uses whatsapp_inbox
@@ -415,12 +405,20 @@ class VoiceSession:
             self._notices.add(notice, busy=self._dictating)
 
     async def _flush_notices(self) -> None:
-        """Hand grouped announcements to the main loop as they come due."""
+        """Hand grouped announcements, and away-mode alerts, to the main loop as they come due."""
+        from ..away_mode.escalation import take_spoken
+        from ..away_mode.session import Store
+        away_store = Store(self.config)
+        tick = 0
         while True:
             await asyncio.sleep(1.0)
+            tick += 1
             try:
                 for announcement in self._notices.due():
                     await self._events.put({"type": "announce", "text": announcement.text})
+                if tick % 2 == 0:
+                    for text in await asyncio.to_thread(take_spoken, away_store):
+                        await self._events.put({"type": "away_alert", "text": text})
             except Exception:  # noqa: BLE001 — a bad notification must not stop the watcher
                 pass
 

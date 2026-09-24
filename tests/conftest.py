@@ -80,3 +80,21 @@ def _no_real_models(monkeypatch, tmp_path_factory):
     import os
     if "JARVIS_STATE_DIR" not in os.environ:
         monkeypatch.setenv("JARVIS_STATE_DIR", str(tmp_path_factory.mktemp("state")))
+
+
+@pytest.fixture(autouse=True)
+def _no_real_away_mode(monkeypatch, tmp_path_factory):
+    """Away mode in a test never touches the real vault, the real WhatsApp bridge or the desktop.
+
+    Activating it starts the backend loop, which polls the live bridge on localhost — the one the
+    owner's own Jarvis uses. A test must never be one poll away from replying to a real person."""
+    from jarvis.away_mode import daemon, escalation, session
+    root = tmp_path_factory.mktemp("away")
+    import hashlib
+    monkeypatch.setattr(session, "state_dir",
+                        lambda config: root / hashlib.sha256(str(getattr(config, "vault_path", "")).encode()).hexdigest()[:10])
+    monkeypatch.setattr(daemon, "start", lambda config: None)
+    monkeypatch.setattr(escalation, "desktop", lambda *a, **k: True)
+    monkeypatch.setattr(escalation, "phone_ping", lambda *a, **k: True)
+    monkeypatch.delenv("JARVIS_DRY_RUN_SENDS", raising=False)
+    yield

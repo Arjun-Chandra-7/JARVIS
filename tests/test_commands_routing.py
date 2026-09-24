@@ -100,14 +100,16 @@ def test_open_phone_confirms_only_on_success(monkeypatch):
 
 # --- away mode: single owner, persisted ------------------------------------
 
-def test_away_enter_and_exit_persist_state():
+def test_away_needs_a_yes_then_persists_and_ends_with_a_briefing():
+    from jarvis import away_mode
     config = Config()
-    assert "away mode is on" in run("Jarvis I'm going out, handle my messages for me", config).lower()
-    from jarvis.agent import away
-    assert away.is_away(config) is True
-    assert (Path(config.vault_path) / "Jarvis/private/away-state.json").exists()
+    ask = run("Jarvis I'm going out until 8, handle my messages for me", config)
+    assert ask.startswith("Ready to turn on away mode until 8")
+    assert away_mode.is_active(config) is False          # nothing is on before the yes
+    assert "away mode is on" in run("yes", config).lower()
+    assert away_mode.is_active(config) is True
     assert "welcome back" in run("Jarvis I'm back", config).lower()
-    assert away.is_away(config) is False
+    assert away_mode.is_active(config) is False
 
 
 # --- plain chat falls through to the LLM ----------------------------------

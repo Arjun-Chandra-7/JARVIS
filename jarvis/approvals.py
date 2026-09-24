@@ -45,6 +45,7 @@ KIND_WORDS: dict[str, tuple[str, ...]] = {
     "file": ("file", "overwrite"),
     "browser": ("browser", "opera", "restart"),
     "autonomy": ("autonomy", "confirmation", "control"),
+    "away": ("away", "away mode", "history"),
 }
 
 _YES = re.compile(

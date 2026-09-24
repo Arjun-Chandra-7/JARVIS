@@ -27,10 +27,11 @@ need their own account, device, or desktop service configured before use.
   n8n integrations when linked.
 - Meeting note capture joins silently with microphone and camera disabled; admission is verified
   before recording.
-- Away mode records direct incoming messages and replies only to direct incoming WhatsApp messages.
-  Group, newsletter, status, outgoing, and duplicate messages are ignored. The away responder uses
-  an isolated temporary ChatGPT tab with no tool access; it falls back to a neutral acknowledgement
-  if unavailable.
+- Away mode: "I'm going out until 8, handle my messages" proposes a bounded session and starts it
+  after your yes. Jarvis replies on WhatsApp as **JARVIS, your assistant** (never as you), takes
+  messages, refuses money/OTP/commitment requests, alerts you only for urgent things, hands a
+  thread to you the moment you write in it, and briefs you when you're back. Calls are noted and
+  repeated ones escalate; they cannot be answered over KDE Connect. See `docs/AWAY_MODE.md`.
 
 - Human radar: webcam face detection gives bearing + metric range, acoustic FMCW gives
   range only, and paired devices give names. See `docs/HUMAN_RADAR.md`.

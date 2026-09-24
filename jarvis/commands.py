@@ -276,6 +276,15 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
         raw = request
     command = raw.lower().rstrip(".!?")
 
+    # Away mode: starting it (only ever through an approval), changing it while it runs, and
+    # "what happened while I was away". Before the notification rules, because "mute Instagram"
+    # during away mode means away mode's Instagram.
+    from .away_mode import control as away_control
+    answer = await away_control.handle(raw, config, session_id)
+    if answer is not None:
+        route_log.record(intent="away", action="handled")
+        return answer
+
     # Finer control over announcements first: "don't announce Instagram for two hours" also has
     # the words the all-or-nothing switch below looks for.
     from .notification_command import handle as notification_rules
@@ -303,15 +312,6 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
         from .integrations.apps import phone_mirror
         ok, message = await asyncio.to_thread(phone_mirror)
         return "Opening your phone, sir." if ok else message
-    if re.search(r"\b(?:i'?m|i am) (?:going out|heading out|away|stepping out|unavailable)\b", command) and re.search(r"\b(?:messages|message|reply|replies|handle|cover|deal with)\b", command):
-        from .agent import away, pa_daemon
-        away.set_away(raw, config)
-        pa_daemon.start(config)
-        return "Away mode is on, sir. I'll introduce myself as your assistant, handle new messages, and keep a record for your return."
-    if re.fullmatch(r"(?:i'?m back|i am back|i'?m available|i am available|stop handling my messages|turn off away mode|away mode off)", command):
-        from .agent import away
-        away.set_available(config)
-        return "Welcome back, sir. Away replies are off."
     if re.fullmatch(r"(?:who(?:'?s| is)(?: around| here| nearby| in the room| with me)|"
                     r"is (?:anyone|anybody|someone) (?:here|around|nearby|with me)|"
                     r"(?:scan|check)(?: the)? room|human radar|radar)", command):
@@ -321,9 +321,6 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
         from .integrations import meet_bot
         result = await meet_bot.join_meet("https://meet.google.com/twa-pgjz-gss", "", config)
         return str(result)
-    if re.fullmatch(r"(?:what did i miss|(?:read|show|give me)(?: me)?(?: my| the)? (?:away )?(?:messages? summary|message summary|debrief|catch[- ]?up))", command):
-        from .agent import pa_daemon
-        return pa_daemon.debrief(config)
     # "is my mic working" — a question that could only be answered by trying to talk and failing.
     # Matched on meaning rather than a fixed phrase, because there is no one way people ask it.
     from .audio import mic_report

@@ -54,8 +54,8 @@ async def lifespan(app: FastAPI):
     agent = make_agent(CONFIG, mode="text", confirm_fn=None, on_tool=None)
     await agent.__aenter__()
     _agent["a"] = agent
-    from .agent import pa_daemon
-    pa_daemon.start(CONFIG)
+    from .away_mode import daemon as away_daemon
+    away_daemon.start(CONFIG)
     from .integrations import coding_jobs
     loop = asyncio.get_running_loop()
 
@@ -94,7 +94,7 @@ async def lifespan(app: FastAPI):
             presence.service().stop()
         except Exception:  # noqa: BLE001
             pass
-        pa_daemon.stop(CONFIG)
+        away_daemon.stop()
         await agent.__aexit__(None, None, None)
 
 

@@ -640,18 +640,20 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         ok, msg = apps.phone_mirror()
         return msg
 
-    @tool("set_away", "Away mode ON — auto-reply to messages/calls.", {"reason": {"type": "string"}})
+    @tool("set_away", "Propose away mode (the user must approve it): Jarvis answers WhatsApp as the user's "
+          "assistant until a time. Pass the user's own words, e.g. 'going out until 8, only family'.",
+          {"request": {"type": "string"}})
     async def set_away(a):
-        from . import away, pa_daemon
-        away.set_away(a.get("reason", ""), config)
-        pa_daemon.start(config)
-        return "away mode on."
+        from .. import context
+        from ..away_mode import control
+        said = a.get("request") or a.get("reason") or "I'm away, handle my messages"
+        return control.propose_start(config, said, context.current(), created_from="tool")
 
-    @tool("set_available", "Away mode OFF.", {})
+    @tool("set_available", "Away mode OFF, with the briefing of what happened.", {})
     async def set_available(a):
-        from . import away
-        away.set_available(config)
-        return "away mode off."
+        from ..away_mode import control, summary
+        ended = control.end(config)
+        return ("Away mode is off. " + summary.spoken(ended)) if ended else "Away mode wasn't on."
 
     # ---------------- system / media / apps ----------------
     @tool("set_volume", "Set output volume percent (0-150).", {"percent": {"type": "string"}}, ["percent"])
@@ -1069,49 +1071,26 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         from . import omnicore
         return omnicore.list_recent_recordings(limit=_i(a.get("limit", 15), 15), category_filter=a.get("category"), config=config)
 
-    @tool("check_pa_status", "Check Arjun's real-time computed schedule/busy status and whether 2-sided PA conversational defense is armed.", {})
+    @tool("check_pa_status", "Check Arjun's schedule/busy status and whether away mode is on.", {})
     async def check_pa_status(a):
         from . import omnicore
         status = omnicore.get_current_status(config=config)
         return f"Current Status: {'BUSY / AWAY (' + status.get('reason','') + ') until ' + str(status.get('until','')) if status.get('busy') else 'AVAILABLE'}. [Source: {status.get('source','Normal')}]"
 
-    @tool("set_pa_status", "Set Arjun's status manually (e.g., 'I am going out for 2 hours', 'In a meeting') or mark 'available'.",
+    @tool("set_pa_status", "Set Arjun's status (e.g., 'I am going out for 2 hours') or mark 'available'. "
+          "Going away is only proposed; the user approves it.",
           {"status_reason": {"type": "string"}, "is_busy": {"type": "boolean"}}, ["status_reason"])
     async def set_pa_status(a):
-        # Single owner: away state + the WhatsApp auto-reply daemon are driven the same way
-        # everywhere (voice command router, set_away tool, here).
-        from . import away, omnicore, pa_daemon
+        # One path for away mode everywhere: the approval-gated session in jarvis.away_mode.
         if not _b(a.get("is_busy", True)) or a.get("status_reason", "").strip().lower() in ("available", "free", "back", "off"):
-            away.set_available(config)
-            omnicore.record_event("Status Change", "User", "Marked AVAILABLE / back at desk", config=config)
-            return "Status updated to AVAILABLE. Welcome back, sir!"
-        reason = a.get("status_reason", "Away from desk").strip()
-        away.set_away(reason, config)
-        pa_daemon.start(config)
-        omnicore.record_event("Status Change", "User", f"Marked AWAY/BUSY: {reason}", config=config)
-        return f"Status set to BUSY / AWAY ({reason}). I'll answer new WhatsApp messages as your assistant and brief you on return."
+            return await set_available({})
+        return await set_away({"request": a.get("status_reason", "I'm away, handle my messages")})
 
     @tool("add_user_schedule", "Register a scheduled activity or event (like tuition or classes) with start and end ISO timestamps.",
           {"title": {"type": "string"}, "start": {"type": "string"}, "end": {"type": "string"}}, ["title", "start", "end"])
     async def add_user_schedule(a):
         from . import omnicore
         return omnicore.add_schedule_event(a.get("title", ""), a.get("start", ""), a.get("end", ""), source="Agent Tool", config=config)
-
-    @tool("process_incoming_communication", "Record an incoming text/call for the away-mode debrief. Does NOT auto-reply — the away-mode daemon is the sole WhatsApp auto-responder.",
-          {"type": {"type": "string"}, "sender": {"type": "string"}, "id": {"type": "string"}, "content": {"type": "string"}}, ["type", "sender", "content"])
-    async def process_incoming_communication(a):
-        # Passive recorder only. Automatic replies to incoming WhatsApp/calls are owned
-        # exclusively by jarvis.agent.pa_daemon so there is never a second responder.
-        from . import away
-        c_type = "call" if "call" in a.get("type", "text").lower() else "whatsapp"
-        away.record_event(config, {
-            "id": a.get("id", "") or f"{c_type}:{a.get('sender', '')}",
-            "type": c_type, "sender": a.get("sender", "Unknown"),
-            "jid": a.get("id", "") or a.get("sender", ""),
-            "text": a.get("content", "") or ("Incoming call" if c_type == "call" else ""),
-            "status": "recorded",
-        })
-        return f"Recorded {c_type} from {a.get('sender', 'Unknown')} for your away-mode debrief."
 
     # ---------------- Full Laptop Mastery & Omni-Control ----------------
     @tool("enable_full_laptop_autonomy", "Unlock unconfirmed shell execution and full computer automation permissions so Jarvis can control all tools and the whole laptop fully.",
@@ -1144,18 +1123,6 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         return await run_bash({"command": cmd})
 
     # ---------------- PA Guardian & Meet Bot ----------------
-
-    @tool("start_pa_daemon", "Activate the PA guardian shield: monitors WhatsApp messages and phone calls while you're away, auto-replies on your behalf, and gives you a full debrief when you're back.", {})
-    async def start_pa_daemon(a):
-        from . import pa_daemon
-        pa_daemon.start(config)
-        return "PA Guardian armed, sir. I'll handle all incoming messages and calls while you're out. I'll brief you the moment you're back."
-
-    @tool("stop_pa_daemon", "Deactivate the PA guardian and get a summary of what happened while you were away.", {})
-    async def stop_pa_daemon(a):
-        from . import pa_daemon
-        brief = pa_daemon.stop()
-        return brief
 
     @tool("whatsapp_scan", "Scan and analyse all WhatsApp contacts and recent chat history from the bridge.", {})
     async def whatsapp_scan(a):

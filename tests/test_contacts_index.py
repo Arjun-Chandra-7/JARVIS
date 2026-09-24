@@ -93,20 +93,3 @@ def test_note_reply_records_both_sides(tmp_path):
     rec = ci._load(config)[JID]
     assert rec["incoming_count"] == 1 and rec["msg_count"] == 2
     assert rec["recent"][-1]["from_me"] is True
-
-
-def test_away_debrief_is_structured_per_person(tmp_path):
-    from jarvis.agent import away, pa_daemon
-    config = cfg(tmp_path)
-    away.set_away("out", config)
-    away.record_event(config, {"id": "1", "type": "whatsapp", "sender": "Maya", "jid": JID,
-                               "text": "can you send me the project?", "reply": "Which project?", "status": "sent"})
-    away.record_event(config, {"id": "2", "type": "whatsapp", "sender": "Maya", "jid": JID,
-                               "text": "the physics one, need it by friday", "reply": "", "status": "not_sent"})
-    away.record_event(config, {"id": "3", "type": "call", "sender": "Dad", "jid": "999", "text": "Incoming call"})
-    brief = pa_daemon.debrief(config)
-    assert "• Maya (2 msgs)" in brief
-    assert "wanted: can you send me the project?" in brief
-    assert "Jarvis replied (sent): Which project?" in brief
-    assert "→ needs you:" in brief
-    assert "Call from Dad" in brief

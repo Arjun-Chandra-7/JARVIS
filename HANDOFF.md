@@ -5,6 +5,39 @@ piece was actually taken, and what is next.
 
 ---
 
+## Ninth pass (2026-09-25): away mode — messages, calls and the return briefing
+
+Design and capability table: `docs/AWAY_MODE.md`. Code: `jarvis/away_mode/`.
+
+* **Audit found:** away mode was a boolean plus a reason. Two separate responders replied on the
+  owner's behalf — `agent/pa_daemon.py` (every direct WhatsApp) and `voice_session` (Instagram/SMS
+  via KDE Connect, and an SMS to every caller) — with no end time, no contact or platform policy,
+  no turn/rate/bot limits, full message bodies stored, and "sent" counted without a provider id.
+  The model could switch it on (`set_away`, `set_pa_status`, `start_pa_daemon`) with no approval,
+  and `start_pa_daemon` claimed it handled calls.
+* **Now:** one `AwaySession` (end time in local timezone, platforms, allowed/blocked contacts,
+  reply policy, escalation rules, limits) that starts only through the approval manager; one
+  engine that is the only responder; disclosure on every first reply; restricted topics refused
+  and flagged; urgency from evidence; loop, duplicate and flood protection; owner takeover (by
+  command, or automatically when the owner writes from the phone); escalation by desktop, phone
+  ping and spoken alert; a written and a private spoken briefing; retention and a delete command.
+  `agent/away.py` and `agent/pa_daemon.py` are removed; every caller moved.
+* **Calls:** KDE Connect reports only `callReceived(event, number, name)` — verified by D-Bus
+  introspection of the paired Nothing Phone 2a — and the Android companion has no telephony
+  permissions. So calls are recorded and escalate on repetition; answering is adapter-ready
+  (`calls.CallAdapter`) and exercised only against `SimulatedCallAdapter`. What a real bridge needs
+  is in the doc.
+* **Bridge:** `/status` now also returns `me` (the owner's own chat) and group messages carry
+  `participant`. Needs the `jarvis-whatsapp` service restarted to take effect.
+* **Also fixed:** `bridges/whatsapp.py` ("message yourself" commands) re-read its own replies as
+  new commands; it now remembers the ids of what it sent.
+* **Live dry run** (real bridge, nothing sent): 4 real group messages suppressed; a direct thread
+  got the disclosure on the same thread, a follow-up without it, and after an owner message the
+  thread was left to the owner. The disclosure currently names "Arjun" because
+  `JARVIS_USER_NAME` is unset — set `JARVIS_OWNER_NAME` to change it.
+* **Not verified live:** a real reply to a real person (needs the owner's go-ahead), Instagram/SMS
+  replies through KDE Connect, the spoken alert path in the running voice service.
+
 ## Eighth pass (2026-09-24): the generator as a whiteboard; drawings that never stick
 
 * **Stuck drawing, root-caused:** the auto-clear timer lived in the process that drew; when it
@@ -379,7 +412,9 @@ deterministic actions end to end through the voice loop.
    which does not set it.
 2. Move `screen_command.py` / `find_and_click` onto `ScreenModel` so every click is verified.
 3. Dictation rewrite (hold/toggle hotkey, raw vs polished transcript, clipboard restore).
-5. TTS clarity audit and benchmark; teaching overlay; away-mode hardening; self-repair.
+5. TTS clarity audit and benchmark; teaching overlay; self-repair.
+6. Away mode: a real call bridge (see `docs/AWAY_MODE.md`); one supervised live reply to a test
+   contact.
 
 ---
 

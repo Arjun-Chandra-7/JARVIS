@@ -18,7 +18,11 @@ class WhatsAppBridge:
     async def _send(self, client: httpx.AsyncClient, to: str, text: str) -> None:
         text = text or "(no reply)"
         try:
-            await client.post(f"{self.api}/send", json={"to": to, "text": text}, timeout=10)
+            sent = (await client.post(f"{self.api}/send", json={"to": to, "text": text}, timeout=10)).json()
+            # The reply lands in the same "message yourself" chat the commands come from; without
+            # its id here it would be read back as the next command, and answered, forever.
+            if sent.get("id"):
+                self.seen_ids.add(str(sent["id"]))
         except Exception:
             pass
 

@@ -81,6 +81,8 @@ function normaliseMessage(m) {
   return {
     // On an outgoing message pushName is the *owner's* name, not the chat's, so it names nobody here.
     id: messageId(m), from, name: (!m?.key?.fromMe && m?.pushName) || contacts.get(from) || from,
+    // In a group, who wrote it (the chat is `from`); away mode discloses to each new participant.
+    participant: flags.isGroup ? (m?.key?.participant || "") : "",
     text: extractText(m?.message),
     ts: rawTs > 100000000000 ? rawTs : (rawTs ? rawTs * 1000 : Date.now()),
     fromMe: !!m?.key?.fromMe, ...flags,
@@ -279,7 +281,11 @@ http
       res.statusCode = 403;
       return res.end(JSON.stringify({ error: "Unauthorized cross-origin request" }));
     }
-    if (req.url === "/status") return res.end(JSON.stringify({ connected }));
+    if (req.url === "/status") {
+      // `me`: the linked account's own chat, where the owner types commands to Jarvis.
+      const me = sock?.user?.id ? sock.user.id.split(":")[0] + "@s.whatsapp.net" : "";
+      return res.end(JSON.stringify({ connected, me }));
+    }
     if (req.url === "/inbox") return res.end(JSON.stringify(inbox.slice(-30)));
     if (req.url.startsWith("/chats")) {
       const url = new URL(req.url, "http://127.0.0.1");

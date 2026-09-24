@@ -115,7 +115,7 @@ class ChatGPTAgent:
         await self.session.start()
         # Away mode gets a fresh, no-tool temporary tab from this same browser context. It cannot
         # call this agent's send()/dispatch loop or inherit the primary Jarvis conversation.
-        from . import away
+        from .. import away_mode as away
 
         async def away_responder(messages: list[dict[str, str]]) -> str:
             return await self.session.ask_isolated(messages, timeout_s=60)
@@ -129,9 +129,9 @@ class ChatGPTAgent:
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
-        from . import away
+        from .. import away_mode as away
         # Do not leave a callback referring to a closed browser session behind.
-        if getattr(away, "_responder", None) is self._away_responder:
+        if away.get_responder() is self._away_responder:
             away.set_responder(None)
         await self.session.close()
 

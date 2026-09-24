@@ -181,8 +181,8 @@ async def mobile_status():
     except Exception:  # noqa: BLE001
         pass
     try:
-        from .agent import away
-        out["away"] = away.is_away(CONFIG)
+        from . import away_mode
+        out["away"] = away_mode.is_active(CONFIG)
     except Exception:  # noqa: BLE001
         out["away"] = False
     try:

@@ -204,9 +204,10 @@ def get_current_status(config: Optional[Config] = None) -> Dict[str, Any]:
     
     # 1) Check manual away mode first
     try:
-        from . import away
-        if away.is_away():
-            return {"busy": True, "reason": away.reason() or "Away from desk", "source": "Manual Away Mode", "until": "Until further notice"}
+        from .. import away_mode
+        away = away_mode.status(cfg)
+        if away["away"]:
+            return {"busy": True, "reason": away["reason"], "source": "Away Mode", "until": away["until"] or "Until further notice"}
     except Exception:
         pass
 

@@ -237,11 +237,11 @@ def test_voice_session_says_a_burst_once(monkeypatch):
     import asyncio
     import types
 
-    from jarvis.agent import away
+    from jarvis import away_mode
     from jarvis.audio.voice_session import VoiceSession
     from jarvis.config import Config
 
-    monkeypatch.setattr(away, "is_away", lambda config: False)
+    monkeypatch.setattr(away_mode, "is_active", lambda config: False)
     monkeypatch.setattr("jarvis.preferences.notifications_enabled", lambda: True)
     spoken = []
     clock = Clock()
