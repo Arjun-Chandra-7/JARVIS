@@ -1,0 +1,186 @@
+"""What a request to the teaching overlay means — in English, Hinglish, or Hindi.
+
+Three kinds of thing are recognised here, and nothing else:
+
+  * a lesson: "pause and explain this step visually", "explain RAG architecture with a diagram",
+    "isko diagram se samjhao", "पाइथागोरस चित्र बनाकर समझाओ";
+  * a control of the lesson or drawing in front of you: pause, continue, go back, skip, again,
+    clear, leave it, undo, redo, bigger, move left, pen mode…;
+  * a drawing: "draw a triangle", "circle this", "label this as X", "arrow from this to that".
+
+Controls only mean something while there is a lesson or a drawing to control — "continue" with
+nothing on the overlay is somebody else's "continue" — so the caller asks with ``active``.
+Everything returns an ``Intent`` or None; None always means "not ours", and the request goes on
+to whatever handled it before this existed.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from typing import Optional
+
+from .lessons import rag
+
+
+@dataclass
+class Intent:
+    kind: str                         # "lesson" | "control" | "draw" | "follow_up"
+    name: str                         # e.g. "screen", "topic", "pause", "circle", "explain"
+    topic: str = ""                   # "pythagoras" | "rag" | "" (from the screen)
+    args: dict = field(default_factory=dict)
+
+
+_LEAD = re.compile(r"(?i)^\s*(?:(?:hey|ok|okay|so|and|now|please|jarvis|जार्विस)[\s,.!]+)*")
+_TAIL = re.compile(r"(?:[\s,.!?।]+(?:please|plz|sir|jarvis|na|zara|ज़रा|प्लीज़))?[\s,.!?।]*$", re.I)
+
+
+def _clean(text: str) -> str:
+    s = _LEAD.sub("", (text or "").strip())
+    s = _TAIL.sub("", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+# --------------------------------------------------------------------------- lessons
+_VISUAL = (r"visual(?:ly|s)?|with\s+(?:a\s+)?(?:diagram|drawing|picture|figure|sketch)|on\s+(?:the\s+)?screen|"
+           r"draw(?:ing)?|diagram|sketch|figure\s+(?:it\s+)?out\s+visually|"
+           r"diagram\s+(?:se|bana\s*ke|banakar|bana\s*kar)|draw\s+kar(?:ke|\s*ke)?|bana\s*ke|banakar|bana\s*kar|dikha\s*ke|dikhakar|"
+           r"चित्र|डायग्राम|diagram\s+से|बनाकर|बना\s*के|दिखाकर|दिखा\s*के|draw\s+करके")
+_EXPLAIN = (r"explain|teach|show\s+me|walk\s+me\s+through|break\s+(?:it|this)\s+down|"
+            r"samjha(?:o|iye|na|do|de)|samjhao|sikhao|batao|dikhao|"
+            r"समझा(?:ओ|इए|ना|दो|दे)|सिखाओ|बताओ|दिखाओ")
+_THIS = (r"this|that|it|the\s+(?:current\s+)?(?:step|part|video|screen|slide|frame|diagram)|what(?:'s|\s+is)\s+on\s+(?:the\s+)?screen|"
+         r"is(?:ko|e|ka)?|ye(?:h)?|yahan|abhi\s+wala|इसे|इसको|इसका|यह|ये|यहाँ|अभी\s+वाला")
+_SCREEN_LESSON = re.compile(rf"(?ix)(?:\bpause\b.*\b(?:{_EXPLAIN})|\b(?:{_EXPLAIN})\b|\b(?:{_THIS})\b)")
+_TOPICS = {
+    "pythagoras": re.compile(r"(?i)pyth?ag[oa]r[ae]?s|pythagorean|hypotenuse|right[\s-]*angled?\s+triangle|a\s*(?:²|\^?2|square[ds]?)\s*\+\s*b|"
+                             r"पाइथागोरस|पायथागोरस|कर्ण|समकोण\s*त्रिभुज|pythagoras\s+theorem|pythagoras\s+ka"),
+    "rag": re.compile(r"(?i)\brag\b|\br\.a\.g\b|retrieval[\s-]*augmented|retrieval\s+augment|आरएजी|रैग"),
+}
+
+
+def topic_of(text: str) -> str:
+    for name, rx in _TOPICS.items():
+        if rx.search(text or ""):
+            return name
+    return ""
+
+
+def lesson(text: str) -> Optional[Intent]:
+    s = _clean(text)
+    if not s:
+        return None
+    visual = re.search(rf"(?i)(?:{_VISUAL})", s)
+    topic = topic_of(s)
+    pause_first = bool(re.search(r"(?i)\bpause\b|\bruko\b|रोको|pause\s+kar", s))
+    if topic and (visual or re.search(rf"(?i)\b(?:{_EXPLAIN})\b|(?:समझा|सिखा)", s)) and visual:
+        return Intent("lesson", "topic", topic, {"pause_first": pause_first})
+    if visual and re.search(rf"(?i)(?:\b(?:{_THIS})\b|इसे|इसको|यह|ये|यहाँ)", s) and re.search(
+            rf"(?i)(?:\b(?:{_EXPLAIN})\b|समझा|सिखा|बताओ|दिखाओ|draw|diagram|visual)", s):
+        return Intent("lesson", "screen", topic, {"pause_first": pause_first})
+    if pause_first and visual:
+        return Intent("lesson", "screen", topic, {"pause_first": True})
+    return None
+
+
+# --------------------------------------------------------------------------- controls
+_CONTROLS = [
+    ("pause", r"pause(?:\s+(?:the\s+)?(?:explanation|lesson|it|there))?|hold\s+on|wait(?:\s+a\s+(?:sec(?:ond)?|moment|minute))?|"
+              r"ruko|ruk\s+jao|ek\s+(?:second|minute)|रुको|रुक\s+जाओ|ठहरो"),
+    ("continue", r"continue|go\s+on|carry\s+on|keep\s+going|resume|go\s+ahead|next|"
+                 r"aage(?:\s+(?:badho|chalo|bolo|batao))?|chalo\s+aage|jaari\s+rakho|आगे(?:\s+(?:बढ़ो|चलो|बोलो|बताओ))?|जारी\s+रखो"),
+    ("back", r"(?:go\s+)?back(?:\s+(?:one|a)\s+step)?|previous\s+step|one\s+step\s+back|last\s+step\s+again|"
+             r"peeche(?:\s+(?:jao|chalo))?|pichla\s+step|ek\s+step\s+peeche|पीछे(?:\s+(?:जाओ|चलो))?|पिछला\s+step|पिछला\s+चरण"),
+    ("skip", r"skip(?:\s+(?:this|that|the)\s+step)?|skip\s+it|next\s+step|chhodo|skip\s+karo|छोड़ो|अगला\s+step|अगला\s+चरण"),
+    ("again", r"(?:explain|say|show)\s+(?:that|this|it)\s+again|again|repeat(?:\s+that)?|one\s+more\s+time|"
+              r"phir\s+se(?:\s+(?:samjhao|batao|bolo))?|dobara(?:\s+samjhao)?|फिर\s+से(?:\s+समझाओ)?|दोबारा(?:\s+समझाओ)?"),
+    ("clear", r"clear(?:\s+(?:it|that|this|everything|all))?|clear\s+the\s+(?:screen|overlay|drawing|diagram|board)|"
+              r"remove\s+(?:the\s+)?(?:diagram|drawing|overlay|lesson|it)|erase\s+(?:everything|all|the\s+screen)|wipe\s+it|"
+              r"(?:sab\s+)?(?:hata\s+do|hatao|mita\s+do|saaf\s+karo)|diagram\s+hatao|साफ़\s+करो|साफ\s+करो|हटा\s+दो|हटाओ|मिटा\s+दो"),
+    ("clear_mine", r"clear\s+my\s+(?:drawing|ink|pen)|erase\s+my\s+(?:drawing|ink)|meri\s+drawing\s+hatao"),
+    ("hide", r"hide\s+(?:the\s+)?overlay|hide\s+(?:it|the\s+drawing|the\s+diagram)|overlay\s+(?:band|chhupao)|छुपाओ"),
+    ("leave", r"leave\s+(?:it|the\s+diagram|the\s+drawing|that)(?:\s+(?:there|on\s+screen|up))?|keep\s+(?:it|the\s+diagram|that)(?:\s+(?:there|on\s+screen|up))?|"
+              r"don'?t\s+clear(?:\s+it)?|rehne\s+do|rakho\s+(?:isko|ise)|रहने\s+दो|रखो"),
+    ("undo", r"undo(?:\s+(?:that|it|the\s+last\s+one))?|take\s+that\s+back|wapas\s+karo|अनडू"),
+    ("redo", r"redo(?:\s+(?:that|it))?"),
+    ("bigger", r"(?:make\s+(?:it|this|that|the\s+diagram)\s+)?(?:bigger|larger)|zoom\s+in|enlarge(?:\s+it)?|bada\s+karo|बड़ा\s+करो"),
+    ("smaller", r"(?:make\s+(?:it|this|that|the\s+diagram)\s+)?smaller|zoom\s+out|shrink(?:\s+it)?|chhota\s+karo|छोटा\s+करो"),
+    ("move", r"move\s+(?:it|this|that|the\s+diagram)\s+(?:to\s+the\s+)?(?P<dir>left|right|up|down)|(?:left|right)\s+(?:mein|me)\s+karo|"
+             r"(?P<dir2>left|right|upar|neeche)\s+(?:karo|le\s+jao)"),
+    ("pen_on", r"(?:open|start|turn\s+on|enable)?\s*(?:the\s+)?pen(?:\s+mode)?(?:\s+on)?|let\s+me\s+draw|i(?:'ll|\s+will)\s+draw|manual\s+(?:pen|drawing)|"
+               r"main\s+draw\s+karta\s+hoon|pen\s+(?:do|chalu\s+karo)|मैं\s+बनाता\s+हूँ"),
+    ("pen_off", r"(?:close|stop|exit|turn\s+off|disable)\s+(?:the\s+)?pen(?:\s+mode)?|pen\s+(?:mode\s+)?off|done\s+drawing|pen\s+band\s+karo"),
+]
+_CONTROL_RX = [(name, re.compile(rf"(?ix)^(?:{rx})$")) for name, rx in _CONTROLS]
+
+
+def control(text: str) -> Optional[Intent]:
+    s = _clean(text).lower()
+    for name, rx in _CONTROL_RX:
+        m = rx.match(s)
+        if m:
+            args = {}
+            if name == "move":
+                d = (m.groupdict().get("dir") or m.groupdict().get("dir2") or "").lower()
+                args["dir"] = {"upar": "up", "neeche": "down"}.get(d, d)
+            return Intent("control", name, args=args)
+    return None
+
+
+# --------------------------------------------------------------------------- drawing
+_SHAPE = r"(?P<shape>triangle|circle|arrow|box|rectangle|square|line|trikon|gola|त्रिभुज|वृत्त|गोला|तीर)"
+
+
+def draw(text: str) -> Optional[Intent]:
+    s = _clean(text).lower()
+    m = re.match(rf"(?ix)^(?:draw|make|put)\s+(?:me\s+)?(?:a|an|one)?\s*{_SHAPE}(?:\s+(?:here|on\s+(?:the\s+)?screen))?$", s)
+    if not m:
+        m = re.match(rf"(?ix)^(?:ek\s+|एक\s+)?{_SHAPE}\s+(?:banao|bana\s+do|draw\s+karo|बनाओ|बना\s+दो)$", s)
+    if m:
+        shape = next(v for k, v in m.groupdict().items() if v)
+        shape = {"trikon": "triangle", "त्रिभुज": "triangle", "gola": "circle", "गोला": "circle", "वृत्त": "circle",
+                 "तीर": "arrow", "box": "rectangle", "square": "rectangle"}.get(shape, shape)
+        return Intent("draw", shape)
+    m = re.match(r"(?ix)^(?:draw\s+)?(?:an?\s+)?arrow\s+from\s+(?P<a>this|that|here|there)\s+to\s+(?P<b>this|that|here|there)$", s)
+    if m:
+        return Intent("draw", "arrow_between", args={"from": m["a"], "to": m["b"]})
+    if re.match(r"(?ix)^(?:highlight|mark)\s+(?:this|that|it)$|^(?:isko|ise)\s+highlight\s+karo$|^इसे\s+हाइलाइट\s+करो$", s):
+        return Intent("draw", "highlight_this")
+    if re.match(r"(?ix)^(?:circle|ring)\s+(?:this|that|it)$|^(?:isko|ise)\s+circle\s+karo$|^इसे\s+घेरो$", s):
+        return Intent("draw", "circle_this")
+    m = re.match(r"(?ix)^label\s+(?:this|that|it)\s+(?:as\s+)?(?P<label>.{1,40})$|^(?:isko|ise)\s+(?P<label2>.{1,40})\s+likho$", s)
+    if m:
+        return Intent("draw", "label_this", args={"label": (m["label"] or m["label2"]).strip(" \"'")})
+    if re.match(r"(?ix)^(?:erase|delete|remove)\s+(?:that|this|it)$|^(?:isko|ise|woh)\s+(?:mitao|hatao)$|^(?:इसे|उसे)\s+(?:मिटाओ|हटाओ)$", s):
+        return Intent("draw", "erase_that")
+    return None
+
+
+# --------------------------------------------------------------------------- lesson follow-ups
+def follow_up(text: str, topic: str) -> Optional[Intent]:
+    s = _clean(text).lower()
+    if topic == "rag":
+        if re.search(r"(?i)fine[\s-]*tun|compare|vs\.?|versus|फ़ाइन|फाइन|tulna|तुलना", s) and re.search(r"(?i)fine|फ़ाइन|फाइन|tun", s):
+            return Intent("follow_up", "compare_finetune", "rag")
+        if re.search(r"(?i)hallucinat|made[\s-]*up|makes?\s+(?:things|stuff)\s+up|भ्रम|मनगढ़ंत|hallucination\s+kahan", s):
+            return Intent("follow_up", "hallucination", "rag")
+        if re.search(r"(?i)(?:retriev\w*|search|context)\b.*\b(?:wrong|bad|incorrect|irrelevant|fails?|galat|garbage)|"
+                     r"(?:wrong|bad|galat|ग़लत|गलत)\s+(?:data|chunks?|context|retrieval|results?)|ग़लत\s+chunks|गलत\s+टुकड़े|"
+                     r"retrieval\s+(?:galat|ग़लत|गलत)", s):
+            return Intent("follow_up", "bad_retrieval", "rag")
+        if re.search(r"(?i)(?:where|show).*(?:chunk)|chunking|chunk\s+kahan|टुकड़े\s+कहाँ", s):
+            return Intent("follow_up", "chunking", "rag")
+        m = re.search(r"(?i)(?:make|karo)?.*\b(?:bigger|larger|bada)\b|बड़ा", s)
+        node = rag.node_named(s)
+        if m and node:
+            return Intent("follow_up", "bigger", "rag", {"node": node})
+        if node and re.search(r"(?i)explain|again|what\s+(?:is|does)|how\s+does|samjhao|phir|kya\s+(?:hai|karta)|समझाओ|क्या|दोबारा|tell\s+me\s+about", s):
+            return Intent("follow_up", "explain", "rag", {"node": node})
+    if topic == "pythagoras":
+        if re.search(r"(?i)hypotenuse|कर्ण|longest|sabse\s+lambi|सबसे\s+लंबी", s):
+            return Intent("follow_up", "hypotenuse", "pythagoras")
+        if re.search(r"(?i)another\s+example|one\s+more\s+example|example\s+(?:do|dikhao|aur)|aur\s+example|और\s+उदाहरण|दूसरा\s+उदाहरण", s):
+            return Intent("follow_up", "example", "pythagoras")
+        from .lessons.pythagoras import answer_check
+        if answer_check(s) is not None and re.search(r"(?i)^(?:it'?s\s+|c\s+(?:is|=)\s+|is\s+it\s+)?\S+(?:\s+\S+){0,4}$", s):
+            return Intent("follow_up", "answer", "pythagoras", {"correct": answer_check(s)})
+    return None

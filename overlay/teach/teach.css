@@ -1,0 +1,147 @@
+/* The teaching layer: a transparent, click-through sheet over the desktop.
+ *
+ * Colour carries meaning and nothing else: cyan explains, green confirms, amber asks for
+ * attention, red is an error. Everything else is pale text, and a dark backing plate only where
+ * a label would otherwise be unreadable against whatever is underneath. */
+:root {
+  --c-primary: #4cd4ff;
+  --c-confirm: #54e6a1;
+  --c-attention: #ffc24a;
+  --c-error: #ff6b6b;
+  --c-text: #eef7ff;
+  --c-muted: #9bb8cc;
+  --c-backing: #07121c;
+  --backing-alpha: 0.78;
+  --outline: rgba(3, 10, 16, 0.85);
+  --glow: 0.6;
+  --font: "Inter", "Noto Sans", "Noto Sans Devanagari", system-ui, sans-serif;
+  --font-math: "STIX Two Math", "Latin Modern Math", "Cambria Math", "Noto Serif", "Noto Serif Devanagari", serif;
+  --font-mono: "JetBrains Mono", "Noto Sans Mono", ui-monospace, monospace;
+}
+
+/* For a light page underneath: darker ink, a pale plate. */
+body[data-palette="light"] {
+  --c-primary: #0070a8;
+  --c-confirm: #117a4a;
+  --c-attention: #a65f00;
+  --c-error: #c0262d;
+  --c-text: #0b1b28;
+  --c-muted: #3d5566;
+  --c-backing: #f6fbff;
+  --backing-alpha: 0.9;
+  --outline: rgba(255, 255, 255, 0.9);
+}
+
+/* High contrast: saturated ink, opaque plates, no glow. */
+body[data-palette="contrast"] {
+  --c-primary: #00e5ff;
+  --c-confirm: #00ff85;
+  --c-attention: #ffd000;
+  --c-error: #ff3b3b;
+  --c-text: #ffffff;
+  --c-muted: #d9e6ee;
+  --c-backing: #000000;
+  --backing-alpha: 0.94;
+  --outline: #000000;
+  --glow: 0;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+#stage, #ink {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+#stage { pointer-events: none; }
+#ink { pointer-events: none; }
+body.pen #ink { pointer-events: auto; cursor: crosshair; }
+body.pen.eraser #ink { cursor: cell; }
+
+svg text {
+  font-family: var(--font);
+  text-rendering: geometricPrecision;
+  /* A dark outline painted under the letters keeps pale text legible over any page. */
+  paint-order: stroke fill;
+  stroke: var(--outline);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+svg text.math { font-family: var(--font-math); }
+svg text.mono { font-family: var(--font-mono); }
+svg text.plain { stroke: none; }
+
+.obj { transition: opacity 220ms ease; }
+.obj.dimmed { opacity: 0.22; }
+.obj.hidden { display: none; }
+
+/* Glow is a wider, fainter copy of the stroke underneath it — cheap, and sharp at the core. */
+.halo {
+  opacity: calc(0.34 * var(--glow));
+  filter: blur(3px);
+}
+body.lowq .halo { display: none; }
+body.lowq svg text { stroke-width: 2px; }
+
+.backing { fill: var(--c-backing); fill-opacity: var(--backing-alpha); }
+.panel-frame { fill: var(--c-backing); fill-opacity: 0.93; stroke: var(--c-primary); stroke-opacity: 0.35; stroke-width: 1; }
+.panel-title { fill: var(--c-muted); font-weight: 600; }
+.panel-title.spaced { letter-spacing: 0.08em; }
+
+.node-box { fill: var(--c-backing); fill-opacity: var(--backing-alpha); stroke-width: 1.6; }
+.node-label { fill: var(--c-text); font-weight: 600; }
+.node-sub { fill: var(--c-muted); }
+.node-icon { fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+.region-fill { fill-opacity: 0.08; }
+.tag-text { font-weight: 600; }
+
+.hl .core { stroke: var(--hl, var(--c-attention)) !important; }
+.hl-text { fill: var(--hl, var(--c-attention)) !important; }
+.hl-pulse { animation: hl-pulse 900ms ease-in-out 2; }
+@keyframes hl-pulse { 50% { opacity: 0.55; } }
+
+.flowing { stroke-dasharray: 6 10; animation: flow 900ms linear infinite; }
+@keyframes flow { to { stroke-dashoffset: -32; } }
+
+body.reduced .hl-pulse, body.reduced .flowing { animation: none; }
+
+/* Manual pen toolbar — the only thing on this layer you can press, and only in pen mode. */
+#pen-bar {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  padding: 5px;
+  border-radius: 12px;
+  background: rgba(7, 18, 28, 0.9);
+  border: 1px solid rgba(76, 212, 255, 0.35);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  font: 500 13px/1 var(--font);
+  pointer-events: auto;
+}
+#pen-bar[hidden] { display: none; }
+#pen-bar button {
+  all: unset;
+  padding: 8px 11px;
+  border-radius: 8px;
+  color: #d8ecf8;
+  cursor: pointer;
+}
+#pen-bar button:hover { background: rgba(76, 212, 255, 0.14); }
+#pen-bar button[aria-pressed="true"] { background: rgba(76, 212, 255, 0.28); color: #fff; }
+#pen-bar .sep { width: 1px; margin: 4px 2px; background: rgba(155, 184, 204, 0.3); }
+#pen-bar .exit { color: #ffc24a; }

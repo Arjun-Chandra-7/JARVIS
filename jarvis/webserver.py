@@ -416,8 +416,24 @@ async def emit(e: Emit):
         hud_state.log_turn("you", e.text)
     elif e.kind == "reply" and e.text:
         hud_state.log_turn("jarvis", e.text)
+    elif e.kind == "teach_event" and '"displays"' in e.text:
+        # The teaching overlay says which monitors it can draw on; a lesson asks here.
+        try:
+            evt = json.loads(e.text)
+            if evt.get("type") == "displays" and isinstance(evt.get("displays"), list):
+                _TEACH_DISPLAYS[:] = evt["displays"][:16]
+        except ValueError:
+            pass
     await _emit(e.kind, e.text)
     return {"ok": True}
+
+
+_TEACH_DISPLAYS: list = []
+
+
+@app.get("/teach/displays")
+async def teach_displays():
+    return {"displays": _TEACH_DISPLAYS}
 
 
 @app.get("/spotify")

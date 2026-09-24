@@ -830,6 +830,63 @@ class VoiceSession:
 
         self._while_speaking(play, announce=text, force=force)
 
+    def _speak_phrases(self, phrases: list[str], on_start) -> "object":
+        """Speak a lesson's phrases, each one reported as it becomes audible.
+
+        The teaching overlay draws each phrase's picture from ``on_start(i, at_ms)``; the barge-in
+        monitor, the stop token and the speaking flag are the same as for any reply, because it
+        runs inside ``_while_speaking``. Returns how far it got (teach.runner.Spoken).
+        """
+        from ..teach.runner import Spoken
+
+        started: list[int] = []
+
+        def begin(i: int, at_ms: float) -> None:
+            started.append(i)
+            # The words reach the HUD as they are said, like a streamed reply's.
+            self.on_event("reply", phrases[i])
+            on_start(i, at_ms)
+
+        def play(stop, on_first_audio, on_level):
+            if self.backend == "local":
+                from . import local_tts
+
+                local_tts.speak_segments(
+                    phrases, self.config.piper_model, self.config.audio_output_device,
+                    stop_event=stop, on_first_audio=on_first_audio, on_level=on_level,
+                    on_start=begin, on_played=self._played.append,
+                )
+                return
+            # The hosted voice takes one utterance at a time: each phrase is its own, and its
+            # picture goes out as the request is made — later than the local path, by the
+            # service's first-audio time.
+            for i, text in enumerate(phrases):
+                if stop.is_set():
+                    break
+                begin(i, time.time() * 1000 + 250)
+                tts.speak(text, self.config.elevenlabs_api_key, self.config.tts_voice_id,
+                          self.config.tts_model_id, self.sample_rate, self.config.audio_output_device,
+                          stop_event=stop)
+                if not stop.is_set():
+                    self._played.append(text)
+
+        self._while_speaking(play, announce=phrases[0] if phrases else "")
+        finished = len(self._played)
+        return Spoken(started=len(started), finished=finished,
+                      interrupted=finished < len(phrases))
+
+    async def _teach_turn(self, transcript: str):
+        """A request for the teaching overlay, handled here so its speech and pictures stay in
+        step. None when it is not one; otherwise the Reply (already spoken, or to be said)."""
+        try:
+            from ..teach import assistant
+            if not assistant.wants(transcript):
+                return None
+        except Exception:  # noqa: BLE001 — the overlay is optional; the voice is not
+            return None
+        self._conversation.acting("teach")
+        return await assistant.handle(transcript, speaker=_LessonVoice(self))
+
     def _unsaid(self, full: str) -> str:
         """What of ``full`` was not heard before an interruption: the sentences after the last
         one that played to its end."""
@@ -1725,6 +1782,33 @@ class VoiceSession:
                 self._conversation.sleep()
                 return True
 
+            # --- the teaching overlay: lessons, their controls ("continue", "go back"), drawing.
+            # Before the fast path, whose "stop" and "continue" mean something else while a
+            # lesson is on screen: continuing a lesson redraws as well as speaks.
+            taught = await self._teach_turn(transcript)
+            was_taught = taught is not None
+            while taught is not None:
+                voice_log.metric("turn", end_to_action_ms=(time.monotonic() - ended) * 1000, route="teach")
+                if self._barge is not None:
+                    said = await self._after_barge("")
+                    if said and self._conversation.judge(said) != IGNORE:
+                        transcript = said
+                        break
+                    # Not the person (a cough, the TV): the lesson carries on where it stopped.
+                    self._conversation.take_interrupted()
+                    from ..teach import assistant as _teach
+                    taught = await _teach.handle("continue", speaker=_LessonVoice(self))
+                    continue
+                if taught.text and not taught.spoken:
+                    self._say(taught.text)
+                transcript = await self._next(agent, taught.text or "")
+                break
+            else:
+                if was_taught:
+                    transcript = await self._next(agent, "")
+            if was_taught:
+                continue
+
             # --- session controls and local media keys: no network, no model ---
             quick = await self._fast_path(agent, _cmd)
             if quick is not None:
@@ -1852,6 +1936,12 @@ class VoiceSession:
     # --- main loop -------------------------------------------------------
     async def run(self, agent) -> None:
         """Drive the session. `agent` is a connected JarvisAgent."""
+        try:
+            # Whatever a previous voice process drew is nobody's lesson now.
+            from ..teach.bus import overlay as _overlay
+            threading.Thread(target=_overlay().control, args=("reset",), daemon=True).start()
+        except Exception:  # noqa: BLE001
+            pass
         self.mic.start()
         self._last_message = None
         self._events: asyncio.Queue = asyncio.Queue()
@@ -1958,3 +2048,16 @@ class VoiceSession:
             self.mic.stop()
             self.mic.delete()
             self.wake.delete()
+
+
+class _LessonVoice:
+    """The voice session as a teaching-overlay speaker (teach.runner.Speaker)."""
+
+    def __init__(self, session: "VoiceSession") -> None:
+        self.session = session
+
+    def speak(self, phrases, on_start):
+        return self.session._speak_phrases(list(phrases), on_start)
+
+    def stop(self) -> None:
+        self.session.stop_speaking()

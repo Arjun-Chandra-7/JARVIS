@@ -310,6 +310,24 @@ function createDictationCapsule() {
   dictationWin.on("closed", () => { dictationWin = null; });
 }
 
+// --------------------------------------------------------------------------- teaching layer
+// Drawing and explaining over the desktop (overlay/teach/). Its own window, created hidden at
+// startup and only mapped while a lesson or pen mode has something on it.
+let teachLayer = null;
+function createTeachLayer() {
+  if (process.env.JARVIS_TEACH === "0") return;
+  try {
+    teachLayer = require("./teach/main-teach.js").setup({
+      app, BrowserWindow, ipcMain, screen, globalShortcut, port: PORT,
+      shortcuts: (state.shortcuts && state.shortcuts.teach) || undefined,
+      log: (m) => console.log(m),
+    });
+  } catch (e) {
+    // The HUD must come up even if the teaching layer cannot.
+    console.error("teaching layer unavailable:", e && e.message);
+  }
+}
+
 // --------------------------------------------------------------------------- window
 function createWindow() {
   const bounds = state.bounds[state.form] ? clampToDisplay(state.bounds[state.form])
@@ -562,6 +580,7 @@ app.whenReady().then(() => {
 
   createWindow();
   createDictationCapsule();
+  createTeachLayer();
   // A previous run that ended inside the frame can leave the window fullscreen, and Mutter keeps
   // the top bar and dock hidden for as long as one exists. Cleared here, where there is actually
   // a window to clear — the same check placed before createWindow() silently did nothing.
@@ -583,6 +602,7 @@ app.on("will-quit", () => {
   app.isQuiting = true;
   rememberBounds();
   globalShortcut.unregisterAll();
+  if (teachLayer) teachLayer.quit();
   for (const k of kids) {
     try { k.kill("SIGTERM"); } catch { /* already gone */ }
   }

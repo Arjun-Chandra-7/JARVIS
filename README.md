@@ -165,6 +165,38 @@ diagram on my screen?") are answered from the screen instead (see the video sect
 While a video or song is playing, talking over Jarvis no longer cuts him off — use the wake word,
 push-to-talk or the dictation key to stop him.
 
+## Explaining with pictures — the teaching overlay
+
+"Pause and explain this step visually" over a maths video, or "explain RAG architecture with a
+diagram" from anywhere: Jarvis draws on a transparent, click-through layer over the desktop while
+he speaks, each picture appearing as its words are heard.
+
+* **Pythagoras, from the video.** He pauses the video (and checks it stopped), reads the title,
+  the time and the captions around it, and says which of those he is going by. If the triangle is
+  on screen and clear, he traces it; otherwise he draws a clean one beside it and says so. No
+  captions: he says so and goes by the title. Not Pythagoras: he says what it looks like and offers
+  words instead. He never claims the teacher said something the captions don't contain.
+* **RAG, anywhere.** Eight nodes, drawn step by step. Follow-ups change the diagram already there:
+  "explain the vector database again", "show where chunking happens", "what if retrieval is
+  wrong?", "where does hallucination happen?", "compare it with fine-tuning", "make the vector
+  database bigger".
+* **Controls, while something is on screen:** pause, continue, go back one step, skip, explain that
+  again, undo, redo, make it bigger/smaller, move it left/right, leave it, clear it. Talking over
+  him pauses the pictures with the voice; a cough does not end the lesson. A finished lesson
+  clears itself after a few seconds unless you say "leave it".
+* **Drawing:** "draw a triangle / circle / arrow", "circle this", "highlight this", "label this as
+  X", "erase that", "arrow from this to that". "This" means the thing most recently drawn or
+  pointed at on the overlay; with nothing there he asks which.
+* **Your own pen:** `Ctrl+Super+P` (or "pen mode") — pen, highlighter, eraser, undo, redo, clear,
+  Done. The layer takes the mouse only while the pen is on, and gives it back on Done, after two
+  idle minutes, or after five minutes whatever.
+* **Emergency:** `Ctrl+Super+Escape` hides everything at once and stops the voice.
+  Install the two shortcuts with `scripts/install-teach-shortcuts.sh` (`--remove` to undo).
+
+English, Hinglish, Hindi-in-Devanagari and — asked for explicitly — pure Hindi. Nothing on screen
+is saved or logged: the one screenshot a video lesson takes is cropped to the video, read, and
+deleted. How it works: `docs/TEACHING_OVERLAY.md`.
+
 ## Voice writing — dictate into any field
 
 Click into any text field — a browser box, an editor, a chat, a terminal — **tap Right Alt**,

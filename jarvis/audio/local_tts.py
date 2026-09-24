@@ -433,6 +433,39 @@ def speak(
     _play(audio(), output_device, stop_event, on_first_audio, on_level, on_played)
 
 
+def speak_segments(
+    segments: list[str],
+    model_path: str,
+    output_device: int = -1,
+    stop_event: Optional[threading.Event] = None,
+    on_first_audio: Optional[callable] = None,
+    on_level: Optional[callable] = None,
+    on_start: Optional[callable] = None,
+    on_played: Optional[callable] = None,
+) -> None:
+    """Speak ``segments`` in order, each one a unit that something else is waiting on.
+
+    For the teaching overlay: every segment is a phrase with a picture that belongs to it, so
+    the segments are never merged or re-split into other sentences, and ``on_start(i, at_ms)``
+    is called as segment *i*'s first audio is handed to the device — ``at_ms`` being the wall
+    clock time it will actually be heard, the write time plus the stream's output latency. That
+    is what the picture is scheduled against: the sound, not an estimate of when it might start.
+    """
+    from .speech_text import normalize
+
+    def audio() -> Iterator[tuple]:
+        for index, segment in enumerate(segments):
+            if stop_event is not None and stop_event.is_set():
+                return
+            spoken = normalize(segment)
+            first = True
+            for item in _labelled(spoken, segment, model_path, stop_event, index == 0):
+                yield (*item, index if first else None)
+                first = False
+
+    _play(audio(), output_device, stop_event, on_first_audio, on_level, on_played, on_start)
+
+
 # When playback last actually stopped because it was asked to — what barge-in latency is
 # measured against (speech onset → this).
 PLAYBACK = {"stopped_at": 0.0}
@@ -446,8 +479,9 @@ def _play(
     on_first_audio: Optional[callable] = None,
     on_level: Optional[callable] = None,
     on_played: Optional[callable] = None,
+    on_start: Optional[callable] = None,
 ) -> None:
-    """Play (pcm, rate[, label]) items as they are produced.
+    """Play (pcm, rate[, label[, start]]) items as they are produced.
 
     Split out of `speak` so that speaking a finished reply and speaking one still being written
     share a player rather than having two of them drift apart. A worker synthesises ahead while
@@ -502,6 +536,7 @@ def _play(
                 break
             pcm, rate = item[0], item[1]
             label = item[2] if len(item) > 2 else None
+            start = item[3] if len(item) > 3 else None
             if not pcm:
                 continue
             if stop_event is not None and stop_event.is_set():
@@ -524,6 +559,14 @@ def _play(
                         on_first_audio()
                     except Exception:  # noqa: BLE001
                         pass
+            if start is not None and on_start is not None:
+                # Heard once what is already queued ahead of it has played: the stream's output
+                # latency, which is also how far ahead of the speaker these writes run.
+                try:
+                    ahead = float(getattr(stream, "latency", 0.0) or 0.0)
+                    on_start(start, (__import__("time").time() + ahead) * 1000.0)
+                except Exception:  # noqa: BLE001 — a picture must never stop the voice
+                    pass
             pcm = loudness.shape(pcm, gain)
             chunk = max(512, int(rate * BLOCK_S) * 2)
             for i in range(0, len(pcm), chunk):

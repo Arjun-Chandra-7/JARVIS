@@ -69,6 +69,17 @@ def deterministic_handlers():
         from .video_command import handle as f
         return await f(text, config)
 
+    async def overlay_lesson(text, config):
+        # "Pause and explain this step visually", "explain RAG with a diagram", "go back one
+        # step", "circle this": drawn on the teaching overlay. Before video, which would answer
+        # "pause and explain this" in words alone, and before teach, which explains without a
+        # picture. Typed requests draw at reading pace in the background and reply at once.
+        from .teach.assistant import handle as f, wants
+        if not wants(text):
+            return None
+        reply = await f(text, background=True)
+        return reply.text if reply else None
+
     async def teach(text, config):
         # "What is a sequential input in an RNN?", "photosynthesis kya hota hai" — a topic,
         # taught by the strong model. After video/screen, which own anything about the screen.
@@ -168,6 +179,10 @@ def deterministic_handlers():
         return await f(text, config)
 
     return [
+        # The teaching overlay first: its requests are narrow (a lesson "with a diagram" or
+        # "visually", or a control while a lesson is on screen), and "pause and explain this step
+        # visually" would otherwise be split by chain into a pause and a question.
+        ("overlay_lesson", overlay_lesson),
         # YouTube before chain: "open YouTube and open a lecture on X" is one request, and the
         # chain splitter answered its second half with "I couldn't make a start".
         ("youtube", youtube),

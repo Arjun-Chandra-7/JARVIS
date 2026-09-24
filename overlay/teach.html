@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Nothing loads from anywhere but this folder, and nothing inline runs. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'none'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>JARVIS teaching layer</title>
+<link rel="stylesheet" href="teach/teach.css">
+</head>
+<body data-palette="jarvis">
+<svg id="stage" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g id="world"></g></svg>
+<canvas id="ink"></canvas>
+<div id="pen-bar" role="toolbar" aria-label="Pen" hidden>
+  <button data-tool="pen" aria-pressed="true">Pen</button>
+  <button data-tool="highlighter" aria-pressed="false">Highlighter</button>
+  <button data-tool="eraser" aria-pressed="false">Eraser</button>
+  <span class="sep"></span>
+  <button data-act="undo">Undo</button>
+  <button data-act="redo">Redo</button>
+  <button data-act="clear">Clear</button>
+  <span class="sep"></span>
+  <button data-act="exit" class="exit">Done</button>
+</div>
+<script src="teach/protocol.js"></script>
+<script src="teach/geometry.js"></script>
+<script src="teach/renderer.js"></script>
+</body>
+</html>

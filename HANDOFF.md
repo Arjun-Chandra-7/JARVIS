@@ -5,6 +5,48 @@ piece was actually taken, and what is next.
 
 ---
 
+## Sixth pass (2026-09-24): the teaching overlay — drawing while explaining
+
+Branch `live-failure-repair`. README → Explaining with pictures; design, measurements and limits
+in `docs/TEACHING_OVERLAY.md`.
+
+**Built:** a second, sandboxed, click-through Electron window over the work area
+(`overlay/teach/`), driven over the existing `/emit` → SSE path; one protocol spec
+(`protocol.json`) enforced by a Python and a JS validator that agree on every test case; SVG +
+DPR canvas renderer with a timeline that only runs while something moves; `jarvis/teach/` —
+lesson plans, a runner with generations, snapshots, pause/continue/back/skip/again/follow-ups
+and auto-clear; Pythagoras (standalone or traced from the video frame) and RAG templates in
+en / hinglish / hi / hi-pure; `local_tts.speak_segments` with a per-phrase `on_start`; the voice
+hook before the fast path (`VoiceSession._teach_turn`); a typed handler first in the command
+chain; manual pen; GNOME shortcuts `Ctrl+Super+Escape` (dismiss) and `Ctrl+Super+P` (pen) via
+`scripts/install-teach-shortcuts.sh` — **installed on this machine**.
+
+**Verified live on GNOME Wayland** (overlay run from this worktree, real Kokoro/Piper audio,
+real Zen + YouTube): RAG with follow-ups; Pythagoras standalone in English and pure Hindi;
+the YouTube lesson paused a playing video, verified the pause (0.33 s), grounded the topic in
+the captions, and fell back to a clean triangle because the browser was on another workspace
+(it now says so); interruption + continue; the emergency shortcut (real GNOME keybinding) and
+pen shortcut; input region read from the X server (1 px when shown, full only in pen mode,
+unmapped when hidden). Drift p50 1 ms / p95 5 ms; request → first frame 45 ms; ~144 fps.
+
+**Not verified:** a spoken request through the microphone (the voice loop is tested with
+scripted transcripts; the live runs used the same runner and TTS without the mic); tracing a
+real teacher's triangle on screen; multi-monitor (one display connected); fractional scale on
+the real desktop (rendered offscreen at 125 % and 150 % only).
+
+**Deploy** — the services still run the main checkout's branch:
+
+    git -C ~/Madara/Dev/Jarvis merge --ff-only origin/live-failure-repair   # or check the branch out
+    systemctl --user restart jarvis-backend jarvis-voice
+    kill $(cat /tmp/jarvis-overlay.pid); ~/Madara/Dev/Jarvis/start_jarvis.sh
+
+**Side effects of this session:** the overlay was restarted from this worktree (still running
+from it); two GNOME keybindings were added; a Pythagoras video tab was opened in Zen; an
+MPRIS "play" briefly started the *Two Gentlemen of Verona* tab (~3 s) before it was paused again;
+spoken test lessons played through the speakers.
+
+---
+
 ## Fifth pass (2026-09-24): one conversation per wake word, barge-in, echo cancellation, the voice
 
 Branch `live-failure-repair`. Details in README → Conversations, Talking over him, Echo
