@@ -90,3 +90,49 @@ def test_the_routing_itself_is_fast(world):
     t = time.perf_counter()
     asyncio.run(commands.handle("search for pythagoras theorem", config, "voice"))
     assert time.perf_counter() - t < 0.2
+
+
+# ------------------------------------------------------------ the sentences from the live log
+@pytest.mark.parametrize("said", [
+    "Okay, Jarvis, open a Pythagoras theorem lecture on YouTube.",
+    "Find a Pythagoras theorem lecture on YouTube and open it.",
+    "Open YouTube, open a lecture on Pythagoras theorem.",
+    "Okay, open YouTube and open a lecture on Pythagoras theorem.",
+    "play pythagoras theorem on youtube",
+])
+def test_asking_for_a_video_opens_the_top_result(world, said):
+    opened, config = world
+    reply = say(said, config)
+    assert reply == "Opening “Pythagoras in five minutes”."
+    assert opened == [RESULTS[0][0]]           # a real result, never an invented link
+
+
+def test_the_query_is_what_was_asked_for(world, monkeypatch):
+    asked = []
+    monkeypatch.setattr(youtube_command, "top_results",
+                        lambda q, n=5, timeout=12.0: asked.append(q) or list(RESULTS))
+    opened, config = world
+    say("Find a Pythagoras theorem lecture on YouTube and open it.", config)
+    assert asked == ["Pythagoras theorem lecture"]
+
+
+def test_finding_without_opening_shows_the_results(world):
+    opened, config = world
+    assert say("find pythagoras proofs on youtube", config) == "Searching YouTube for pythagoras proofs."
+    assert "results?search_query=pythagoras+proofs" in opened[-1]
+
+
+def test_a_misheard_okay_something_is_not_turned_into_a_search(world):
+    opened, config = world
+    context.note_opened("voice", site="YouTube", target="YouTube")
+    say("search for pythagoras theorem", config)
+    before = list(opened)
+    reply = asyncio.run(youtube_command.handle("Okay, Opera GX, Gwane."))
+    assert reply is None and opened == before
+
+
+def test_open_spotify_while_on_youtube_is_not_a_video(world):
+    opened, config = world
+    context.note_opened("voice", site="YouTube", target="YouTube")
+    context.set_current("voice")
+    assert asyncio.run(youtube_command.handle("open Spotify")) is None

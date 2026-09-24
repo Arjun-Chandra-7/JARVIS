@@ -34,6 +34,41 @@ _PLAY_NTH = re.compile(
     r"(?i)^(?:(?:ok(?:ay)?|now|and|then)[,\s]+)?(?:please\s+)?(?:play|open|watch|start|put\s+on)"
     r"\s+(?:the\s+)?(?P<which>first|second|third|fourth|fifth|last|1st|2nd|3rd|4th|5th|top)"
     r"(?:\s+(?:one|video|result|link))?(?:\s+please)?[.!?]*$")
+# "open a Pythagoras theorem lecture on YouTube", "find X on YouTube and open it", "play X on
+# YouTube". Found live: the first was answered by the model with an invented video and a link to
+# youtube.com/watch?v=example; the second searched for "…lecture on YouTube and open it".
+_LEAD = r"(?:(?:ok(?:ay)?|now|and|then|so|jarvis|hey jarvis|please)[,\s]+)*"
+_ON_YOUTUBE = re.compile(
+    r"(?i)^" + _LEAD +
+    r"(?P<verb>open|play|watch|put\s+on|find|search(?:\s+for)?|look\s+up|show\s+me|get\s+me)\s+"
+    r"(?P<q>.+?)\s+(?:on|in|from)\s+youtube"
+    r"(?P<tail>\s+(?:and|then|and then)\s+(?:open|play|start|watch)\s+(?:it|that|the\s+first\s+one))?"
+    r"(?:\s+(?:please|for\s+me))?[.!?]*$")
+# "open YouTube and open a lecture on X", "Open YouTube, play X": one request, not a chain.
+_OPEN_YOUTUBE_THEN = re.compile(
+    r"(?i)^" + _LEAD + r"(?:open|go\s+to|launch)\s+youtube(?:\s*,\s*|\s+(?:and|then|and then)\s+)"
+    r"(?:then\s+)?(?P<rest>.+)$")
+_REQUEST = re.compile(
+    r"(?i)^" + _LEAD +
+    r"(?P<verb>open|play|watch|put\s+on|find|search(?:\s+for)?|look\s+up|show\s+me|get\s+me)\s+"
+    r"(?P<q>.+?)"
+    r"(?P<tail>\s+(?:and|then|and then)\s+(?:open|play|start|watch)\s+(?:it|that|the\s+first\s+one))?"
+    r"(?:\s+(?:on|in)\s+youtube)?(?:\s+(?:please|for\s+me))?[.!?]*$")
+# "search YouTube for X", "look up on YouTube X"
+_YOUTUBE_FOR = re.compile(
+    r"(?i)^" + _LEAD + r"(?P<verb>search|look\s+up|find)\s+(?:on\s+|in\s+)?youtube\s+(?:for\s+)?"
+    r"(?P<q>.+?)"
+    r"(?P<tail>\s+(?:and|then|and then)\s+(?:open|play|start|watch)\s+(?:it|that|the\s+first\s+one))?"
+    r"(?:\s+(?:please|for\s+me))?[.!?]*$")
+_OPENS = {"open", "play", "watch", "put on"}
+
+
+def clean_query(q: str) -> str:
+    q = re.sub(r"(?i)^(?:a|an|the|some|me\s+a|me)\s+", "", q.strip().strip("\"'“”"))
+    q = re.sub(r"(?i)\s+(?:on|in|from)\s+youtube$", "", q)
+    return q.strip(" ,.")
+
+
 _PLAY_URL = re.compile(r"(?i)^(?:play|open|watch|start|put\s+on)\s+"
                        r"(?P<url>https://www\.youtube\.com/watch\?v=[\w-]{11})[.!?]*$")
 _ORDINAL = {"first": 1, "1st": 1, "top": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3,
@@ -98,7 +133,6 @@ async def handle(text: str, config=None) -> Optional[str]:
             if not await asyncio.to_thread(apps.open_url, url):
                 return "I couldn't open that video, sir."
             context.note_opened(session, site="youtube", target=title)
-            context.note_action(said, title, session)
             return f"Opening “{title}”."
 
     nth = _PLAY_NTH.match(said)
@@ -119,22 +153,45 @@ async def handle(text: str, config=None) -> Optional[str]:
         if not await asyncio.to_thread(apps.open_url, url):
             return "I couldn't open that video, sir."
         context.note_opened(session, site="youtube", target=title or url)
-        context.note_action(said, title or url, session)
         return f"Opening “{title}”." if title else "Opening that video."
 
-    search = _SEARCH.match(said)
-    if not search:
+    request = None
+    then = _OPEN_YOUTUBE_THEN.match(said)
+    if then:
+        request = _REQUEST.match(then.group("rest").strip())
+    if request is None:
+        request = _YOUTUBE_FOR.match(said) or _ON_YOUTUBE.match(said)
+    if request is None and _on_youtube(session):
+        request = _REQUEST.match(said)
+        # On YouTube, only searching and finding are ours; "open Spotify" is not a video.
+        if request is not None and not re.match(r"(?i)(?:find|search|look|show|get)", request.group("verb")) \
+                and not request.group("tail"):
+            request = None
+    if request is None:
         return None
-    explicit = "youtube" in said.lower()
-    if not explicit and not _on_youtube(session):
+    query = clean_query(request.group("q"))
+    if not query or query.lower() in {"it", "that", "this", "youtube", "a video", "video"}:
         return None
-    query = search.group("q").strip().strip("\"'“”")
-    if not query or query.lower() in {"it", "that", "this", "youtube"}:
-        return None
+    verb = re.sub(r"\s+", " ", request.group("verb").lower())
+    open_now = verb in _OPENS or bool(request.group("tail"))
+    context.note_opened(session, site="youtube", target="youtube")
+    _found.pop(session, None)
+    if open_now:
+        found = await asyncio.to_thread(top_results, query)
+        _found[session] = found
+        context.note_results([url for url, _ in found], session)
+        if found:
+            url, title = found[0]
+            if not await asyncio.to_thread(apps.open_url, url):
+                return "I couldn't open that video, sir."
+            context.note_opened(session, site="youtube", target=title or url)
+            return f"Opening “{title}”." if title else "Opening the top result."
+        if not await asyncio.to_thread(apps.open_url, results_url(query)):
+            return f"I couldn't open YouTube, sir."
+        return f"I couldn't read the results, sir, so I've opened the YouTube search for {query}."
     if not await asyncio.to_thread(apps.open_url, results_url(query)):
         return f"I couldn't open the YouTube search for {query}, sir."
-    context.note_opened(session, site="youtube", target="youtube")
-    context.note_action(said, query, session)
-    _found.pop(session, None)
+    # Not note_action: "okay, <anything>" would then be rebuilt into another YouTube search —
+    # found live, a misheard "Okay, Opera GX, Gwane" became one.
     _pending[session] = asyncio.create_task(_fetch(session, query))
     return f"Searching YouTube for {query}."

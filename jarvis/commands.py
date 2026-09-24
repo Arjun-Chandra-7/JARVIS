@@ -168,9 +168,11 @@ def deterministic_handlers():
         return await f(text, config)
 
     return [
+        # YouTube before chain: "open YouTube and open a lecture on X" is one request, and the
+        # chain splitter answered its second half with "I couldn't make a start".
+        ("youtube", youtube),
         ("chain", chain),
         ("message", message),
-        ("youtube", youtube),
         ("video", video),
         ("teach", teach),
         ("modes", modes),
