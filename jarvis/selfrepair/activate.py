@@ -264,7 +264,7 @@ class Activator:
             return result
 
 
-def repro_probe(test_path: str, python: Optional[str] = None) -> Probe:
+def repro_probe(test_path: str, python: Optional[str] = None, use_bwrap: Optional[bool] = None) -> Probe:
     """Run the repair's reproduction test against the live checkout, read-only, in the sandbox."""
     from . import sandbox
 
@@ -275,7 +275,7 @@ def repro_probe(test_path: str, python: Optional[str] = None) -> Probe:
         scratch = policy.repairs_root() / "probe.scratch"
         res = sandbox.run([py, "-m", "pytest", "-q", "-p", "no:cacheprovider", test_path], repo,
                           timeout=policy.LIMITS.focused_timeout_s, python=py, scratch=scratch,
-                          readonly_tree=True)
+                          readonly_tree=True, use_bwrap=use_bwrap)
         passed, failed, errors, _ = sandbox.pytest_counts(res.tail)
         ok = res.returncode == 0 and passed > 0 and not failed and not errors
         return ok, f"reproduction test on the live checkout: {passed} passed, {failed + errors} failed"

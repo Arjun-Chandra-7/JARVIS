@@ -36,6 +36,10 @@ def repo(tmp_path):
     (root / "tests").mkdir()
     (root / "tests" / "test_ok.py").write_text("def test_ok():\n    assert True\n")
     git(root, "init", "-q", "-b", "main")
+    # Its own identity, so commits and reverts work wherever the suite runs — a repair's
+    # sandbox has an empty home and no global git config.
+    git(root, "config", "user.email", "t@example.com")
+    git(root, "config", "user.name", "t")
     git(root, "-c", "user.email=t@example.com", "-c", "user.name=t", "add", "-A")
     git(root, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "base")
     return root
@@ -375,12 +379,27 @@ def test_memory_is_limited(tmp_path):
     assert res.returncode != 0 and "MemoryError" in res.tail
 
 
+def test_without_a_working_sandbox_repair_commands_refuse_to_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(sandbox, "bwrap_works", lambda: False)
+    monkeypatch.delenv("JARVIS_REPAIR_ALLOW_UNSANDBOXED", raising=False)
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    target = _slow_test(wt, 0)
+    with pytest.raises(sandbox.PolicyViolation):
+        sandbox.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", target], wt,
+                    timeout=30, python=sys.executable)
+    monkeypatch.setenv("JARVIS_REPAIR_ALLOW_UNSANDBOXED", "1")
+    res = sandbox.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", target], wt,
+                      timeout=60, python=sys.executable)
+    assert res.returncode == 0 and not res.sandboxed
+
+
 def test_disallowed_commands_never_start(tmp_path):
     with pytest.raises(sandbox.PolicyViolation):
         sandbox.run(["bash", "-c", "touch /tmp/pwned"], tmp_path, timeout=5)
 
 
-@pytest.mark.skipif(not __import__("shutil").which("bwrap"), reason="bubblewrap not installed")
+@pytest.mark.skipif(not sandbox.bwrap_works(), reason="bubblewrap cannot build a namespace here")
 def test_tests_run_with_no_network_and_no_real_home(tmp_path):
     wt = tmp_path / "wt"
     (wt / "tests").mkdir(parents=True)

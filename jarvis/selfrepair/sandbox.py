@@ -197,7 +197,18 @@ def run(argv: list[str], worktree: Path, *, timeout: float, limits: policy.Limit
         (scratch / d).mkdir(parents=True, exist_ok=True, mode=0o700)
     from ..agent import sandbox as shell_sandbox
 
-    sandboxed = shell_sandbox.available() if use_bwrap is None else use_bwrap
+    if use_bwrap is None:
+        # By default the wall is required, not hoped for: bubblewrap installed but unable to
+        # start (no user namespaces, already inside a sandbox) must not quietly mean "run with
+        # the network and the real home". Only an explicit False — tests, or the owner's
+        # JARVIS_REPAIR_ALLOW_UNSANDBOXED=1 — runs without it.
+        if not bwrap_works():
+            if os.environ.get("JARVIS_REPAIR_ALLOW_UNSANDBOXED") != "1":
+                raise PolicyViolation("no working sandbox (bubblewrap) is available for repair commands")
+            use_bwrap = False
+        else:
+            use_bwrap = True
+    sandboxed = use_bwrap
     command = argv
     if sandboxed:
         venv = str(Path(python).parent.parent)
@@ -237,6 +248,25 @@ def run(argv: list[str], worktree: Path, *, timeout: float, limits: policy.Limit
                          timed_out, sandboxed, was_cancelled)
 
 
+_BWRAP_WORKS: dict[str, bool] = {}
+
+
+def bwrap_works() -> bool:
+    """Whether bubblewrap can actually build a namespace here — installed is not enough."""
+    if "ok" not in _BWRAP_WORKS:
+        from ..agent import sandbox as shell_sandbox
+
+        ok = False
+        if shell_sandbox.available():
+            try:
+                argv = shell_sandbox.build_argv("true", shell_sandbox.STRICT)
+                ok = subprocess.run(argv, capture_output=True, timeout=10).returncode == 0
+            except (OSError, subprocess.SubprocessError):
+                ok = False
+        _BWRAP_WORKS["ok"] = ok
+    return _BWRAP_WORKS["ok"]
+
+
 def _kill_group(proc: subprocess.Popen) -> None:
     for sig in (signal.SIGTERM, signal.SIGKILL):
         try:
@@ -263,5 +293,7 @@ def pytest_counts(tail: str) -> tuple[int, int, int, list[str]]:
             failed += int(m.group(1) or 0)
             passed += int(m.group(2) or 0)
             errors += int(m.group(3) or 0)
-    ids = [re.sub(r"\x1b\[[0-9;]*m", "", i) for i in _FAILING.findall(tail)][:20]
+    # Every id, not a sample: the regression gate compares these sets, and a new failure that
+    # sorted after a cut-off would otherwise pass unseen. The job stores only the first few.
+    ids = list(dict.fromkeys(re.sub(r"\x1b\[[0-9;]*m", "", i) for i in _FAILING.findall(tail)))
     return passed, failed, errors, ids

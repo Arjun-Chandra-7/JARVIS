@@ -107,6 +107,9 @@ def _no_real_settings_or_repairs(monkeypatch, tmp_path_factory):
 
     Tests that exercise a component's report write it themselves; tests that run a repair
     pipeline build one explicitly with a recipe editor and stand-in services."""
+    # Always a fresh state dir, even when the environment names one: a repair's sandbox sets
+    # JARVIS_STATE_DIR, and without this every test inside it shared one job store.
+    monkeypatch.setenv("JARVIS_STATE_DIR", str(tmp_path_factory.mktemp("state")))
     run_dir = tmp_path_factory.mktemp("run")
     monkeypatch.setenv("JARVIS_RUNTIME_DIR", str(run_dir))   # not XDG_RUNTIME_DIR: audio needs the real one
     monkeypatch.setenv("JARVIS_SETTINGS_EMIT", "0")

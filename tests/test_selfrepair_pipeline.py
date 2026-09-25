@@ -16,7 +16,7 @@ from jarvis.selfrepair.jobs import JobStore
 from jarvis.selfrepair.pipeline import (COULD_NOT_REPRODUCE, NEEDS_APPROVAL, ROLLED_BACK, TESTS_FAILED,
                                         Pipeline)
 
-BWRAP = shutil.which("bwrap") is not None
+BWRAP = sandbox.bwrap_works()   # inside another sandbox, bubblewrap cannot nest: run unwalled, explicitly
 
 SPEECH_TEXT = '''def percent(n):
     """How a percentage is read out."""
@@ -57,6 +57,8 @@ def live(tmp_path):
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(text)
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
+    git(root, "config", "user.email", "t@example.com")      # works with an empty home too
+    git(root, "config", "user.name", "t")
     git(root, "add", "-A")
     git(root, "commit", "-q", "-m", "base")
     return root

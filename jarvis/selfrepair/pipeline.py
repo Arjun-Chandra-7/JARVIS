@@ -97,7 +97,9 @@ class Pipeline:
         if res.timed_out:
             run.failing = ["timed out"]
         job = self._job(job.id)
-        self.store.update(job.id, tests=job.tests + [asdict(run)])
+        row = asdict(run)
+        row["failing"] = row["failing"][:20]      # stored: a sample; compared: the full list
+        self.store.update(job.id, tests=job.tests + [row])
         return run
 
     def _pytest(self, *targets: str, stop_first: bool = False) -> list[str]:
@@ -150,9 +152,11 @@ class Pipeline:
             job = self.store.update(job.id, worktree=str(wt.path), branch=wt.branch, base_commit=wt.base)
 
             baseline_failing: set[str] = set()
+            baseline_count = 0
             if _regression_mode() == "full":
                 base = self._run(job, "regression before", self._pytest("tests"), policy.LIMITS.test_timeout_s)
                 baseline_failing = set(base.failing)
+                baseline_count = base.failed + base.errors
 
             repro = f"tests/test_repair_{job.id.replace('-', '_')}.py"
             ctx = EditContext(wt.path, component, job.summary, job.evidence, repro,
@@ -202,8 +206,10 @@ class Pipeline:
                     raise Stop(TESTS_FAILED)
             if _regression_mode() == "full":
                 reg = self._run(job, "regression after", self._pytest("tests"), policy.LIMITS.test_timeout_s)
-                new_failures = [f for f in reg.failing if f not in baseline_failing]
-                if new_failures or (not reg.ok and not reg.failing):
+                after_failing = reg.failing
+                new_failures = [f for f in after_failing if f not in baseline_failing]
+                # Ids and counts both: a failure the summary did not name still shows in the count.
+                if new_failures or reg.failed + reg.errors > baseline_count or (not reg.ok and not after_failing):
                     raise Stop(TESTS_FAILED)
 
             self._guard(job)
@@ -250,7 +256,7 @@ class Pipeline:
             from .activate import repro_probe
 
             repro = next((t for t in job.changed_files if t.startswith("tests/test_repair_")), "")
-            probe = repro_probe(repro, self.python) if repro else None
+            probe = repro_probe(repro, self.python, self.use_bwrap) if repro else None
             job = self._to(job, jobs.HEALTH)
             result = self.activator.activate(job.candidate_commit, job.base_commit, list(component.services),
                                              probe=probe, still_allowed=lambda: policy.digest() == job.policy_digest)
