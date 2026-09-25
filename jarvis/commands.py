@@ -14,8 +14,12 @@ def clean_text(text: str) -> str:
     command — "open netflix" became "netflix (Spoken request. DO the action with a tool first...)"
     and matched nothing. Any bracketed or parenthesised line is machinery, not speech.
     """
-    lines = [line for line in text.splitlines() if not line.strip().startswith(("[", "("))]
-    return re.sub(r"^(?:hey\s+)?jarvis[,.!:\s]*", "", " ".join(lines).strip(), flags=re.I).strip()
+    # A bracketed block can span lines (an incoming message with line breaks in it), and the
+    # overlay fences an attached selection between two bracket lines: both are removed whole,
+    # so none of that text can be read as the owner's command. See trust.own_words.
+    from .trust import own_words
+
+    return re.sub(r"^(?:hey\s+)?jarvis[,.!:\s]*", "", own_words(text), flags=re.I).strip()
 
 
 _SLEEP_RE = re.compile(
@@ -160,11 +164,6 @@ def deterministic_handlers():
         from .draw_command import handle as f
         return await f(text, config)
 
-    async def self_improve(text, config):
-        # "Fix yourself" — look at what has failed repeatedly and try to mend it.
-        from .selfimprove.command import handle as f
-        return await f(text, config)
-
     async def coding_agent(text, config):
         # "Ok, but now we need to add X" at the editor. Before the task runner, which would try
         # to plan it as browser steps, and before open_command, which would see "open a terminal".
@@ -215,7 +214,6 @@ def deterministic_handlers():
         ("project", describe_project),
         ("imagine", make_a_picture),
         ("draw", draw_something),
-        ("self_improve", self_improve),
         ("coding", coding_agent),
         ("task", run_task),
         ("open", open_something),
@@ -275,6 +273,22 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
     if closing and not re.search(r"[\"'“‘]", raw):
         raw = request
     command = raw.lower().rstrip(".!?")
+
+    # Settings the owner can change by asking — "disable your animations", "thoda tez bolo",
+    # "undo that" — applied live and verified, no code touched. Before away mode, because
+    # "turn off away-mode replies" is the emergency stop, not a request to talk about away mode.
+    # Given the words as said: the Hinglish rewrite turns "band kar do" into "close".
+    from .settings.command import handle as settings_command
+    answer = await settings_command(text, config, session_id)
+    if answer is not None:
+        return answer
+
+    # Reports of something broken, and requests to change Jarvis's own behaviour, go to the one
+    # classifier; only the owner's own front-ends can start a repair (jarvis.selfrepair).
+    from .selfrepair.command import handle as repair_command
+    answer = await repair_command(text, config, session_id)
+    if answer is not None:
+        return answer
 
     # Away mode: starting it (only ever through an approval), changing it while it runs, and
     # "what happened while I was away". Before the notification rules, because "mute Instagram"

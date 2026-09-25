@@ -20,7 +20,16 @@ MAX_ROWS = 200
 
 
 def enabled() -> bool:
-    return os.environ.get("JARVIS_DICTATION_HISTORY", "on").strip().lower() not in {"0", "off", "false", "no"}
+    """Keeping new dictations? The "dictation history" setting, whose default is the env var."""
+    env_on = os.environ.get("JARVIS_DICTATION_HISTORY", "on").strip().lower() not in {"0", "off", "false", "no"}
+    if not env_on:
+        return False        # switched off in the environment: no spoken setting turns it back on
+    try:
+        from ..settings.registry import value
+
+        return bool(value("dictation.history"))
+    except Exception:  # noqa: BLE001 — unreadable settings keep nothing rather than everything
+        return False
 
 
 def _hours() -> float:

@@ -79,6 +79,14 @@ def unfocus() -> Cmd:
 def create(scene: str, monitor: Any = "primary", theme: Optional[dict] = None,
            objects: Optional[list] = None, region: Optional[dict] = None) -> Cmd:
     c: Cmd = {"op": "scene.create", "scene": scene, "monitor": monitor}
+    # The owner's settings — pen glow, reduced motion — win over a lesson's own theme: "make the
+    # teaching pen less bright" has to hold for every lesson, not only the ones that forgot a glow.
+    try:
+        from ..settings.runtime import teach_theme
+
+        theme = {**(theme or {}), **teach_theme()}
+    except Exception:  # noqa: BLE001 — a settings fault must never stop a lesson drawing
+        pass
     if theme:
         c["theme"] = theme
     if objects is not None:

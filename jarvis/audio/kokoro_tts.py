@@ -209,6 +209,15 @@ def _lang_for(voice: str) -> str:
 _LANGUAGE_FLAG = re.compile(r"\((?:en|hi|en-us|en-gb)\)")
 
 
+def effective_speed(delivery: Delivery) -> float:
+    """The speed a line with this delivery is actually read at: its pace times the owner's
+    "speak faster / slower" setting. The voice reports this number back when asked whether a
+    speed change took, so it has to be the same one handed to the model."""
+    from ..settings.live import voice_speed_factor
+
+    return round(delivery.speed * voice_speed_factor(), 3)
+
+
 def _create(model, sentence: str, voice: str, speed: float):
     """One sentence in the right voice: Hindi and Hinglish through the Hindi phonemiser.
 
@@ -234,7 +243,7 @@ def synth(text: str, voice: str = "", delivery: Optional[Delivery] = None) -> tu
     model = _get_pipeline(use_voice)
     out, rate = bytearray(), SAMPLE_RATE
     for sentence in _sentences(said, split_first=False):
-        samples, rate = _create(model, sentence, use_voice, chosen.speed)
+        samples, rate = _create(model, sentence, use_voice, effective_speed(chosen))
         out += _to_pcm16(samples)
     return bytes(out), int(rate)
 
@@ -256,7 +265,7 @@ def synth_stream(text: str, voice: str = "", delivery: Optional[Delivery] = None
     for sentence in _sentences(said, split_first=split_first):
         if stop_event is not None and stop_event.is_set():
             return
-        samples, rate = _create(model, sentence, use_voice, chosen.speed)
+        samples, rate = _create(model, sentence, use_voice, effective_speed(chosen))
         pcm = _to_pcm16(samples)
         if pcm:
             yield pcm, int(rate)

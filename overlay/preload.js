@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld("jarvis", {
   // Let the desktop underneath have the pointer, except where there is something to press.
   setClickThrough: (through) => ipcRenderer.send("click-through", Boolean(through)),
   hide: () => ipcRenderer.send("hide"),
+  show: () => ipcRenderer.send("show"),
   focusWindow: () => ipcRenderer.send("focus-window"),
   quit: () => ipcRenderer.send("quit"),
 

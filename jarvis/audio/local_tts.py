@@ -116,7 +116,19 @@ def warmup(model_path: str) -> bool:
 def _synth_chunk_api(voice, text: str) -> tuple[bytes, int]:
     pcm = bytearray()
     rate = 22050
-    for chunk in voice.synthesize(text):
+    config = None
+    try:
+        from piper import SynthesisConfig
+
+        from ..settings.live import voice_speed_factor
+
+        factor = voice_speed_factor()
+        if abs(factor - 1.0) > 1e-3:
+            # Piper's pace is a length scale: smaller is faster.
+            config = SynthesisConfig(length_scale=round(1.0 / factor, 3))
+    except Exception:  # noqa: BLE001 — an older piper reads at its own pace
+        config = None
+    for chunk in (voice.synthesize(text, syn_config=config) if config else voice.synthesize(text)):
         pcm.extend(chunk.audio_int16_bytes)
         rate = chunk.sample_rate
     return bytes(pcm), rate

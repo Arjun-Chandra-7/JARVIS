@@ -1358,6 +1358,23 @@ class VoiceSession:
                                 f"returned on {where} with: {job.get('summary') or 'no notable output'}")
             first_pass = False
 
+    async def _watch_repairs(self) -> None:
+        """Say a repair's meaningful transitions — applying, waiting for approval, how it ended.
+
+        Read from the repair store, not the backend: the worker that runs a repair may restart
+        the backend (or this process) while activating, and the news must survive that."""
+        from ..selfrepair import announce
+
+        while True:
+            await asyncio.sleep(3)
+            try:
+                lines = await asyncio.to_thread(announce.due)
+            except Exception:  # noqa: BLE001 — a bad read must not end the watcher
+                continue
+            for line in lines:
+                self.on_event("repair", line)
+                self._speak(line)
+
     async def _keep_study_mode(self) -> None:
         """Keep the distractions shut for as long as study mode is on.
 
@@ -2026,6 +2043,7 @@ class VoiceSession:
         asyncio.create_task(self._watch_screen())  # proactive alerts during live screen-share
         asyncio.create_task(self._watch_afk(agent))  # welcome-back brief after a long idle gap
         asyncio.create_task(self._watch_coding_jobs())  # speak coding-job completions + chime
+        asyncio.create_task(self._watch_repairs())  # speak a repair's meaningful transitions
         asyncio.create_task(self._watch_meet())  # announce when a joined Meet ends, with summary
         asyncio.create_task(self._watch_power())  # "laptop charging, battery N%" on plug/unplug
         # Terminal scraping steals the clipboard and a quiet screen is not proof of completion.

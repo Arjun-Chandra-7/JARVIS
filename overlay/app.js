@@ -362,7 +362,9 @@ els.log.addEventListener("click", async (e) => {
 });
 
 function prefersStill() {
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // The owner's setting ("disable your animations", "reduce motion") or the system's.
+  return Boolean(window.JarvisSettings?.reduced?.()) ||
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 function reveal(el, text) {
@@ -470,6 +472,11 @@ let currentLevel = 0;
 let targetLevel = 0;
 
 function drawMeter() {
+  // Animations off means nothing moves — the meter included. It resumes when they are back on.
+  if (window.JarvisSettings?.still?.()) {
+    meterRaf = 0;
+    return;
+  }
   meterRaf = requestAnimationFrame(drawMeter);
   // Ease toward the most recent real reading so 20 Hz samples look continuous at 60 fps.
   currentLevel += (targetLevel - currentLevel) * 0.25;
@@ -1008,6 +1015,7 @@ function connect() {
 
   sse.onopen = () => {
     state.connected = true;
+    window.JarvisSettings?.load?.();   // a change made while disconnected is picked up now
     reconnectDelay = 1000;
     if (state.activity === "offline") setActivity("idle");
   };
@@ -1037,7 +1045,16 @@ function handleEvent(kind, text) {
   while (recentEvents.length > 60) recentEvents.shift();
   if (els.eventDump) els.eventDump.textContent = recentEvents.slice(-40).join("\n");
 
+  if (window.JarvisSettings?.onEvent?.(kind, text)) return;
   switch (kind) {
+    // A repair's meaningful transitions, as one compact line; speech is the voice's job.
+    case "repair": {
+      try {
+        const r = JSON.parse(text);
+        if (r.text) toast(r.text);
+      } catch { /* malformed: ignore */ }
+      break;
+    }
     // Iron Man mode is decided by the voice, which reaches the backend, which reaches here. The
     // overlay changes shape rather than a second window appearing over the first.
     case "mode":

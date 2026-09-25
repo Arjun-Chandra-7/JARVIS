@@ -442,6 +442,8 @@ ipcMain.on("click-through", (_e, through) => {
 });
 
 ipcMain.on("hide", hide);
+// "Show the overlay" as a setting: shown without taking focus, so it never steals the keyboard.
+ipcMain.on("show", () => show({ focus: false }));
 ipcMain.on("focus-window", () => {
   if (win && !win.isDestroyed()) win.focus();
 });

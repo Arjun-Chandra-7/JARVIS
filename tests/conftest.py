@@ -98,3 +98,29 @@ def _no_real_away_mode(monkeypatch, tmp_path_factory):
     monkeypatch.setattr(escalation, "phone_ping", lambda *a, **k: True)
     monkeypatch.delenv("JARVIS_DRY_RUN_SENDS", raising=False)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _no_real_settings_or_repairs(monkeypatch, tmp_path_factory):
+    """Settings changes in a test never reach the running overlay or voice, and no test starts a
+    repair worker, a coding agent or a systemd unit, or writes to the real repairs directory.
+
+    Tests that exercise a component's report write it themselves; tests that run a repair
+    pipeline build one explicitly with a recipe editor and stand-in services."""
+    run_dir = tmp_path_factory.mktemp("run")
+    monkeypatch.setenv("JARVIS_RUNTIME_DIR", str(run_dir))   # not XDG_RUNTIME_DIR: audio needs the real one
+    monkeypatch.setenv("JARVIS_SETTINGS_EMIT", "0")
+    from jarvis.settings import runtime as settings_runtime
+
+    monkeypatch.setitem(settings_runtime.DEFAULT_TIMEOUT, "overlay", 0.3)
+    monkeypatch.setitem(settings_runtime.DEFAULT_TIMEOUT, "voice", 0.3)
+    monkeypatch.setenv("JARVIS_REPAIR_ROOT", str(tmp_path_factory.mktemp("repairs")))
+    monkeypatch.setenv("JARVIS_REPAIR_EDITOR", "none")
+    monkeypatch.setenv("JARVIS_REPAIR_LAUNCH", "process")
+    monkeypatch.delenv("JARVIS_SELF_REPAIR_DISABLED", raising=False)
+    from jarvis.settings import live
+
+    monkeypatch.setitem(live._state, "speed", None)
+    launched: list = []
+    monkeypatch.setattr("jarvis.selfrepair.command._launch", lambda job_id, action: launched.append((job_id, action)))
+    yield launched

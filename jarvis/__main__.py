@@ -184,6 +184,11 @@ async def _run_voice() -> None:
         try:
             async with _make_voice_agent() as agent:
                 session = VoiceSession(CONFIG, on_event=_voice_event)
+                # Speed, follow-up window and the rest change live, and are reported back so a
+                # "speak faster" is confirmed by the voice itself, not by the file it was written to.
+                from .settings import live as live_settings
+
+                live_settings.attach_voice(session)
                 await session.run(agent)
             return
         except KeyboardInterrupt:
@@ -719,6 +724,9 @@ def main() -> None:
         elif args.meeting:
             asyncio.run(_run_meeting())
         elif args.voice:
+            from . import build_info
+
+            build_info.publish("voice")
             asyncio.run(_run_voice())
         else:
             asyncio.run(_run_text_repl())

@@ -46,6 +46,8 @@ KIND_WORDS: dict[str, tuple[str, ...]] = {
     "browser": ("browser", "opera", "restart"),
     "autonomy": ("autonomy", "confirmation", "control"),
     "away": ("away", "away mode", "history"),
+    "preference": ("setting", "preference"),
+    "repair": ("repair", "fix", "patch"),
 }
 
 _YES = re.compile(
@@ -82,6 +84,10 @@ class PendingAction:
     session: str = "local"
     created: float = field(default_factory=time.time)
     expires: float = 0.0
+    # Words an answer must contain to approve this one: a sensitive repair is never approved by
+    # a bare "yes", even when it is the only thing waiting. Empty for ordinary actions.
+    required: tuple[str, ...] = ()
+    phrase: str = ""                   # what to say to approve it, when `required` is set
 
     @property
     def expired(self) -> bool:
@@ -162,11 +168,13 @@ class ApprovalManager:
             self._expired.pop(action.id, None)
 
     def propose(self, kind: str, summary: str, details: dict, execute: Callable[[], Any], *,
-                session: str = "local", ttl_s: Optional[float] = None) -> PendingAction:
+                session: str = "local", ttl_s: Optional[float] = None,
+                required: tuple[str, ...] = (), phrase: str = "") -> PendingAction:
         """Hold an action until it is approved. Proposing the same thing twice replaces the first."""
         self._sweep()
         action = PendingAction(id=secrets.token_hex(3), kind=kind, summary=summary, details=dict(details),
-                               execute=execute, session=session)
+                               execute=execute, session=session,
+                               required=tuple(w.lower() for w in required), phrase=phrase)
         action.expires = action.created + (self.ttl_s if ttl_s is None else ttl_s)
         for other in [a for a in self._pending.values()
                       if a.session == session and a.fingerprint() == action.fingerprint()]:
@@ -307,6 +315,10 @@ class ApprovalManager:
                 options = " or ".join(f"the {a.kind} ({a.summary})" for a in waiting[:3])
                 return Outcome("ambiguous", f"Which one — {options}? I haven't done anything yet.")
             chosen = waiting[0]
+        if yes and chosen.required and not all(w in rest.lower() for w in chosen.required):
+            self._audit("refused", chosen, "approval did not name the sensitive area")
+            return Outcome("unclear", f"That one needs a specific approval — say \u201c{chosen.phrase}\u201d. "
+                                      "Nothing has been done yet.", chosen)
         return await self.confirm(chosen.id) if yes else self.cancel(chosen.id)
 
     async def propose_or_ask(self, kind: str, summary: str, details: dict, execute: Callable[[], Any], *,

@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from .agent.factory import make_agent
 from .config import CONFIG
-from . import hud_state
+from . import build_info, hud_state
 from .memory.vault import ensure_vault
 
 if getattr(sys, "frozen", False):
@@ -586,7 +586,57 @@ async def health():
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
     h["booting"] = _agent["a"] is None
+    h["build"] = build_info.info()
+    voice = build_info.published("voice")
+    h["voice_build"] = voice and {k: voice.get(k) for k in ("commit", "dirty", "started_at")}
     return h
+
+
+@app.get("/settings")
+async def settings_list():
+    """Every runtime setting with its schema and current value; the overlay applies its part."""
+    from . import preferences
+    from .settings import registry, runtime
+
+    revision = preferences.revision()
+    return {"revision": revision, "settings": registry.describe_all(),
+            "overlay": runtime.overlay_state(revision)}
+
+
+class EffectiveReport(BaseModel):
+    component: str = Field(max_length=20)
+    revision: int = Field(ge=0)
+    values: dict = Field(default_factory=dict)
+    observed: dict = Field(default_factory=dict)
+
+
+@app.post("/settings/effective")
+async def settings_effective(r: EffectiveReport):
+    """The overlay says what it is actually doing after a settings change — measured in the page,
+    not echoed back — so "animations are off" is only said once they are."""
+    from .settings import runtime
+
+    if r.component != "overlay":        # the voice reports through its own file
+        return {"ok": False, "error": "unknown component"}
+    keep = ("motion", "running_animations", "intensity", "visible")
+    observed = {k: r.observed[k] for k in keep if k in r.observed
+                and isinstance(r.observed[k], (bool, int, float, str)) and len(str(r.observed[k])) < 20}
+    values = {k: v for k, v in r.values.items() if k in runtime.OVERLAY_KEYS and isinstance(v, (bool, int, float))}
+    runtime.report("overlay", r.revision, values, observed)
+    return {"ok": True}
+
+
+@app.get("/repairs")
+async def repairs():
+    """Repair jobs — safe metadata only — for the overlay's compact status."""
+    from .selfrepair.jobs import JobStore
+
+    rows = []
+    for job in JobStore().all()[-10:]:
+        rows.append({"id": job.id, "state": job.state, "component": job.component, "summary": job.summary,
+                     "tier": job.tier, "outcome": job.outcome, "updated": job.updated,
+                     "changed_files": job.changed_files, "candidate_commit": job.candidate_commit[:12]})
+    return {"jobs": rows}
 
 
 @app.get("/weather")

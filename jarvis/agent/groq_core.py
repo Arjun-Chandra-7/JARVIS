@@ -712,6 +712,15 @@ class GroqAgent:
             # whichever specialist is working.
             self.messages.append({"role": "system",
                                   "content": f"{TURN_NOTE} {self._specialist.instruction}"})
+        # "Shorter answers, please" is a setting, read each turn, so it holds from the next reply.
+        try:
+            from ..settings.runtime import verbosity_instruction
+
+            length = verbosity_instruction()
+        except Exception:  # noqa: BLE001
+            length = ""
+        if length:
+            self.messages.append({"role": "system", "content": f"{TURN_NOTE} {length}"})
         self.messages.append(turn)
         self._turn_times[id(turn)] = time.time()
 

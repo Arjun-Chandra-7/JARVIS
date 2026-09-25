@@ -1,10 +1,11 @@
-"""A programme that edits itself must not be able to talk itself into a bad change."""
+"""The failure journal: what self-repair reads as evidence. (The guards on a change itself —
+frozen reproduction tests, the diff boundary — are in test_selfrepair.py.)"""
 import os
 import time
 
 import pytest
 
-from jarvis.selfimprove import improve, journal
+from jarvis.selfimprove import journal
 
 
 @pytest.fixture(autouse=True)
@@ -55,44 +56,6 @@ def test_recording_never_raises(monkeypatch):
     """A problem writing the journal must not become a second problem."""
     monkeypatch.setenv("JARVIS_JOURNAL", "/proc/this/cannot/be/written")
     journal.record("tool_failed", "a", "b", "c")      # must not raise
-
-
-# ------------------------------------------------------------------ the guards on a change
-def test_a_suite_that_passes_because_the_test_was_deleted_is_rejected(monkeypatch, tmp_path):
-    """The whole point of running the tests is lost if the failing one can be removed."""
-    monkeypatch.setattr(improve, "_git",
-                        lambda *a, **k: type("R", (), {"stdout": "0\t40\ttests/test_thing.py\n",
-                                                       "returncode": 0})())
-    assert improve._tests_were_removed(tmp_path)
-
-
-def test_adding_tests_is_not_deleting_them(monkeypatch, tmp_path):
-    monkeypatch.setattr(improve, "_git",
-                        lambda *a, **k: type("R", (), {"stdout": "52\t0\ttests/test_thing.py\n",
-                                                       "returncode": 0})())
-    assert not improve._tests_were_removed(tmp_path)
-
-
-def test_a_small_edit_to_a_test_is_allowed(monkeypatch, tmp_path):
-    monkeypatch.setattr(improve, "_git",
-                        lambda *a, **k: type("R", (), {"stdout": "6\t3\ttests/test_thing.py\n",
-                                                       "returncode": 0})())
-    assert not improve._tests_were_removed(tmp_path)
-
-
-def test_the_brief_carries_the_real_failure():
-    f = journal.Failure(kind="tool_failed", request="set brightness to 30",
-                        detail="nvidia_0 is owned by the video group", where="set_brightness")
-    brief = improve._brief(f, 4)
-    assert "4 times" in brief
-    assert "set brightness to 30" in brief and "nvidia_0" in brief
-    assert "Do not delete or weaken any existing test" in brief
-    assert "do not push" in brief.lower()
-
-
-def test_it_asks_for_the_model_and_effort_that_were_chosen():
-    assert improve.MODEL == "opus"
-    assert improve.EFFORT == "medium"
 
 
 def test_a_conversation_left_open_for_hours_is_not_one_conversation():

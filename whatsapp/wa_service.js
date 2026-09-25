@@ -273,6 +273,17 @@ async function sendMessage(to, text) {
   return { jid, id: sent.key.id };
 }
 
+// Which commit this bridge loaded, so "is the running code the checked-out code" has an answer.
+const BUILD_COMMIT = (() => {
+  try {
+    return require("child_process")
+      .execFileSync("git", ["rev-parse", "HEAD"], { cwd: __dirname, timeout: 3000 })
+      .toString().trim().slice(0, 12);
+  } catch {
+    return "unknown";
+  }
+})();
+
 http
   .createServer((req, res) => {
     res.setHeader("Content-Type", "application/json");
@@ -284,7 +295,7 @@ http
     if (req.url === "/status") {
       // `me`: the linked account's own chat, where the owner types commands to Jarvis.
       const me = sock?.user?.id ? sock.user.id.split(":")[0] + "@s.whatsapp.net" : "";
-      return res.end(JSON.stringify({ connected, me }));
+      return res.end(JSON.stringify({ connected, me, commit: BUILD_COMMIT }));
     }
     if (req.url === "/inbox") return res.end(JSON.stringify(inbox.slice(-30)));
     if (req.url.startsWith("/chats")) {

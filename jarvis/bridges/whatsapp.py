@@ -59,6 +59,9 @@ class WhatsAppBridge:
                         continue
 
                     try:
+                        # Named, not "local": a bridged message may not change settings or
+                        # start a repair, and only the source says which one this is.
+                        agent.command_session = "whatsapp"
                         reply = await agent.send(text)
                     except Exception as exc:
                         reply = f"[error] {exc}"

@@ -1799,3 +1799,24 @@ body[data-appearance="dark"] .shell::after { display: block; }
   color: var(--accent);
   border: 1px solid var(--border);
 }
+
+/* ---------------------------------------------------------------- owner settings
+ * Set by settings.js from the "animations", "reduced motion" and "overlay brightness" settings.
+ * off: nothing moves — every animation and transition is suppressed, and the page then counts
+ *      document.getAnimations() to prove it before the backend says so.
+ * reduced: loops and slides collapse to their end state; state changes keep a short fade. */
+:root { --overlay-intensity: 1; }
+body { opacity: var(--overlay-intensity); }
+:root[data-motion="off"] *,
+:root[data-motion="off"] *::before,
+:root[data-motion="off"] *::after {
+  animation: none !important;
+  transition: none !important;
+}
+:root[data-motion="reduced"] *,
+:root[data-motion="reduced"] *::before,
+:root[data-motion="reduced"] *::after {
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 120ms !important;
+}
