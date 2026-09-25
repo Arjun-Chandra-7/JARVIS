@@ -195,6 +195,21 @@ def test_the_emergency_switch_stops_code_repair_but_not_settings(monkeypatch, _n
     assert jobs.JobStore().get(job.id).state == jobs.FAILED
 
 
+def test_the_emergency_switch_works_when_set_in_the_env_file(tmp_path):
+    """Set in the checkout's .env, not the environment: a worker that never imported the config
+    itself must still see it. Run against a copy of the package, so the real checkout is untouched."""
+    import shutil as _shutil
+
+    src = Path(policy.__file__).parents[2]
+    _shutil.copytree(src / "jarvis", tmp_path / "jarvis", symlinks=True, ignore=_shutil.ignore_patterns("__pycache__"))
+    (tmp_path / ".env").write_text("JARVIS_SELF_REPAIR_DISABLED=1\n")
+    env = {k: v for k, v in os.environ.items() if k != "JARVIS_SELF_REPAIR_DISABLED"}
+    out = subprocess.run([sys.executable, "-c", "from jarvis.selfrepair import policy; print(policy.disabled())"],
+                         cwd=str(tmp_path), env={**env, "PYTHONPATH": str(tmp_path)},
+                         capture_output=True, text=True, timeout=60)
+    assert out.stdout.strip().endswith("True"), out.stderr[-500:]
+
+
 # ------------------------------------------------------------------ status, cancel, show
 def test_status_cancel_and_show(_no_real_settings_or_repairs):
     run(repair_handle("speech recognition keeps losing what I said", None, "voice"))

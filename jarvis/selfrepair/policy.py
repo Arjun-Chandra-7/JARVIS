@@ -30,6 +30,10 @@ REPO = Path(__file__).resolve().parents[2]
 # ----------------------------------------------------------------------------- emergency switch
 def disabled() -> bool:
     """JARVIS_SELF_REPAIR_DISABLED=1: preferences still work; no repair edits, tests or activates."""
+    try:
+        from .. import config  # noqa: F401 — loads .env, so the switch works when it is set there
+    except Exception:  # noqa: BLE001 — an unreadable config must not turn the switch off
+        pass
     return os.environ.get("JARVIS_SELF_REPAIR_DISABLED", "").strip().lower() in {"1", "true", "yes", "on"}
 
 

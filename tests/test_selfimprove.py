@@ -1,7 +1,5 @@
 """The failure journal: what self-repair reads as evidence. (The guards on a change itself —
 frozen reproduction tests, the diff boundary — are in test_selfrepair.py.)"""
-import os
-import time
 
 import pytest
 

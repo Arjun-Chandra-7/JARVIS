@@ -5,6 +5,36 @@ piece was actually taken, and what is next.
 
 ---
 
+## Tenth pass (2026-09-25): live customization and bounded self-repair
+
+Design, threat model, tiers, recovery: `docs/SELF_REPAIR.md`. Code: `jarvis/settings/`,
+`jarvis/selfrepair/`, `jarvis/trust.py`. Branch `feat/jarvis-safe-self-repair` (from `44b45e5`).
+
+* **Audit found:** "fix yourself" (`selfimprove/improve.py`) ran `claude -p --permission-mode
+  acceptEdits` in a worktree branched from `main`, with no approval, job record or audit, blocked
+  the turn for up to 30 minutes, and **pushed its branch**; chained commands could reach it. The
+  WhatsApp/Telegram bridges ran commands as session `"local"`, and a multi-line incoming message
+  (or the overlay's fenced selection) leaked into the command text. Preferences were bool-only.
+  No process said which commit it was running — the services were in fact on `5647adc`.
+* **Now:** a typed settings registry on the existing preferences file (revision, timed values,
+  undo), applied live and verified from what the overlay/voice report back; one request
+  classifier; repairs as durable jobs through reproduce → edit → sandboxed tests → diff boundary
+  → commit → tier-1 activation with health checks, probe and automatic revert, or tier-2 specific
+  approval. The old self-improve path is gone. `/health`, the voice build file and the WhatsApp
+  `/status` report the loaded commit.
+* **Verified here:** Case A (overlay animations) through the real `/chat` + SSE + overlay page in
+  Chromium — 0 running animations measured, persisted, undo verified. Case B through the real
+  Kokoro speed path and the voice watcher — 1.05×. Case C on the real code: the STT fallback
+  missed `CUBLAS_STATUS_ALLOC_FAILED`/`NOT_SUPPORTED` (the intermittent
+  `test_transcribes_what_was_said` failure), and the pipeline reproduced, fixed, tested, committed
+  and activated it on a stand-in live checkout (commit `5202aa9`, landed here), plus a rollback
+  and an undo. Cases D and E as tests. Systemd and health were simulated in C; the coding agent
+  was replaced by a recipe (no outside API calls this session).
+* **Not live until `jarvis restart`.** Not tested: a real repair by the coding agent, activation
+  against the real services, speech of repair news, the settings on the running overlay/voice.
+
+---
+
 ## Ninth pass (2026-09-25): away mode — messages, calls and the return briefing
 
 Design and capability table: `docs/AWAY_MODE.md`. Code: `jarvis/away_mode/`.

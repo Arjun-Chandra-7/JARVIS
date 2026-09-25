@@ -499,6 +499,28 @@ Loaded, the model holds 5.4 GB of memory, so it is released five minutes after t
 reloading it and making another costs under seven seconds. Generation takes six of eight cores,
 leaving two for Whisper to keep hearing you — measured, that costs the picture nothing.
 
+## Changing how Jarvis behaves — and fixing him
+
+Most requests about Jarvis himself are settings, not code: "disable your animations",
+"animations wapas on kar do", "speak slightly faster", "thoda tez bolo", "don't announce
+notifications for two hours", "keep listening for twelve seconds", "make the teaching pen less
+bright", "turn off away-mode replies immediately", "undo that". Each is applied live, and
+confirmed only when the part that owns it reports back — the overlay counts its running
+animations, the voice reports the speed it will read at. Otherwise the answer says the change
+was saved but not yet confirmed.
+
+A report of something broken — "WhatsApp search is showing the wrong contact again" — gets
+"I'll investigate that. Give me a few minutes." Jarvis reproduces it with a failing test in an
+isolated worktree, prepares the smallest fix, runs the tests in a sandbox with no network, and
+activates only what the safety policy allows: low-risk fixes automatically (announced, health
+checked, rolled back on any failure); anything touching approvals, messaging, contacts, away
+mode, secrets or services only after "approve the … repair". Ask "how far are you?", "show me
+what changed", "cancel that repair" or "undo your last repair". Only your own voice, overlay,
+web UI and terminal can ask; a message, a web page or your screen never can.
+
+`JARVIS_SELF_REPAIR_DISABLED=1` turns code repair off entirely; settings keep working. Design,
+threat model and recovery: `docs/SELF_REPAIR.md`.
+
 ## Coding, in the editor where you can watch it
 
 Say "ok, but now we need to add a dark mode toggle" with VS Code in front of you. Jarvis says

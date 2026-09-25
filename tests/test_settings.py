@@ -291,5 +291,9 @@ def test_only_the_owners_front_ends_may_change_settings(source):
     assert registry.value("overlay.animations") is True and registry.last_change() is None
 
 
+def test_asking_for_what_is_already_set_says_so_in_plain_english():
+    assert run(settings_handle("animations wapas on kar do", None, "voice")) == "Animations are already on."
+
+
 def test_an_undo_with_nothing_to_undo_says_so():
     assert "no settings change" in run(settings_handle("undo the last preference change", None, "voice"))

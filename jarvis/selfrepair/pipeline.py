@@ -213,7 +213,9 @@ class Pipeline:
                     raise Stop(TESTS_FAILED)
 
             self._guard(job)
-            message = f"Repair {job.id}: {job.summary}"[:72]
+            message = f"Repair {job.id}: {job.summary}"
+            if len(message) > 72:           # a subject line, cut at a word rather than mid-word
+                message = message[:71].rsplit(" ", 1)[0] + "…"
             sandbox.git(["add", "--", *report.changed], wt.path)
             commit = sandbox.git(["commit", "-q", "--no-verify", "-m", message], wt.path)
             if commit.returncode != 0:

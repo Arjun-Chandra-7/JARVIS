@@ -3,7 +3,6 @@ the sandbox, a real commit and a real fast-forward — with stand-ins only for s
 health endpoints. Each test is one of the outcomes the owner can hear."""
 from __future__ import annotations
 
-import shutil
 import subprocess
 import sys
 from pathlib import Path

@@ -138,7 +138,8 @@ async def handle(text: str, config=None, session_id: str = "local") -> Optional[
             edge = "fastest" if setting.id == "voice.speed" and request.steps > 0 else \
                 "slowest" if setting.id == "voice.speed" else "limit"
             return f"That's already the {edge} setting — {setting.say(current)}."
-        return f"{setting.name[0].upper() + setting.name[1:]} is already {setting.say(current)}."
+        verb = "are" if setting.name.endswith("s") else "is"      # "animations are", "the overlay is"
+        return f"{setting.name[0].upper() + setting.name[1:]} {verb} already {setting.say(current)}."
 
     if registry.needs_confirmation(setting, target):
         from ..approvals import MANAGER
