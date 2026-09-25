@@ -89,6 +89,17 @@ def _get_model(model_name: str, compute_type: str = "int8"):
         return model
 
 
+def _gpu_gave_out(exc: Exception) -> bool:
+    """Whether a transcription failed because of the GPU rather than the audio.
+
+    A full card does not always say "out of memory": CTranslate2 reports it through cuBLAS —
+    CUBLAS_STATUS_ALLOC_FAILED, or CUBLAS_STATUS_NOT_SUPPORTED — and those were raised
+    instead of falling back to the processor, losing the utterance.
+    """
+    text = str(exc).lower()
+    return any(sign in text for sign in ("out of memory", "cublas", "cudnn", "cuda error", "cuda failed"))
+
+
 def _transcribe(model_name: str, audio, **kwargs):
     """Transcribe, and if the GPU refuses mid-utterance, do it on the processor instead.
 
@@ -106,7 +117,7 @@ def _transcribe(model_name: str, audio, **kwargs):
     try:
         return run(_get_model(model_name))
     except RuntimeError as exc:
-        if "out of memory" not in str(exc).lower():
+        if not _gpu_gave_out(exc):
             raise
         from faster_whisper import WhisperModel
 
