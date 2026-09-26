@@ -213,12 +213,13 @@ def test_speak_segments_reports_each_phrase_when_it_is_audible(monkeypatch):
     from jarvis.audio import local_tts
 
     writes = []
+    opened = []
 
     class Stream:
         latency = 0.08
 
         def __init__(self, **kw):
-            pass
+            opened.append(kw)
 
         def start(self):
             pass
@@ -244,6 +245,8 @@ def test_speak_segments_reports_each_phrase_when_it_is_audible(monkeypatch):
     local_tts.speak_segments(["One.", "Two, three.", "Four"], "x.onnx",
                              on_start=lambda i, at: starts.append((i, at, time.time())), on_played=played.append)
     assert [s[0] for s in starts] == [0, 1, 2]
+    assert opened[0]["latency"] == local_tts.OUTPUT_LATENCY_S
+    assert opened[0]["latency"] >= 0.08  # enough headroom to survive brief CPU contention
     for _, at, now in starts:
         assert abs(at - (now * 1000 + 80)) < 15
     assert played == ["One.", "Two, three.", "Four"]
