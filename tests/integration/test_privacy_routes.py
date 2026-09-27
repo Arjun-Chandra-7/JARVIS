@@ -212,3 +212,14 @@ def test_only_json_is_not_tool_capability():
     from jarvis.brain.registry import ModelRecord
     m = ModelRecord("some-new-model", "custom", 2, {"chat", "structured_output", "tool_calling"})
     assert m.has("structured_output") and not m.has("tool_calling")   # declared ≠ verified
+
+
+def test_away_mode_read_back_uses_the_configured_owner_name(monkeypatch):
+    """Built and described for approval only — away mode is not activated and nothing is sent."""
+    from jarvis.away_mode import control, session
+    monkeypatch.setenv("JARVIS_OWNER_NAME", "Aviral")
+    s = control.build_session(SimpleNamespace(user_name="sir"), "turn on away mode for two hours",
+                              resolver=SimpleNamespace(resolve=lambda n: None))
+    said = control.describe(s)
+    assert "JARVIS, Aviral's assistant" in said and "Arjun" not in said
+    assert s.status != session.ACTIVE

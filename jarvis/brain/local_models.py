@@ -53,6 +53,27 @@ def estimate(size_gb: float) -> dict:
     return {"ram_gb": need, "vram_gb": need, "large": size_gb > 2.0}
 
 
+RAM_HEADROOM_GB = 1.5          # what the voice process, the backend and the desktop keep
+VOICE_VRAM_RESERVE_GB = 0.3    # the same reserve 3D Studio keeps for speech recognition
+
+
+def can_load(size_gb: float, hw: Optional[dict] = None) -> tuple[bool, str]:
+    """Whether loading a local model of ``size_gb`` fits the machine right now. RAM is the hard
+    limit (a model that does not fit swaps the whole desktop); the card is only a warning, since
+    Ollama spills the rest to the processor — slower, but the voice keeps its reserve."""
+    hw = hw if hw is not None else hardware()
+    need = estimate(size_gb)["ram_gb"]
+    avail = hw.get("ram_available_gb")
+    if avail is not None and avail - need < RAM_HEADROOM_GB:
+        return False, (f"not enough free memory: it needs about {need:g} GB and {avail:g} GB is available "
+                       f"(keeping {RAM_HEADROOM_GB:g} GB for everything else)")
+    if hw.get("vram_gb") and hw.get("vram_used_gb") is not None:
+        free = hw["vram_gb"] - hw["vram_used_gb"]
+        if free - need < VOICE_VRAM_RESERVE_GB:
+            return True, "the graphics card is nearly full, so it will run partly on the processor (slower)"
+    return True, ""
+
+
 ROLE_TASKS = {
     "intent": ("Classify the request into exactly one word from [open_app, question, message, timer]. "
                "Request: 'can you open spotify'. Answer with the word only.",

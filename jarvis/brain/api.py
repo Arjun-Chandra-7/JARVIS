@@ -459,11 +459,19 @@ def _ollama():
 async def load_model(model: str, request: Request):
     _owner_only(request)
     _, a = _ollama()
+    from . import local_models
+    try:
+        sizes = {m.get("name"): float(m.get("size_gb") or 0) for m in await asyncio.to_thread(a.installed)}
+    except adapters.ProviderError:
+        sizes = {}
+    fits, note = await asyncio.to_thread(local_models.can_load, sizes.get(model, 0.0))
+    if not fits:
+        return {"ok": False, "kind": "resources", "detail": note}
     try:
         await asyncio.to_thread(a.set_loaded, model, True)
     except adapters.ProviderError as err:
         return {"ok": False, "kind": err.kind, "detail": err.detail}
-    return {"ok": True}
+    return {"ok": True, "note": note}
 
 
 @router.post("/local/{model:path}/unload")
