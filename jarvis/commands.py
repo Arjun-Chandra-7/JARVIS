@@ -87,6 +87,13 @@ def deterministic_handlers():
         from .video_command import handle as f
         return await f(text, config)
 
+    async def three_d(text, config):
+        # "Make a 3D model of this", and — only while a 3D project is active — its references,
+        # measurements, edits, undo and exports. Before chain, which would split "…and open it in
+        # Blender" in two, and before imagine/draw, whose "make" would take a 3D request.
+        from .three_d.commands import handle as f
+        return await f(text, config)
+
     async def overlay_lesson(text, config):
         # "Pause and explain this step visually", "explain RAG with a diagram", "go back one
         # step", "circle this": drawn on the teaching overlay. Before video, which would answer
@@ -210,7 +217,12 @@ def deterministic_handlers():
         return await f(text, config)
 
     return [
-        # The Study Companion's session/quiz/diagram state first: none of it is anyone else's.
+        # 3D Studio first: it starts only on explicit 3D/Blender words, and otherwise answers only
+        # while one of its projects is active.
+        ("three_d", three_d),
+        # The Study Companion's session/quiz/diagram state next: none of it is anyone else's.
+        # After 3D Studio, whose start words ("make a 3D model of this") are explicit; during a study
+        # session "this" would otherwise read as a question about the screen.
         ("study", study),
         # The teaching overlay next: its requests are narrow (a lesson "with a diagram" or
         # "visually", or a control while a lesson is on screen), and "pause and explain this step
@@ -301,6 +313,13 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
     # "undo that" — applied live and verified, no code touched. Before away mode, because
     # "turn off away-mode replies" is the emergency stop, not a request to talk about away mode.
     # Given the words as said: the Hinglish rewrite turns "band kar do" into "close".
+    # Except "undo"/"redo"/"go back to version 3" while a 3D model is being edited: those mean the
+    # model. 3D Studio claims them only if it was used in the last ten minutes.
+    from .three_d.commands import claims_history, handle as three_d_command
+    if claims_history(raw):
+        answer = await three_d_command(raw, config)
+        if answer is not None:
+            return answer
     from .settings.command import handle as settings_command
     answer = await settings_command(text, config, session_id)
     if answer is not None:

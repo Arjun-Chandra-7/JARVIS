@@ -52,9 +52,41 @@ def test_vs_code_alias(catalogue):
     assert da.resolve("vs code").name == "Visual Studio Code"
 
 
-def test_unknown_app_returns_none(catalogue):
-    assert da.resolve("blender") is None
+@pytest.fixture
+def isolated_path(monkeypatch, tmp_path):
+    """PATH is one empty directory the test controls, so what the host has installed (Blender,
+    since 3D Studio) cannot change the answer either way."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    monkeypatch.setenv("PATH", str(bindir))
+    return bindir
+
+
+def _fake_program(bindir, name):
+    exe = bindir / name
+    exe.write_text("#!/bin/sh\nexit 0\n")
+    exe.chmod(0o755)
+    return exe
+
+
+def test_unknown_app_returns_none(catalogue, isolated_path):
+    assert da.resolve("zzq-no-such-application") is None
     assert da.resolve("") is None
+
+
+def test_an_app_on_path_still_resolves(catalogue, isolated_path):
+    """The positive control: the PATH fallback works, so the None above means 'unknown', not 'broken'."""
+    _fake_program(isolated_path, "zzq-tool")
+    app = da.resolve("zzq tool") or da.resolve("zzq-tool")
+    assert app is not None
+
+
+def test_a_host_program_does_not_leak_into_an_isolated_catalogue(catalogue, isolated_path):
+    """A name the host really has (e.g. blender) is unknown when neither the catalogue nor the
+    isolated PATH has it — and known the moment the isolated PATH does."""
+    assert da.resolve("blender") is None
+    _fake_program(isolated_path, "blender")
+    assert da.resolve("blender") is not None
 
 
 def test_filler_words_are_ignored(catalogue):

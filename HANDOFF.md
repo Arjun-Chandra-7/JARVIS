@@ -70,6 +70,42 @@ Based on `73e01d8`; built in isolation alongside `feat/jarvis-3d-studio` and `fe
   other sessions). It is an integration gate.
 
 ---
+## Eleventh pass (2026-09-27): JARVIS 3D Studio
+
+Design, trust boundaries, accuracy classes, commands, limits: `docs/3D_STUDIO.md`. Code:
+`jarvis/three_d/`. Branch `feat/jarvis-3d-studio`, from `cda87eb` (the commit the services run).
+
+* **Starting state:** main checkout clean on `feat/jarvis-daily-assistant` @ `cda87eb` = origin,
+  services healthy on that commit. The `feat/jarvis-release-hardening` worktree
+  (`.claude/worktrees/safe-self-repair`) holds **uncommitted** work from 2026-09-25 (deploy.py,
+  doctor.py, resources.py, dictation/settings overlay edits) — release hardening did not finish;
+  left untouched. Baseline suite: 2822 passed after one fix (below).
+* **Installed:** Blender 5.2.2 LTS from download.blender.org (sha256 verified) into
+  `~/.local/opt/blender-5.2.2`, symlink `~/.local/bin/blender`. No system packages, no model
+  weights. That made `test_unknown_app_returns_none` fail (it assumed Blender absent) — the test
+  now isolates PATH.
+* **Built:** capture (portal crop, full frame shredded, sensitive screens refused), classifier,
+  vector / dimensioned / single-view / multi-view engines, a restricted Blender bridge (Unix
+  socket, token + PID, fixed operations, owned objects only, confined paths, watchdogs,
+  crash recovery), CPU validation loop, versioned projects with undo/redo/restore, voice
+  editing with locks and verification, export profiles with independent validators, background
+  jobs, approval-gated remote provider adapter. Routed first in `jarvis/commands.py`; while a
+  model was used in the last 10 minutes, "undo"/"redo"/"go back to version N" go to the model
+  before the settings system. Overlay shows `studio` status toasts.
+* **Verified here:** full suite 2936 passed (181 s). 114 of them in `tests/test_three_d_*.py` (unit, real headless Blender bridge,
+  vertical slices A–G + multi-view). Real desktop run (`scripts/demo_3d_studio.py`): generated
+  logo shown full-screen → captured through `jarvis.commands.handle` (crop 698×475, full frame
+  shredded) → IoU 0.998 / contour 0.057 px → Blender window opened and brought to front →
+  "make the logo blue 20 percent taller" verified ×1.200 in Blender → "undo" restored 40.11 mm →
+  GLB (19 014 faces) and print STL (watertight, true scale) validated → references deleted.
+* **Found while demonstrating, fixed:** "ready" was announced before the window existed; a
+  headless Blender outlived its JARVIS process; the salient crop swept a notification banner into
+  the reference (that project was deleted); undo opened the checkpoint file itself (Ctrl+S
+  would have overwritten history); a failed plan could leave half-applied edits.
+* **Not live until `jarvis restart`** on a build that includes this branch. Not tested: voice
+  through the running services, the remote provider against a real endpoint, a real photo.
+
+---
 
 ## Tenth pass (2026-09-25): live customization and bounded self-repair
 
