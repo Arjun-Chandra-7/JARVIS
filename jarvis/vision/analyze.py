@@ -158,7 +158,7 @@ def ground(path: str, target: str, config) -> tuple[Optional[str], str]:
     """Ground one target. Qwen boxes use normalized 0-1000 coordinates."""
     import json
 
-    model = getattr(config, "ground_model", "qwen3.5:4b")
+    model = getattr(config, "ground_model", "")
     provider = getattr(config, "vision_provider", "auto")
     if provider == "none":
         return None, "pixel"
@@ -185,7 +185,7 @@ def verify_point(path: str, target: str, x: int, y: int, config) -> bool:
     """Ask a vision model whether a grounded target is inside a marked crop."""
     from PIL import Image, ImageDraw
 
-    model = getattr(config, "ground_model", "qwen3.5:4b")
+    model = getattr(config, "ground_model", "")
     if not model or not _ollama_up(model):
         return False
     try:

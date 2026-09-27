@@ -33,6 +33,30 @@ const PY = path.join(REPO, ".venv", "bin", "python");
 const PORT = process.env.JARVIS_WEB_PORT || "8770";
 
 const CONFIG_DIR = path.join(app.getPath("home"), ".config", "jarvis");
+
+// Which commit this overlay loaded, for `jarvis doctor`, `jarvis deploy` and /health — the same
+// record the voice process publishes (jarvis/build_info.py). Read once: a checkout fast-forwarded
+// later does not change what this window is running.
+(function publishBuild() {
+  try {
+    const repo = path.join(__dirname, "..");
+    const git = (...args) => {
+      const r = spawnSync("git", args, { cwd: repo, encoding: "utf8", timeout: 3000 });
+      return r.status === 0 ? String(r.stdout).trim() : "";
+    };
+    const commit = git("rev-parse", "HEAD");
+    const record = {
+      commit: commit ? commit.slice(0, 12) : "unknown",
+      branch: git("rev-parse", "--abbrev-ref", "HEAD") || "unknown",
+      dirty: Boolean(git("status", "--porcelain", "--untracked-files=no")),
+      started_at: Date.now() / 1000, pid: process.pid, service: "overlay",
+    };
+    const dir = process.env.JARVIS_RUNTIME_DIR || process.env.XDG_RUNTIME_DIR || "/tmp";
+    const file = path.join(dir, "jarvis-build-overlay.json");
+    fs.writeFileSync(file + ".tmp", JSON.stringify(record));
+    fs.renameSync(file + ".tmp", file);
+  } catch (_) { /* reporting must never stop the overlay */ }
+})();
 const STATE_FILE = path.join(CONFIG_DIR, "overlay-state.json");
 
 // Minimum sizes stop a remembered size from making a form unusable.

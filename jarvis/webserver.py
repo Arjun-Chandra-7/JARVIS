@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -583,7 +584,19 @@ async def health():
     h["build"] = build_info.info()
     voice = build_info.published("voice")
     h["voice_build"] = voice and {k: voice.get(k) for k in ("commit", "dirty", "started_at")}
+    overlay = build_info.published("overlay")
+    if overlay and not _alive(overlay.get("pid")):
+        overlay = None                   # a record left by an overlay that has since exited
+    h["overlay_build"] = overlay and {k: overlay.get(k) for k in ("commit", "dirty", "started_at")}
     return h
+
+
+def _alive(pid) -> bool:
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, TypeError, ValueError):
+        return False
 
 
 @app.get("/settings")

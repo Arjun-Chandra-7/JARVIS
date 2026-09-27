@@ -53,12 +53,14 @@ function connect() {
   es.onmessage = (e) => {
     let msg;
     try { msg = JSON.parse(e.data); } catch { return; }
+    if (window.JarvisSettings?.onEvent?.(msg.kind, msg.text || "")) return;   // animations on/off
     if (msg.kind !== "dictation") return;
     let d;
     try { d = JSON.parse(msg.text); } catch { return; }
     if (d.state === "level") { if (body.dataset.state === "listening" || body.dataset.state === "speech") level(d.level || 0); return; }
     show(d.state, d.message, d.preview);
   };
+  es.onopen = () => window.JarvisSettings?.load?.();   // a change made while disconnected
   es.onerror = () => { es.close(); setTimeout(connect, 2000); };
 }
 connect();

@@ -106,7 +106,10 @@ class Config:
     # graceful fallback only if you happen to run it. "none" disables vision.
     vision_provider: str = field(default_factory=lambda: os.environ.get("JARVIS_VISION", "auto").lower())
     ollama_vision_model: str = field(default_factory=lambda: os.environ.get("JARVIS_VISION_MODEL", "moondream"))
-    ground_model: str = field(default_factory=lambda: os.environ.get("JARVIS_GROUND_MODEL", "qwen3.5:4b"))
+    # Off by default: qwen3.5:4b scored 3/4 on a synthetic grounding probe (one box ~27 px off) at
+    # ~30 s a query on the CPU (2026-09-28), so vision clicks refuse rather than guess. Accessibility
+    # and OCR clicks are unaffected. Opt in with JARVIS_GROUND_MODEL=qwen3.5:4b.
+    ground_model: str = field(default_factory=lambda: os.environ.get("JARVIS_GROUND_MODEL", ""))
 
     # --- browser ---
     # Opera GX is the browser on this machine, and the one precision control drives. `opera`

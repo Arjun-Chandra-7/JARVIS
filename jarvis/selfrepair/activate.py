@@ -225,6 +225,8 @@ class Activator:
                 result.ok = False
             if not result.ok:
                 self._rollback(repo, candidate, units, result)
+            _record(result.rollback_commit or result.applied, before,
+                    "repair reverted after failed checks" if result.rolled_back else "repair activated")
             return result
 
     def _rollback(self, repo: Path, candidate: str, units: list[str], result: ActivationResult) -> None:
@@ -261,7 +263,21 @@ class Activator:
                 return result
             self._rollback(repo, candidate, units, result)
             result.ok = bool(result.rollback_ok)
+            _record(result.rollback_commit, result.before, "repair undone by request")
             return result
+
+
+def _record(to: str, previous: str, reason: str) -> None:
+    """Tell the deployment record, so a restart knows this commit is a verified local repair and
+    never overwrites it (jarvis/deploy.py)."""
+    if not to:
+        return
+    try:
+        from .. import deploy
+
+        deploy.record_deploy(to, previous, "local-repair", reason)
+    except Exception:  # noqa: BLE001 — the activation's own result is the truth; this is bookkeeping
+        pass
 
 
 def repro_probe(test_path: str, python: Optional[str] = None, use_bwrap: Optional[bool] = None) -> Probe:

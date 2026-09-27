@@ -106,3 +106,11 @@ body[data-state="offline"] .bar { background: #d93025; height: 8px; }
   .capsule { transition: none; }
   .bar { transition: none; animation: none !important; }
 }
+
+/* The owner's "animations" / "reduced motion" settings (settings.js sets data-motion on <html>). */
+:root[data-motion="off"] *, :root[data-motion="off"] *::before, :root[data-motion="off"] *::after {
+  animation: none !important;
+  transition: none !important;
+}
+:root[data-motion="reduced"] .bar { animation: none !important; }
+:root[data-motion="reduced"] .capsule { transition-duration: 60ms !important; }

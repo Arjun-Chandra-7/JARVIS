@@ -75,7 +75,11 @@ def _get_model(model_name: str, compute_type: str = "int8"):
 
         from faster_whisper import WhisperModel
 
-        if _cuda_usable():
+        from .. import resources
+
+        # Only onto the card when there is measurably room: a model squeezed onto a nearly-full
+        # card loads fine and then fails mid-utterance with a cuBLAS allocation error.
+        if _cuda_usable() and resources.room_on_gpu(model_name):
             try:
                 model = WhisperModel(model_name, device="cuda", compute_type=compute_type)
                 _models[key] = model

@@ -63,7 +63,8 @@ def launch(job_id: str, action: str = "run", store: Optional[JobStore] = None) -
         cmd = ["systemd-run", "--user", "--collect", "--quiet", "--unit", unit,
                "-p", f"MemoryMax={lim.worker_memory}", "-p", f"TasksMax={lim.tasks_max}",
                "-p", f"RuntimeMaxSec={lim.worker_runtime_s}", "-p", "CPUQuota=300%",
-               "-p", "Nice=10", "--working-directory", str(policy.REPO)]
+               "-p", "Nice=10", "-p", "CPUWeight=20", "-p", "IOWeight=20",
+               "--working-directory", str(policy.REPO)]
         for key in _PASS_ENV:
             if key in os.environ:
                 cmd += ["-E", f"{key}={os.environ[key]}"]

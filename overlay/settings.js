@@ -5,8 +5,13 @@
 // page reports what it is *actually* doing: how many CSS animations are still running, the
 // motion mode on <html>, the effective intensity and whether the window is shown. The backend
 // only says "animations are off" once that report agrees.
+//
+// The dictation capsule loads this too, as role "dictation": it follows the motion settings but
+// does not report for the overlay and does not show or hide the overlay window.
 (() => {
-  const API = `http://127.0.0.1:${window.JARVIS_PORT || 8770}`;
+  const port = window.JARVIS_PORT || new URLSearchParams(location.search).get("port") || 8770;
+  const API = `http://127.0.0.1:${port}`;
+  const role = window.JARVIS_SETTINGS_ROLE || "overlay";
   const root = document.documentElement;
   const state = { motion: "full", intensity: 1, visible: true, revision: -1 };
 
@@ -25,6 +30,7 @@
   }
 
   async function report(revision, values) {
+    if (role !== "overlay") return;
     // Two frames, so style recalculation has happened before anything is counted.
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
     const observed = {
@@ -58,7 +64,8 @@
     const intensity = Math.min(1, Math.max(0.3, Number(values["overlay.intensity"]) || 1));
     state.intensity = intensity;
     root.style.setProperty("--overlay-intensity", String(intensity));
-    if (typeof values["overlay.visible"] === "boolean" && values["overlay.visible"] !== state.visible) {
+    if (role === "overlay" && typeof values["overlay.visible"] === "boolean" &&
+        values["overlay.visible"] !== state.visible) {
       state.visible = values["overlay.visible"];
       if (state.visible) window.jarvis?.show?.();
       else window.jarvis?.hide?.();
