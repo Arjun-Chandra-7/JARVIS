@@ -682,6 +682,7 @@ def test_provider_proposal_goes_through_the_approval_manager(monkeypatch, tmp_pa
     from jarvis import approvals
     from jarvis.three_d import commands
     monkeypatch.setenv("JARVIS_3D_REMOTE_URL", "https://mesh.example.test/v1")
+    monkeypatch.setenv("JARVIS_DAILY_BRAIN", "1")         # the upload is allowed only under its privacy policy
     img = tmp_path / "r.png"
     img.write_bytes(b"x")
     s = SimpleNamespace(refs=[ReferenceAsset(id="r", source="region", path=str(img))], pool=None)
@@ -690,6 +691,26 @@ def test_provider_proposal_goes_through_the_approval_manager(monkeypatch, tmp_pa
     pending = approvals.MANAGER.pending()
     assert pending and pending[-1].kind == "upload" and pending[-1].required == ("mesh",)
     approvals.MANAGER.clear()
+
+
+@pytest.mark.parametrize("brain_on, privacy", [("0", None), ("1", {"mode": "always_local"}),
+                                               ("1", {"allow_screenshots": False})])
+def test_provider_proposal_respects_the_brain_privacy_policy(monkeypatch, tmp_path, brain_on, privacy):
+    from jarvis import approvals
+    from jarvis.brain.registry import BrainSettings
+    from jarvis.three_d import commands
+    monkeypatch.setenv("JARVIS_3D_REMOTE_URL", "https://mesh.example.test/v1")
+    monkeypatch.setenv("JARVIS_DAILY_BRAIN", brain_on)
+    if privacy:
+        st = BrainSettings()
+        st.data["privacy"].update(privacy)
+        st.save()
+    img = tmp_path / "r.png"
+    img.write_bytes(b"x")
+    s = SimpleNamespace(refs=[ReferenceAsset(id="r", source="region", path=str(img))], pool=None)
+    reply = commands.propose_provider(s)
+    assert reply.startswith("I won't send the reference anywhere")
+    assert not approvals.MANAGER.pending()
 
 
 def test_render_gate_protects_the_voice_reserve():

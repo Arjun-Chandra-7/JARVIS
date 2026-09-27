@@ -24,56 +24,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
-_TITLE = [
-    ("a password or sign-in screen", re.compile(r"(?i)\b(?:password|passcode|sign[\s-]?in|log[\s-]?in|"
-                                                r"login|authenticat\w*|2fa|two[\s-]factor|verify\s+it'?s\s+you)\b")),
-    ("a one-time code", re.compile(r"(?i)\b(?:otp|one[\s-]time\s+(?:password|code)|verification\s+code)\b")),
-    ("a banking or payment screen", re.compile(r"(?i)\b(?:bank(?:ing)?|net\s?banking|upi|paytm|phonepe|"
-                                               r"google\s?pay|gpay|paypal|credit\s+card|debit\s+card|wallet|"
-                                               r"checkout|payment)\b")),
-    ("a password manager", re.compile(r"(?i)\b(?:1password|bitwarden|keepass\w*|lastpass|seahorse|"
-                                      r"passwords\s+and\s+keys|keyring)\b")),
-    ("a private chat", re.compile(r"(?i)\b(?:whatsapp|telegram|signal|messenger|instagram\s+direct|"
-                                  r"direct\s+messages?|google\s+messages|imessage)\b")),
-]
-_TEXT = [
-    ("a password field", re.compile(r"(?i)\b(?:password|passcode|pin\s*code|enter\s+pin)\b")),
-    ("a one-time code", re.compile(r"(?i)\b(?:otp|one[\s-]time|verification\s+code|security\s+code)\b")),
-    ("a banking or payment screen", re.compile(r"(?i)\b(?:cvv|cvc|ifsc|account\s+(?:no|number)|card\s+number|"
-                                               r"available\s+balance|net\s?banking|upi\s+id)\b")),
-    ("a private chat", re.compile(r"(?i)\b(?:type\s+a\s+message|last\s+seen|end-to-end\s+encrypted)\b")),
-]
-_CARD = re.compile(r"\b(?:\d[ -]?){13,19}\b")
-_MASKED = re.compile(r"[•●*]{4,}")
-
-
-@dataclass
-class PrivacyVerdict:
-    ok: bool
-    category: str = ""           # what kind of screen it looked like — safe to say and to log
-
-    def reason(self) -> str:
-        return f"That looks like {self.category}, so I won't capture it." if not self.ok else ""
-
-
-def check_title(app: str = "", title: str = "") -> PrivacyVerdict:
-    text = f"{app} {title}"
-    for category, pattern in _TITLE:
-        if pattern.search(text):
-            return PrivacyVerdict(False, category)
-    return PrivacyVerdict(True)
-
-
-def check_words(words: Iterable[str]) -> PrivacyVerdict:
-    text = " ".join(str(w) for w in words)
-    for category, pattern in _TEXT:
-        if pattern.search(text):
-            return PrivacyVerdict(False, category)
-    if _CARD.search(text):
-        return PrivacyVerdict(False, "a card or account number")
-    if _MASKED.search(text):
-        return PrivacyVerdict(False, "a password field")
-    return PrivacyVerdict(True)
+# The screen checks are shared with the Study Companion's teaching overlay (jarvis/screen_safety.py):
+# one list of password / OTP / banking / password-manager / private-chat / lock-screen patterns.
+from ..screen_safety import Verdict as PrivacyVerdict, check_title, check_words  # noqa: E402,F401
 
 
 def read_words(image_path: str) -> list[str]:

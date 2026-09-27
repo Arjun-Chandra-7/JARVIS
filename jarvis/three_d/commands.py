@@ -138,6 +138,12 @@ def propose_provider(s) -> str:
     from .. import approvals
     from urllib.parse import urlparse
 
+    from . import brain_routes, privacy
+
+    allowed, why = brain_routes.remote_upload_verdict()
+    if not allowed:
+        privacy.audit("provider.refused", reason="privacy_policy")
+        return f"I won't send the reference anywhere: {why}. I'll keep building from what I can measure here."
     p, reasons = generative.choose(resources.free_vram_gb())
     if p is None:
         return ("There's no usable image-to-3D provider: " + "; ".join(reasons) +

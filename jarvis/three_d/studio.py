@@ -31,7 +31,8 @@ from typing import Callable, Optional
 
 import numpy as np
 
-from . import (capture, editing, exports, jobs, planner, privacy, resources, scene_compiler, validation)
+from . import (brain_routes, capture, editing, exports, jobs, planner, privacy, resources, scene_compiler,
+               validation)
 from . import parametric_reconstruction as pr
 from .blender_bridge import BlenderSession, BridgeError
 from .project import Project, projects_root
@@ -234,6 +235,7 @@ class Studio:
             self.pending = op
             self.pool.submit(self._highlight, op.candidates)
             return op.question
+        brain_routes.route("edit", purpose="3d.edit")      # an edit of the active job: local engines only
         fut = self.pool.submit(self._edit, op, text)
         if not wait:
             return "Working on it."
@@ -396,6 +398,13 @@ class Studio:
             p = planner.plan(self.refs, request, analysis, known=self.known, unit=self.unit, name=name,
                              image_roots=[str(self.root)], allow_estimate=self.allow_estimate)
             job.mode = p.mode
+            # The Daily Brain decides the route: this mode's capabilities are served by local
+            # engines, so the decision is "engine" and nothing leaves the machine. Anything else
+            # would mean a cloud model was chosen for a screen reference — refuse, don't proceed.
+            decision = brain_routes.route(p.mode)
+            privacy.audit("brain.route", job=job.id, mode=p.mode.value, provider=decision.engine or decision.route)
+            if decision.route != "engine":
+                raise RuntimeError("the Daily Brain did not route this reconstruction to a local engine")
             job.requested_accuracy = "exact" if analysis.classification.exact_requested else "visual"
             job.purpose = job.purpose or analysis.classification.purpose
             if p.question:
