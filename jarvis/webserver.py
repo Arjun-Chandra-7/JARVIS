@@ -102,17 +102,9 @@ async def _contacts_ingest() -> None:
     """Fold new WhatsApp history into the private contact index every 15 min (best effort)."""
     from .memory import contacts_index
 
-    def _llm(prompt: str) -> str:
-        base_url, key, model = CONFIG.llm_params()
-        if not key:
-            return ""
-        from openai import OpenAI
-        client = OpenAI(base_url=base_url, api_key=key, max_retries=0, timeout=30)
-        r = client.chat.completions.create(model=model, temperature=0.2, max_tokens=220,
-                                           messages=[{"role": "user", "content": prompt}])
-        return (r.choices[0].message.content or "").strip()
-
-    llm = _llm if CONFIG.brain in {"gemini", "groq"} else None
+    # Deterministic summaries unless the owner opted in (JARVIS_CONTACTS_SUMMARIES=local|cloud); a
+    # model, when used, is the Daily Brain's, and never sees a contact's name or number.
+    llm = contacts_index.summarizer(CONFIG)
     await asyncio.sleep(20)
     while True:
         try:

@@ -385,6 +385,11 @@ class GroqAgent:
     async def __aexit__(self, *exc: Any) -> None:
         return None
 
+    def _tool_kwargs(self) -> dict:
+        """``tools``/``tool_choice`` for this turn, or nothing when no tool may be offered."""
+        schemas = self._active_schemas()
+        return {"tools": schemas, "tool_choice": "auto"} if schemas else {}
+
     def _active_schemas(self):
         """The tools shown to the model this turn.
 
@@ -394,7 +399,13 @@ class GroqAgent:
         JARVIS_TOOL_ROUTING=0 to send everything again.
         """
         from . import gate
+        from ..brain.registry import denied
 
+        # A model that failed tool-use validation on this machine (qwen2.5:3b: it called a tool on
+        # "thanks") is never shown a tool, whether it is the configured brain or the rate-limit
+        # fallback. It can still answer in words; actions wait for a verified model.
+        if "tool_calling" in denied(self.model):
+            return []
         said = self._route_query or ""
         if not self.config.tool_routing or not self._route_query:
             return gate.allowed(self.schemas, said)
@@ -439,8 +450,7 @@ class GroqAgent:
         stream = self.client.chat.completions.create(
             model=(specialist.model if specialist and specialist.model else self.model),
             messages=self.messages,
-            tools=self._active_schemas(),
-            tool_choice="auto",
+            **self._tool_kwargs(),
             temperature=(specialist.temperature if specialist is not None
                          else self.config.temperature),
             max_tokens=512,
@@ -529,8 +539,7 @@ class GroqAgent:
         return self.client.chat.completions.create(
             model=(specialist.model if specialist and specialist.model else self.model),
             messages=self.messages,
-            tools=self._active_schemas(),
-            tool_choice="auto",
+            **self._tool_kwargs(),
             temperature=(specialist.temperature if specialist is not None
                          else self.config.temperature),
             max_tokens=512,

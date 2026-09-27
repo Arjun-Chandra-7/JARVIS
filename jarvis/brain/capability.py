@@ -79,6 +79,12 @@ class CapabilityRequest:
     json_mode: bool = False
     accept: Optional[Callable] = None              # measured check; a rejected fast answer escalates once
     correlation_id: str = ""
+    messages: list = field(default_factory=list)   # a whole conversation instead of system + prompt
+
+    def all_text(self) -> str:
+        parts = [self.system, self.prompt] + [m.get("content", "") for m in self.messages
+                                              if isinstance(m.get("content"), str)]
+        return "\n".join(p for p in parts if p)
 
 
 @dataclass
@@ -109,11 +115,12 @@ def build(req: CapabilityRequest) -> BrainRequest:
     """The BrainRequest for ``req``: declared capabilities, a privacy level never below the floor."""
     from .understand import understand
 
-    breq = understand(BrainRequest(req.prompt, source=req.source, authenticated=req.source in Source.TRUSTED,
+    text = req.all_text()
+    breq = understand(BrainRequest(text, source=req.source, authenticated=req.source in Source.TRUSTED,
                                    session_id=f"system:{req.purpose}", images=list(req.images),
                                    correlation_id=req.correlation_id),
                       asks_for_an_action=lambda _t: False)
-    found = bprivacy.classify(req.prompt, req.source, has_images=bool(req.images), screen=req.screenshot)
+    found = bprivacy.classify(text, req.source, has_images=bool(req.images), screen=req.screenshot)
     level = _max_privacy(_max_privacy(req.privacy, found.level), breq.privacy)
     breq.privacy = level
     breq.privacy_reasons = sorted(set(breq.privacy_reasons) | set(found.reasons) | {f"declared:{req.privacy}"})
@@ -189,12 +196,17 @@ def complete(req: CapabilityRequest, *, brain=None) -> CapabilityResult:
             telemetry.from_decision(breq, decision, "refused", purpose=req.purpose, refused_kind="no_candidate")
             return CapabilityResult(False, notice=decision.refused, reason="no_model", privacy=breq.privacy,
                                     decision=decision)
-        content = req.prompt
-        if req.images:
-            content = [{"type": "text", "text": req.prompt}] + [
-                {"type": "image_url", "image_url": {"url": img}} for img in req.images]
-        messages = ([{"role": "system", "content": req.system}] if req.system else []) + \
-            [{"role": "user", "content": content}]
+        if req.messages:
+            messages = ([{"role": "system", "content": req.system}] if req.system else []) + [
+                {"role": m.get("role", "user"), "content": m.get("content", "")} for m in req.messages
+                if m.get("role") in {"system", "user", "assistant"}]
+        else:
+            content = req.prompt
+            if req.images:
+                content = [{"type": "text", "text": req.prompt}] + [
+                    {"type": "image_url", "image_url": {"url": img}} for img in req.images]
+            messages = ([{"role": "system", "content": req.system}] if req.system else []) + \
+                [{"role": "user", "content": content}]
         res = executor.execute(breq, decision, messages, registry, b._keystore_or_none(),
                                json_mode=req.json_mode, temperature=req.temperature, accept=req.accept)
         status = "ok" if res.ok and not decision.quality_reduced else "degraded" if res.ok else "failed"
@@ -219,7 +231,7 @@ def _legacy(req: CapabilityRequest) -> CapabilityResult:
     from .. import llm, providers as pv
     from ..config import CONFIG
 
-    level = _max_privacy(req.privacy, bprivacy.classify(req.prompt, req.source).level)
+    level = _max_privacy(req.privacy, bprivacy.classify(req.all_text(), req.source).level)
     provider = pv.for_brain(CONFIG)
     is_local = "11434" in (provider.base_url or "") or "127.0.0.1" in (provider.base_url or "")
     if req.images:
@@ -228,7 +240,10 @@ def _legacy(req: CapabilityRequest) -> CapabilityResult:
     if (req.local_only or level == Privacy.SECRET or req.cloud_needs_approval) and not is_local:
         return CapabilityResult(False, reason="privacy", privacy=level)
     started = time.monotonic()
-    got = llm.complete_sync(req.system or "", req.prompt, CONFIG, temperature=req.temperature,
+    system = req.system or "\n".join(m.get("content", "") for m in req.messages if m.get("role") == "system")
+    prompt = req.prompt or "\n".join(f"{m.get('role')}: {m.get('content', '')}" for m in req.messages
+                                     if m.get("role") != "system")
+    got = llm.complete_sync(system, prompt, CONFIG, temperature=req.temperature,
                             timeout=min(req.deadline_s, 60.0), ask=llm._ask)
     telemetry.record(purpose=req.purpose, route="legacy", privacy=level,
                      latency_ms=int((time.monotonic() - started) * 1000), status="ok" if got.ok else "failed")

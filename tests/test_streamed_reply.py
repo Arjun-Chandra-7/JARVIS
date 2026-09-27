@@ -56,6 +56,7 @@ class Brain:
     """Just enough of the agent to drive `_stream`."""
 
     _stream = GroqAgent._stream
+    _tool_kwargs = GroqAgent._tool_kwargs
 
     def __init__(self, chunks):
         self._chunks = chunks

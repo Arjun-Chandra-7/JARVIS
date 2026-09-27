@@ -146,40 +146,34 @@ def _simplify_paper_report(item: dict[str, Any]) -> str:
     title = item.get("title", "Untitled Breakthrough")
     summary = item.get("summary", "")
 
-    # Try generating with configured LLM (Groq / OpenAI compatible)
+    # Worded by the Daily Brain (a public abstract; its router picks the model and falls back).
     try:
-        from ..config import CONFIG
-        if CONFIG.groq_api_key:
-            from openai import OpenAI
-            client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=CONFIG.groq_api_key)
-            prompt = (
-                f"You are Jarvis Autonomous AI Research Assistant. Explain this cutting-edge AI paper in simple, fun, plain English that is exciting and easy to read. Avoid dense academic jargon. Use real-world analogies.\n\n"
-                f"Paper Title: {title}\n"
-                f"Abstract / Summary: {summary}\n\n"
-                f"Format the output strictly as:\n"
-                f"### 💡 What is this in Plain English?\n"
-                f"(1-2 clear, punchy sentences explaining what this does)\n\n"
-                f"### 🚀 Why is it cool & why does it matter?\n"
-                f"- (Bullet points on practical, real-world impact and benefits)\n\n"
-                f"### ⚙️ How does it work?\n"
-                f"(A simple, intuitive analogy or step-by-step without math jargon)\n\n"
-                f"### 🔮 What does this mean for the future?\n"
-                f"(1 short takeaway on where AI goes from here)"
-            )
-            resp = client.chat.completions.create(
-                model=CONFIG.groq_model,
-                messages=[
-                    {"role": "system", "content": "You are Jarvis AI Research Assistant. Write clear, engaging, plain-English executive breakdowns of AI papers."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=1500,
-                temperature=0.6,
-            )
-            content = resp.choices[0].message.content or ""
-            if "</think>" in content:
-                content = content.split("</think>", 1)[1].strip()
-            if content.strip():
-                return content.strip()
+        prompt = (
+            f"You are Jarvis Autonomous AI Research Assistant. Explain this cutting-edge AI paper in simple, fun, plain English that is exciting and easy to read. Avoid dense academic jargon. Use real-world analogies.\n\n"
+            f"Paper Title: {title}\n"
+            f"Abstract / Summary: {summary}\n\n"
+            f"Format the output strictly as:\n"
+            f"### 💡 What is this in Plain English?\n"
+            f"(1-2 clear, punchy sentences explaining what this does)\n\n"
+            f"### 🚀 Why is it cool & why does it matter?\n"
+            f"- (Bullet points on practical, real-world impact and benefits)\n\n"
+            f"### ⚙️ How does it work?\n"
+            f"(A simple, intuitive analogy or step-by-step without math jargon)\n\n"
+            f"### 🔮 What does this mean for the future?\n"
+            f"(1 short takeaway on where AI goes from here)"
+        )
+        from ..brain import capability
+        from ..brain.request import Cap, Privacy, Source
+        res = capability.complete(capability.CapabilityRequest(
+            purpose="research.paper_summary", prompt=prompt, capabilities={Cap.CHAT},
+            system="You are Jarvis AI Research Assistant. Write clear, engaging, plain-English executive "
+                   "breakdowns of AI papers.",
+            privacy=Privacy.PUBLIC, source=Source.SYSTEM, max_tokens=1500, temperature=0.6, deadline_s=60.0))
+        content = res.text if res.ok else ""
+        if "</think>" in content:
+            content = content.split("</think>", 1)[1].strip()
+        if content.strip():
+            return content.strip()
     except Exception:
         pass
 

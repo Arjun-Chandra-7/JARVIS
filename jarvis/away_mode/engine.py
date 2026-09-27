@@ -552,20 +552,24 @@ def get_responder() -> Optional[Responder]:
 
 
 def _default_responder(config) -> Optional[Responder]:
+    """Replies are worded by the Daily Brain (brain/capability.py), never by a client built here.
+
+    The incoming message is untrusted content: it is sent as ``messaging`` source at ``sensitive``
+    privacy with the chat capability only — no tools, no settings, no approvals, no repairs, so
+    nothing it says can change routing, providers or away mode's own rules (those are applied by
+    this engine, before and after the wording). The Brain's privacy policy decides whether it may
+    go to a cloud model; the telemetry keeps no message text."""
     if _DEFAULT["responder"] is not None:
         return _DEFAULT["responder"]
-    try:
-        base_url, key, model = config.llm_params()
-    except Exception:  # noqa: BLE001
-        return None
-    if not key:
-        return None
 
     async def call(messages: list[dict[str, str]]) -> str:
-        def run() -> str:
-            from openai import OpenAI
-            client = OpenAI(base_url=base_url, api_key=key, max_retries=0, timeout=20)
-            out = client.chat.completions.create(model=model, messages=messages, temperature=0.3, max_tokens=90)
-            return (out.choices[0].message.content or "").strip()
-        return await asyncio.to_thread(run)
+        from ..brain import capability
+        from ..brain.request import Cap, Privacy, Source
+
+        req = capability.CapabilityRequest(purpose="away.reply", prompt="", messages=list(messages),
+                                           capabilities={Cap.CHAT}, privacy=Privacy.SENSITIVE,
+                                           source=Source.MESSAGING, max_tokens=90, temperature=0.3,
+                                           deadline_s=20.0)
+        res = await asyncio.to_thread(capability.complete, req)
+        return res.text.strip() if res.ok else ""
     return call

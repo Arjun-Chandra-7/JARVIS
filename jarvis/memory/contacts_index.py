@@ -6,6 +6,17 @@ message, and full history is never handed to a prompt — only the compact profi
 
 Storage (private, git-excluded): ``<vault>/Jarvis/private/contacts/index.json``.
 Derived facts keep provenance so a guess is never presented as certain.
+
+Privacy (contact names and numbers are private):
+* Summaries are deterministic and local by default (``_heuristic_summary``). A model is used only
+  when the owner sets ``JARVIS_CONTACTS_SUMMARIES`` to ``local`` (a local model through the Daily
+  Brain, never a cloud one) or ``cloud`` (the Brain's privacy policy still decides, at "sensitive").
+* Whatever reaches a model has no contact name and no phone number: the other side is "them" and
+  every run of seven or more digits is "<number>". The Brain's logs keep no text at all.
+* Ingest never messages anyone, and never overwrites a name the owner saved: the owner's saved
+  name (``integrations.contacts``) wins over a WhatsApp push name, which becomes an alias.
+* Two contacts with the same name stay two records (keyed by their WhatsApp id); asking for that
+  name is ambiguous and says so, rather than picking one.
 """
 from __future__ import annotations
 
@@ -29,6 +40,43 @@ _COMMIT_RE = re.compile(
     r"\b(?:tomorrow|today|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
     r"\d{1,2}\s?(?:am|pm)|\d{1,2}:\d{2}|by\s+\w+day|next\s+week|deadline|due\b|send\s+me|"
     r"call\s+me|remind|meeting|pick\s+up|drop|submit)\b", re.I)
+
+
+_LONG_DIGITS = re.compile(r"\+?\d[\d\s-]{5,}\d")
+
+
+def _redact_numbers(text: str) -> str:
+    return _LONG_DIGITS.sub(lambda m: "<number>" if len(re.sub(r"\D", "", m.group(0))) >= 7 else m.group(0), text)
+
+
+def summarizer(config) -> Callable[[str], str] | None:
+    """The model used for contact summaries, or None for the deterministic default."""
+    mode = os.environ.get("JARVIS_CONTACTS_SUMMARIES", "heuristic").strip().lower()
+    if mode not in {"local", "cloud"}:
+        return None
+
+    def llm(prompt: str) -> str:
+        from ..brain import capability
+        from ..brain.request import Cap, Privacy, Source
+        res = capability.complete(capability.CapabilityRequest(
+            purpose="contacts.summary", prompt=prompt, capabilities={Cap.CHAT}, privacy=Privacy.SENSITIVE,
+            source=Source.SYSTEM, local_only=(mode == "local"), max_tokens=220, temperature=0.2, deadline_s=30.0))
+        return res.text.strip() if res.ok else ""
+    return llm
+
+
+def _saved_names() -> dict[str, str]:
+    """Owner-saved contacts by the last ten digits of their number."""
+    try:
+        from ..integrations import contacts as saved
+        out = {}
+        for entry in saved._load().values():
+            digits = re.sub(r"\D", "", str(entry.get("number", "")))
+            if len(digits) >= 7 and entry.get("name"):
+                out[digits[-10:]] = str(entry["name"])
+        return out
+    except Exception:  # noqa: BLE001 — no saved store: push names are all there is
+        return {}
 
 
 def _now() -> str:
@@ -131,7 +179,8 @@ def roll_up(config, jid: str, llm: Callable[[str], str] | None = None) -> dict[s
     msgs = rec.get("recent", [])
     summary = _heuristic_summary(rec.get("name", jid), msgs)
     if llm and msgs:
-        transcript = "\n".join(f"{'me' if m['from_me'] else rec.get('name', 'them')}: {m['text']}" for m in msgs[-30:])
+        # No name and no number reaches a model: the other side is "them".
+        transcript = "\n".join(f"{'me' if m['from_me'] else 'them'}: {_redact_numbers(m['text'])}" for m in msgs[-30:])
         try:
             raw = llm(
                 "Summarise this chat in 2 sentences, then list recurring subjects and any "
@@ -157,6 +206,7 @@ def ingest(config, fetch: Callable[[int], list[dict]] | None = None, limit: int 
         from ..integrations.whatsapp import chats as fetch
     msgs = normalize(fetch(limit))
     data = _load(config)
+    saved = _saved_names()
     touched: set[str] = set()
     added = 0
     for m in msgs:
@@ -164,8 +214,13 @@ def ingest(config, fetch: Callable[[int], list[dict]] | None = None, limit: int 
         rec = data.setdefault(jid, {
             "jid": jid, "name": m["name"], "aliases": [], "first_seen": m["ts"],
             "last_seen": 0, "msg_count": 0, "incoming_count": 0, "cursor_ts": 0,
-            "recent": [], "summary": {}, "summarized_at_count": 0,
+            "recent": [], "summary": {}, "summarized_at_count": 0, "name_source": "whatsapp",
         })
+        saved_name = saved.get(re.sub(r"\D", "", jid.split("@", 1)[0])[-10:])
+        if saved_name and (rec.get("name_source") != "user_saved" or rec.get("name") != saved_name):
+            if rec.get("name") and rec["name"] not in (jid, saved_name) and rec["name"] not in rec["aliases"]:
+                rec["aliases"].append(rec["name"])
+            rec["name"], rec["name_source"] = saved_name, "user_saved"
         if m["ts"] <= rec.get("cursor_ts", 0):
             continue
         rec["cursor_ts"] = m["ts"]
@@ -174,7 +229,7 @@ def ingest(config, fetch: Callable[[int], list[dict]] | None = None, limit: int 
         if not m["from_me"]:
             rec["incoming_count"] += 1
         if m["name"] and m["name"] != jid and m["name"] != rec["name"]:
-            if rec["name"] in (jid, "") :
+            if rec["name"] in (jid, "") and rec.get("name_source") != "user_saved":
                 rec["name"] = m["name"]
             elif m["name"] not in rec["aliases"]:
                 rec["aliases"].append(m["name"])
@@ -191,7 +246,21 @@ def ingest(config, fetch: Callable[[int], list[dict]] | None = None, limit: int 
     return {"messages_seen": len(msgs), "new": added, "contacts_touched": len(touched), "summarised": rolled}
 
 
+def matches(config, name: str) -> list[dict[str, Any]]:
+    """Every contact whose name or alias is exactly ``name``, told apart without a full number."""
+    low = (name or "").strip().lower()
+    out = []
+    for jid, rec in _load(config).items():
+        names = [rec.get("name", "")] + list(rec.get("aliases", []))
+        if low and any(low == n.lower() for n in names if n):
+            digits = re.sub(r"\D", "", jid.split("@", 1)[0])
+            out.append({"jid": jid, "name": rec.get("name", ""), "number_hint": f"number ending {digits[-4:]}" if digits else "",
+                        "last_seen": rec.get("last_seen", 0), "name_source": rec.get("name_source", "whatsapp")})
+    return out
+
+
 def _resolve(config, name_or_jid: str) -> str | None:
+    """One contact, or None — including when two contacts share the name (see ``matches``)."""
     q = (name_or_jid or "").strip()
     if not q:
         return None
@@ -199,10 +268,11 @@ def _resolve(config, name_or_jid: str) -> str | None:
     if q in data:
         return q
     low = q.lower()
-    for jid, rec in data.items():
-        names = [rec.get("name", "")] + list(rec.get("aliases", []))
-        if any(low == n.lower() for n in names if n):
-            return jid
+    exact = matches(config, q)
+    if len(exact) > 1:
+        return None
+    if exact:
+        return exact[0]["jid"]
     for jid, rec in data.items():
         names = [rec.get("name", "")] + list(rec.get("aliases", []))
         if any(low in n.lower() or n.lower() in low for n in names if n):
@@ -257,6 +327,10 @@ def profile(config, jid: str) -> dict[str, Any]:
 
 def recall(config, name_or_jid: str) -> str:
     """One compact block a brain/voice can use before messaging someone. Empty string if unknown."""
+    same = matches(config, name_or_jid)
+    if len(same) > 1:
+        return (f"{len(same)} contacts are called {same[0]['name']}: " +
+                "; ".join(x["number_hint"] or x["name"] for x in same) + ". Which one?")
     jid = _resolve(config, name_or_jid)
     if not jid:
         return ""

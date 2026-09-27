@@ -459,17 +459,17 @@ def _join_meet_sync(url: str, return_time: str, notes_path: str, stop_flag_file:
                     pass
 
     # Wrap up: summarise, persist to the vault, and land on a terminal state.
-    llm = None
-    if config is not None and getattr(config, "brain", "") in {"gemini", "groq"}:
-        def llm(prompt: str) -> str:
-            from openai import OpenAI
-            base_url, key, model = config.llm_params()
-            if not key:
-                return ""
-            client = OpenAI(base_url=base_url, api_key=key, max_retries=0, timeout=30)
-            r = client.chat.completions.create(model=model, temperature=0.2, max_tokens=300,
-                                               messages=[{"role": "user", "content": prompt}])
-            return (r.choices[0].message.content or "").strip()
+    # The summary is worded by the Daily Brain: a meeting transcript is sensitive, so its privacy
+    # policy decides local or cloud (and "always local" keeps it here), and the Brain's logs keep
+    # no transcript text. The transcript itself is kept only in the owner's vault note.
+    def llm(prompt: str) -> str:
+        from ..brain import capability
+        from ..brain.request import Cap, Privacy, Source
+        res = capability.complete(capability.CapabilityRequest(
+            purpose="meeting.summary", prompt=prompt, capabilities={Cap.CHAT, Cap.LONG_CONTEXT},
+            privacy=Privacy.SENSITIVE, source=Source.SYSTEM, max_tokens=300, temperature=0.2,
+            deadline_s=30.0))
+        return res.text.strip() if res.ok else ""
     summary = _summarize_transcript(transcript_lines, llm)
     _status["summary"] = summary
     _status["vault_note"] = _save_vault_note(config, url, transcript_lines, summary)

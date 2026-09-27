@@ -109,7 +109,7 @@ def plan(req: BrainRequest, registry: Registry, profile: Optional[str] = None,
         if not ok:
             rejected.append(f"{m.ref}: {why}")
             continue
-        if "embedding" in m.declared or ("chat" not in m.declared and route != "vision"):
+        if "embedding" in m.declared or (not m.has(Cap.CHAT) and route != "vision"):
             continue
         if any(not m.has(c) for c in required):
             missing = [c for c in required if not m.has(c)]

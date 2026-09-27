@@ -41,23 +41,22 @@ async def _compose_message(config: Config, name: str, about: str) -> str:
     about = (about or "").strip()
     first = (name or "there").strip().split()[0].title()
     try:
-        import httpx
+        # Worded by the Daily Brain (personal: a message to a contact); it only drafts — sending
+        # still goes through the approval the caller proposes.
+        from ..brain import capability
+        from ..brain.request import Cap, Privacy, Source
 
-        base, key, model = config.llm_params()
         prompt = (
             f"Write a short, warm, natural WhatsApp message to {first} about: {about}. "
             "One or two sentences, first person as the sender, no quotes, no preamble, no emojis "
             "unless natural. Just the message text."
         )
-        async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.post(
-                f"{base.rstrip('/')}/chat/completions",
-                headers={"Authorization": f"Bearer {key}"},
-                json={"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.7},
-            )
-            text = r.json()["choices"][0]["message"]["content"].strip().strip('"').strip()
-            if text:
-                return text
+        res = await asyncio.to_thread(capability.complete, capability.CapabilityRequest(
+            purpose="message.compose", prompt=prompt, capabilities={Cap.CHAT}, privacy=Privacy.PERSONAL,
+            source=Source.SYSTEM, max_tokens=120, temperature=0.7, deadline_s=30.0))
+        text = res.text.strip().strip('"').strip() if res.ok else ""
+        if text:
+            return text
     except Exception:  # noqa: BLE001
         pass
     return f"Hey {first}, {about}".strip()

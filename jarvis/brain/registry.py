@@ -122,6 +122,28 @@ TEMPLATES = {
 }
 
 
+# Capabilities a model is never used for on this machine, whatever it declares or a later probe
+# says, because it failed them when measured (docs/DAILY_BRAIN.md → Local model strategy).
+# qwen2.5:3b called a tool on "thanks" (5/6 tool probes). qwen3.5:4b is a thinking model: by
+# default (and with think=true) Ollama returns its whole output budget in `message.thinking` and an
+# empty `content` (measured 2026-09-28: 200/200 tokens thinking, done_reason=length). With Ollama's
+# documented `think: false` it answers — but 8–15 s per short reply on the CPU, and at 3.4 GB it
+# does not fit the 4 GB card beside the voice models — so it is not recommended for any Brain route
+# and the adapter adds no thinking-field workaround.
+DENIED = [
+    (r"^qwen2\.5:3b", {"tool_calling"}),
+    (r"^qwen3\.5:4b", {"tool_calling", "chat", "structured_output", "vision"}),
+]
+
+
+def denied(model_id: str) -> set:
+    out: set = set()
+    for pattern, caps in DENIED:
+        if re.search(pattern, model_id or "", re.I):
+            out |= caps
+    return out
+
+
 def declared(model_id: str) -> tuple[int, set, int, int, Optional[float]]:
     for pattern, tier, caps, ctx, out, price in KNOWN:
         if re.search(pattern, model_id or "", re.I):
@@ -158,7 +180,10 @@ class ModelRecord:
         return f"{self.provider}/{self.id}"
 
     def has(self, cap: str) -> bool:
-        """Usable for this capability: verified when it must be, declared otherwise."""
+        """Usable for this capability: verified when it must be, declared otherwise — and never
+        for a capability this model failed when measured (``DENIED``)."""
+        if cap in denied(self.id):
+            return False
         if cap in Cap.MUST_VERIFY:
             v = self.verified.get(cap)
             return bool(v and v.get("ok"))

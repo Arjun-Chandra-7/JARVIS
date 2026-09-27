@@ -117,8 +117,17 @@ def _gemini_paused(config) -> bool:
 
 
 def describe(path: str, question: str, config) -> Optional[str]:
-    """Return a text description/answer about the image, or None if no vision backend is set up."""
+    """Return a text description/answer about the image, or None if no vision backend is set up.
+
+    Through the Daily Brain: a screenshot is sensitive, goes only to a model that passed the
+    vision probe, and to a cloud model only when the Brain's privacy settings allow screenshot
+    upload (Brain → Privacy). The backends below are the ``JARVIS_DAILY_BRAIN=0`` rollback."""
     q = question or _DEFAULT_Q
+    if getattr(config, "vision_provider", "auto") == "none":
+        return None
+    from ..brain import daily
+    if daily.enabled():
+        return _via_brain(path, q)
     prov = available(config)
     if prov == "ollama":
         return _ollama(path, q, config.ollama_vision_model)
@@ -126,6 +135,23 @@ def describe(path: str, question: str, config) -> Optional[str]:
         return _gemini(path, q, config.gemini_api_key,
                        getattr(config, "gemini_model", DEFAULT_GEMINI_MODEL))
     return None
+
+
+def _via_brain(path: str, question: str) -> Optional[str]:
+    from ..brain import capability
+    from ..brain.request import Cap, Privacy, Source
+
+    img = _b64(path)
+    if not img:
+        return None
+    mime = "image/png" if str(path).lower().endswith(".png") else "image/jpeg"
+    res = capability.complete(capability.CapabilityRequest(
+        purpose="vision.analyze", prompt=question, images=[f"data:{mime};base64,{img}"], screenshot=True,
+        capabilities={Cap.VISION}, privacy=Privacy.SENSITIVE, source=Source.SYSTEM, max_tokens=350,
+        deadline_s=60.0))
+    if res.ok:
+        return res.text.strip()
+    return f"(vision unavailable: {res.notice})" if res.notice else None
 
 
 def ground(path: str, target: str, config) -> tuple[Optional[str], str]:
