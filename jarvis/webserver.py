@@ -156,6 +156,8 @@ app = FastAPI(lifespan=lifespan)
 from .mobile import authorize, router as mobile_router
 app.middleware("http")(authorize)
 app.include_router(mobile_router)
+from .brain.api import router as brain_router  # noqa: E402 — the overlay's Brain tab
+app.include_router(brain_router)
 
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 

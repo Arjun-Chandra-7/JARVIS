@@ -42,6 +42,7 @@ _APP = "jarvis"
 BACKOFF_DEFAULT_S = 60.0
 QUOTA_BACKOFF_S = 6 * 3600.0
 MAX_KEYS_PER_PROVIDER = 12
+_PENDING_DELETE: dict[str, tuple[str, float]] = {}
 
 
 def fingerprint(secret: str) -> str:
@@ -241,11 +242,11 @@ class KeyStore:
         self.backend = backend or default_backend()
         self.env = os.environ if env is None else env
         self._rr: dict[str, int] = {}
-        self._pending_delete: dict[str, tuple[str, float]] = {}
+        self._pending_delete = _PENDING_DELETE          # process-wide: survives a settings reload
 
     # -- metadata --------------------------------------------------------------------------
     def _meta(self, pid: str) -> list[dict]:
-        return self.settings["keys"].setdefault(pid, [])
+        return self.settings["keys"].get(pid, [])          # reads never add an entry
 
     def _env_entries(self, pid: str, env_var: str) -> list[dict]:
         if not env_var or not self.env.get(env_var):
@@ -292,7 +293,7 @@ class KeyStore:
         secret = (secret or "").strip()
         if len(secret) < 8 or len(secret) > 512 or any(c.isspace() for c in secret):
             raise KeyError_("That doesn't look like an API key.")
-        meta = self._meta(pid)
+        meta = self.settings["keys"].setdefault(pid, [])
         if len(meta) >= MAX_KEYS_PER_PROVIDER:
             raise KeyError_("Too many keys for one provider.")
         fp = fingerprint(secret)

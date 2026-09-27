@@ -15,6 +15,7 @@ def _isolated_brain(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("JARVIS_BRAIN_CONFIG", str(tmp_path / "config" / "brain.json"))
     monkeypatch.setenv("JARVIS_KEY_BACKEND", "memory")
+    monkeypatch.setenv("JARVIS_DAILY_BRAIN", "1")
     monkeypatch.delenv("JARVIS_ALLOW_WEAK_TEACHING", raising=False)
     from jarvis.brain import adapters, executor
     executor.mark_online()

@@ -81,6 +81,20 @@ def _no_real_models(monkeypatch, tmp_path_factory):
     if "JARVIS_STATE_DIR" not in os.environ:
         monkeypatch.setenv("JARVIS_STATE_DIR", str(tmp_path_factory.mktemp("state")))
 
+    # The Daily Brain: off unless a test turns it on (tests/brain does, with a fake server), its
+    # settings and keys never the real ones, and every request through its adapters refused.
+    import httpx
+    from jarvis.brain import adapters, daily
+
+    def no_network(request):
+        raise RuntimeError(f"network model call attempted in a test: {request.url.host}")
+
+    monkeypatch.setenv("JARVIS_DAILY_BRAIN", "0")
+    monkeypatch.setenv("JARVIS_KEY_BACKEND", "memory")
+    monkeypatch.setenv("JARVIS_BRAIN_CONFIG", str(tmp_path_factory.mktemp("brain") / "brain.json"))
+    monkeypatch.setitem(adapters.TRANSPORT, "transport", httpx.MockTransport(no_network))
+    monkeypatch.setitem(daily._BRAIN, "b", None)
+
 
 @pytest.fixture(autouse=True)
 def _no_real_away_mode(monkeypatch, tmp_path_factory):

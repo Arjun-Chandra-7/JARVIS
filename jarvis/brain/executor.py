@@ -178,7 +178,12 @@ def execute(req: BrainRequest, decision: RouteDecision, messages: list, registry
 
 def _on_failure(err: ProviderError, registry: Registry, keystore, key, pid: str, mid: str, now_fn) -> None:
     if err.kind == adapters.NETWORK:
-        mark_offline(now_fn())
+        if registry.providers[pid].local:
+            # Ollama not running says nothing about the internet: pause it briefly instead.
+            legacy.record_failure(_legacy_provider(registry, pid, mid),
+                                  legacy.Failure(legacy.OUTAGE, "local server not reachable"))
+        else:
+            mark_offline(now_fn())
         return
     if key and keystore and err.kind in adapters.KEY_FAULTS:
         keystore.report(key["id"], err.kind, err.retry_after)

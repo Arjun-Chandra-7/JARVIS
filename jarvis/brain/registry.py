@@ -461,5 +461,7 @@ class Registry:
 
 
 def _listed(mid: str, listed: set) -> bool:
+    mid = mid.removesuffix(":latest")
+    listed = {x.removesuffix(":latest") for x in listed}
     return any(x == mid or x.endswith("/" + mid) or x == "models/" + mid or mid.endswith("/" + x)
                for x in listed)
