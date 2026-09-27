@@ -54,6 +54,19 @@ UNTRUSTED_KINDS = frozenset({"screen", "tool", "attachment", "memory"})
 MARGIN = 0.9
 
 _ENC = {"enc": None, "tried": False}
+# tiktoken fetches cl100k_base from the internet the first time and caches it under a file named
+# by this hash. Only an already-cached copy is used: a background service (or a test) must not
+# download on its own. JARVIS_TOKENIZER_DOWNLOAD=1 allows the one-time fetch; otherwise the
+# character estimate (len/4) stands in.
+_CL100K = "9b5ad71b2ce5302211f9c61530b329a4922fc6a4"
+
+
+def _tokenizer_cached() -> bool:
+    import os
+    from pathlib import Path
+    cache = os.environ.get("TIKTOKEN_CACHE_DIR") or str(Path("~/.cache/jarvis/tiktoken").expanduser())
+    os.environ["TIKTOKEN_CACHE_DIR"] = cache
+    return (Path(cache) / _CL100K).exists() or os.environ.get("JARVIS_TOKENIZER_DOWNLOAD") == "1"
 
 
 def count_tokens(text: str, model: str = "") -> int:
@@ -62,8 +75,9 @@ def count_tokens(text: str, model: str = "") -> int:
     if not _ENC["tried"]:
         _ENC["tried"] = True
         try:
-            import tiktoken
-            _ENC["enc"] = tiktoken.get_encoding("cl100k_base")
+            if _tokenizer_cached():
+                import tiktoken
+                _ENC["enc"] = tiktoken.get_encoding("cl100k_base")
         except Exception:  # noqa: BLE001
             _ENC["enc"] = None
     enc = _ENC["enc"]

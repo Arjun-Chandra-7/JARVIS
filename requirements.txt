@@ -72,3 +72,7 @@ onnxruntime>=1.16          # runs the YOLOX person detector for the human radar
 # Study Companion (jarvis/study): exact maths — surds, fractions, equation solving — behind a
 # whitelisted tokenizer. Only ever given expressions that passed that whitelist; never user code.
 sympy>=1.12
+
+# Daily Brain (jarvis/brain/contextengine.py): token counts. MIT. Uses only an already-cached
+# encoding (~/.cache/jarvis/tiktoken); never downloads at run time unless JARVIS_TOKENIZER_DOWNLOAD=1.
+tiktoken>=0.7
