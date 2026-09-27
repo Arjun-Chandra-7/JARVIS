@@ -44,6 +44,32 @@ worktree while `feat/jarvis-3d-studio` was in progress; nothing from that branch
 * **Not live until merged and restarted.** Integration order in `docs/DAILY_BRAIN.md`.
 
 ---
+## Eleventh pass (2026-09-27): Study Companion (branch `feat/jarvis-study-companion`)
+
+Design, contracts, limits and the integration plan: `docs/STUDY_COMPANION.md`. Code: `jarvis/study/`.
+Based on `73e01d8`; built in isolation alongside `feat/jarvis-3d-studio` and `feat/jarvis-daily-brain`.
+
+* **What exists:** a typed `StudyRequest` from rules alone (task, mode, marks in English/Hindi/Hinglish,
+  language plan incl. "exam in English, explain in Hinglish", source/screen/past references); a
+  curriculum registry with honest coverage labels (12 deep chapters, 29 outline, nothing claimed
+  complete); sources with full provenance and cited, floor-guarded retrieval; deterministic maths
+  (SymPy behind a whitelist) and unit-checked science; marks-based rubrics with mark bands and
+  OCR-uncertainty handling; adaptive one-at-a-time quiz; topic mastery + separate misconceptions
+  with view/correct/reset/delete/off; revision plans that never touch the calendar; persistent
+  sessions; a `TeachingVisualRequest` contract validated against the real overlay protocol; a
+  screen/video context contract; a verifier; safe metrics; Markdown/JSON exports.
+* **No provider stack:** every model call is a typed `BrainRequest` through `StudyBrainGateway`;
+  tests use `FakeStudyGateway`; production default is `UnavailableGateway` (honest offline answers).
+* **Verified here:** 164 focused tests, all synthetic, no network (`tests/test_study_{intent,sources,
+  engines,learning,contracts}.py`), covering the ten vertical slices A–J; plus the existing
+  `test_teach_protocol.py` (my overlay adapter uses its validator). The existing focus "study mode"
+  (`jarvis/modes/study.py`) is untouched and its phrases do not collide. Shared overlay/screen/provider files were not edited.
+* **Not done / not live:** not wired into voice, HUD, router, screen reader or overlay bus; no study
+  UI (shared shell files belong to parallel branches); no real model run; no live mic/screen test.
+  **Full suite not run**: the machine was under load (load avg ≈ 8 on 8 cores, live voice service and
+  other sessions). It is an integration gate.
+
+---
 
 ## Tenth pass (2026-09-25): live customization and bounded self-repair
 
