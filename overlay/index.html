@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="app.css" />
     <link rel="stylesheet" href="ironman.css" />
     <link rel="stylesheet" href="brain.css" />
+    <link rel="stylesheet" href="workspace.css" />
     <title>JARVIS</title>
   </head>
   <body data-form="pill" data-state="idle">
@@ -74,8 +75,12 @@
                   aria-controls="view-system" type="button">System</button>
           <button class="tab" role="tab" id="tab-brain" aria-selected="false"
                   aria-controls="view-brain" type="button">Brain</button>
+          <button class="tab" role="tab" id="tab-study" aria-selected="false"
+                  aria-controls="view-study" type="button">Study</button>
+          <button class="tab" role="tab" id="tab-studio" aria-selected="false"
+                  aria-controls="view-studio" type="button">3D</button>
           <div class="tabs-spacer"></div>
-          <span class="keyhint" aria-hidden="true">Ctrl+K commands &middot; Alt+1&ndash;5 tabs &middot; / to type &middot; Esc to close</span>
+          <span class="keyhint" aria-hidden="true">Ctrl+K commands &middot; Alt+1&ndash;7 tabs &middot; / to type &middot; Esc to close</span>
           <button class="icon-btn" id="collapseBtn" type="button"
                   aria-label="Collapse to pill" title="Collapse (Esc)">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /></svg>
@@ -230,6 +235,44 @@
           </div>
           <div id="brainRoot" style="display:flex;flex-direction:column;gap:var(--space-2);min-height:0;flex:1 1 auto"></div>
         </section>
+
+        <!-- ---------- study companion (workspace.js) ---------- -->
+        <section class="view" id="view-study" role="tabpanel" aria-labelledby="tab-study" hidden>
+          <div class="view-head">
+            <h2>Study</h2>
+            <p class="hint">Session, quiz and practice. Answers are labelled with where they came from.</p>
+          </div>
+          <div class="w-body">
+            <section class="b-card" id="studyApprovals" aria-label="Waiting for your approval" hidden></section>
+            <p class="brain-status" id="studyStatus" role="status"></p>
+            <section class="b-card" id="studySession" aria-label="Study session"></section>
+            <section class="b-card" id="studyQuiz" aria-label="Quiz question"></section>
+            <section class="b-card" id="studyProgress" aria-label="Practice so far"></section>
+            <form class="b-card" id="studyForm" aria-label="Ask the Study Companion">
+              <label for="studyInput" class="w-h">Ask a study question</label>
+              <div class="b-row">
+                <input id="studyInput" class="input grow" type="text" autocomplete="off" maxlength="2000"
+                       placeholder="e.g. 3 mark answer: why do ionic compounds conduct when molten?" />
+                <button class="ghost-btn b-primary" type="submit">Ask</button>
+              </div>
+              <p class="w-reply" id="studyReply" aria-live="polite"></p>
+            </form>
+          </div>
+        </section>
+
+        <!-- ---------- 3D studio (workspace.js) ---------- -->
+        <section class="view" id="view-studio" role="tabpanel" aria-labelledby="tab-studio" hidden>
+          <div class="view-head">
+            <h2>3D Studio</h2>
+            <p class="hint">Reconstruction jobs run in the background; voice keeps priority.</p>
+          </div>
+          <div class="w-body">
+            <section class="b-card" id="studioApprovals" aria-label="Waiting for your approval" hidden></section>
+            <p class="brain-status" id="studioStatus" role="status"></p>
+            <section class="b-card" id="studioJob" aria-label="Current 3D job"></section>
+            <p class="b-faint" id="studioLive" aria-live="polite"></p>
+          </div>
+        </section>
       </main>
 
       <!-- ================= the command palette =================
@@ -272,6 +315,7 @@
     <div id="ironmanHud" hidden></div>
     <script src="settings.js"></script>
     <script src="brain.js"></script>
+    <script src="workspace.js"></script>
     <script src="app.js"></script>
     <script src="ironman.js"></script>
   </body>

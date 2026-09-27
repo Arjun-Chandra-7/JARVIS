@@ -344,3 +344,16 @@ def test_no_private_study_content_in_route_logs(db, fake, study):
     rows = json.dumps(telemetry.events())
     assert "Rahul" not in rows and "accommodation" not in rows and "800" not in rows
     assert "study.explanation" in rows or "study_companion" in rows
+
+
+def test_notification_and_settings_commands_still_work_during_a_quiz(db, fake, study, monkeypatch):
+    """Study never swallows the owner's controls: they are handled before any study turn."""
+    from jarvis import commands, preferences
+    from jarvis.config import CONFIG
+    set_to = []
+    monkeypatch.setattr(preferences, "set_notifications", lambda on: set_to.append(on))
+    ask(db, "quiz me on electricity")
+    assert study.comp.quiz.current is not None
+    out = asyncio.run(commands.handle("stop reading notifications", CONFIG, "voice"))
+    assert set_to == [False] and "Question" not in (out or "")
+    assert study.comp.quiz.current is not None            # the quiz is still waiting, untouched

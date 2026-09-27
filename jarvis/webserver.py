@@ -151,6 +151,8 @@ app.middleware("http")(authorize)
 app.include_router(mobile_router)
 from .brain.api import router as brain_router  # noqa: E402 — the overlay's Brain tab
 app.include_router(brain_router)
+from .workspace_api import router as workspace_router  # noqa: E402 — the overlay's Study and 3D tabs
+app.include_router(workspace_router)
 
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
@@ -303,7 +305,8 @@ async def approvals_pending(session_id: str = "local"):
     """What is waiting for a yes, for the overlay to show. Summaries only; never the details."""
     from .approvals import MANAGER
     return {"pending": [{"id": a.id, "kind": a.kind, "summary": a.summary, "expires": a.expires,
-                         "fingerprint": a.fingerprint()} for a in MANAGER.pending(session_id)]}
+                         "fingerprint": a.fingerprint(), "say": a.phrase if a.required else ""}
+                        for a in MANAGER.pending(session_id)]}
 
 
 class Decision(BaseModel):
@@ -315,6 +318,10 @@ class Decision(BaseModel):
 async def approvals_decide(action_id: str, d: Decision):
     """An overlay button. The fingerprint it was shown must still match, or nothing runs."""
     from .approvals import MANAGER
+    held = MANAGER.get(action_id)
+    if d.decision == "confirm" and held is not None and held.required:
+        # A specific approval ("yes, send it to mesh.example.com") is never a button press.
+        return {"status": "needs_phrase", "message": f"Say “{held.phrase}” to approve this one."}
     async with _lock:
         if d.decision == "cancel":
             out = MANAGER.cancel(action_id)

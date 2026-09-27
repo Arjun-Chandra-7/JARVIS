@@ -1,0 +1,25 @@
+/* The Study and 3D tabs. They reuse the Brain tab's cards, rows, tags and dots (brain.css) so the
+ * three read as one system; every value comes from tokens.css, so both appearances follow. */
+
+#view-study, #view-studio { overflow: hidden; }
+.w-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: grid; gap: var(--space-3);
+          align-content: start; padding-right: 2px; }
+.w-h { margin: 0; font-size: var(--text-sm); font-weight: 600; color: var(--text-secondary); }
+.w-approvals, .w-progress { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.w-progress li { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; min-width: 0; }
+.w-progress .grow { flex: 1 1 8em; min-width: 0; text-transform: capitalize; }
+.w-progress meter { width: 7em; height: 0.6em; }
+.w-options { margin: 0; padding-left: 1.4em; color: var(--text-secondary); font-size: var(--text-sm); }
+.w-reply { margin: 0; white-space: pre-wrap; font-size: var(--text-sm); color: var(--text-secondary);
+           max-height: 16em; overflow-y: auto; }
+#studyForm .input { min-width: 0; }
+
+/* Seven tabs do not fit a 360 px panel: the strip scrolls sideways (wheel, touch or the arrow keys,
+ * which already move between tabs) and the collapse button stays pinned at the end. */
+.tabs { overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+.tabs::-webkit-scrollbar { display: none; }
+.tabs .tab { flex: 0 0 auto; white-space: nowrap; }
+.tabs #collapseBtn { position: sticky; right: 0; background: var(--surface-panel, var(--surface-base)); }
+
+body[data-form="conversation"] #tab-study,
+body[data-form="conversation"] #tab-studio { display: none; }
