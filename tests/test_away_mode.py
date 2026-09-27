@@ -651,3 +651,27 @@ def test_phone_notifications_reply_only_through_a_reply_action_and_are_unverifie
     d = asyncio.run(rig.engine.handle(repliable))
     assert d.send_status == "submitted_unverified" and phone.outbox[-1]["thread"] == "0|com.instagram|42"
     assert "delivery isn't confirmed" in summary.written(rig.session())
+
+
+def test_a_connector_outage_is_closed_when_it_comes_back(tmp_path):
+    class Flaky:
+        up = False
+
+        def available(self):
+            return self.up
+
+        def inbox(self):
+            return []
+
+        def owner_outgoing(self, since):
+            return []
+    rig = Rig(tmp_path)
+    wa = Flaky()
+    t0 = time.time()
+    asyncio.run(daemon.tick(rig.config, rig.engine, rig.store, wa, set(), [t0], now=t0))
+    assert "whatsapp" in rig.session().live_summary["offline"]
+    wa.up = True
+    asyncio.run(daemon.tick(rig.config, rig.engine, rig.store, wa, set(), [t0], now=t0 + 5))
+    ls = rig.session().live_summary
+    assert ls["offline"] == {} and ls["gaps"][0][0] == "whatsapp"
+    assert "Gaps:" not in summary.written(rig.session())        # a five-second blip is not a gap

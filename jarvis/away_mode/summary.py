@@ -104,9 +104,12 @@ def written(session: AwaySession, now: Optional[float] = None) -> str:
     if handled_lines:
         lines += ["", "Handled:"] + handled_lines
     offline = (session.live_summary or {}).get("offline") or {}
-    if offline:
-        lines += ["", "Gaps:"] + [f"- {_platform(p)} was unreachable from {clock(t, session.timezone)}; "
-                                  "messages then may be missing here — check the app." for p, t in offline.items()]
+    gaps = [(p, a, b) for p, a, b in (session.live_summary or {}).get("gaps", []) if b - a >= 60]
+    if offline or gaps:
+        lines += ["", "Gaps:"] + [f"- {_platform(p)} was unreachable {clock(a, session.timezone)}–{clock(b, session.timezone)}; "
+                                  "messages then may be missing here — check the app." for p, a, b in gaps] \
+            + [f"- {_platform(p)} was unreachable from {clock(t, session.timezone)}; "
+               "messages then may be missing here — check the app." for p, t in offline.items()]
     if sec["failed"]:
         lines += ["", "Not delivered:"] + [f"- Reply to {f['who']} failed ({f['error']})." for f in sec["failed"][-5:]]
     sup = {k: v for k, v in sec["suppressed"].items() if v}

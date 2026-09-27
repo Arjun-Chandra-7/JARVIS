@@ -62,6 +62,7 @@ function extractText(msg) {
 let sock = null;
 let connected = false;
 const inbox = []; // recent incoming messages
+const events = { upserts: {}, last: 0 }; // message events seen since start, by type
 const contacts = new Map(); // jid -> best known name (for resolving "message <name>")
 const history = []; // private local mirror, exposed only over localhost /chats
 const HISTORY_FILE = path.join(AUTH_DIR, "history.json");
@@ -237,15 +238,23 @@ async function start() {
 
   sock.ev.on("messages.upsert", ({ messages, type }) => {
     dbg(`upsert type=${type} count=${messages?.length}`);
-    if (type !== "notify") return;
-    for (const m of messages) {
+    // Counted and logged always — type and count only, never who or what — because "connected but
+    // nothing arrives" was invisible: every non-"notify" batch used to be dropped before any trace.
+    events.upserts[type] = (events.upserts[type] || 0) + (messages?.length || 0);
+    events.last = Date.now();
+    console.log(`messages.upsert type=${type} count=${messages?.length || 0}`);
+    for (const m of messages || []) {
       const text = extractText(m.message);
       dbg(`  from=${m.key.remoteJid} fromMe=${m.key.fromMe} keys=${Object.keys(m.message || {})} text=${JSON.stringify(text)}`);
       if (!m.key.fromMe) recordContact(m.key.remoteJid, m.pushName);
       const item = recordHistory(m);
+      // "append" carries messages that arrived while this device was away or reconnecting. A
+      // recent incoming one is as new to the owner as a "notify"; older ones are history only.
+      if (type !== "notify" && !(type === "append" && !m.key.fromMe && Date.now() - item.ts < 10 * 60 * 1000)) continue;
       const meJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
       if (m.key.fromMe && m.key.remoteJid !== meJid) continue;
       if (!text) continue;
+      if (inbox.some((x) => x.id === item.id)) continue;
       inbox.push(item);
       if (inbox.length > 100) inbox.shift();
       dbg(`  -> stored (inbox size ${inbox.length})`);
@@ -295,7 +304,7 @@ http
     if (req.url === "/status") {
       // `me`: the linked account's own chat, where the owner types commands to Jarvis.
       const me = sock?.user?.id ? sock.user.id.split(":")[0] + "@s.whatsapp.net" : "";
-      return res.end(JSON.stringify({ connected, me, commit: BUILD_COMMIT }));
+      return res.end(JSON.stringify({ connected, me, commit: BUILD_COMMIT, upserts: events.upserts, lastEvent: events.last }));
     }
     if (req.url === "/inbox") return res.end(JSON.stringify(inbox.slice(-30)));
     if (req.url.startsWith("/chats")) {

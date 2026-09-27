@@ -125,6 +125,7 @@ async def tick(config, eng: AwayEngine, store: Store, wa: Optional[WhatsAppConne
         if not await asyncio.to_thread(wa.available):
             _note_offline(store, "whatsapp", now)
         else:
+            _note_online(store, "whatsapp", now)
             for msg in await asyncio.to_thread(wa.inbox):
                 if msg.event_id and msg.event_id in seen:
                     continue
@@ -148,6 +149,19 @@ async def _owner_takeovers(eng: AwayEngine, store: Store, wa: WhatsAppConnector,
         seen.add(key)
         await eng.handle(InboundMessage(platform="whatsapp", event_id=f"owner-{mid}", thread_id=jid, sender_id="owner",
                                         sender_name="owner", text="", from_me=True, ts=ts))
+
+
+def _note_online(store: Store, platform: str, now: float) -> None:
+    """Close an open outage: it becomes a gap with an end, in the briefing."""
+    raw = store.read().get("session")
+    if not raw or platform not in (raw["live_summary"].get("offline") or {}):
+        return
+    with store.edit() as state:
+        summary = state["session"]["live_summary"]
+        start = summary.get("offline", {}).pop(platform, None)
+        if start is not None:
+            summary.setdefault("gaps", []).append([platform, start, now])
+            logger.info("away: %s connector back", platform)
 
 
 def _note_offline(store: Store, platform: str, now: float) -> None:
