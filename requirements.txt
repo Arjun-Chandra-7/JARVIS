@@ -68,3 +68,7 @@ websockets>=12
 # Human-presence radar: webcam face detection (YuNet) for bearing + metric range
 opencv-python-headless>=4.9
 onnxruntime>=1.16          # runs the YOLOX person detector for the human radar
+
+# Study Companion (jarvis/study): exact maths — surds, fractions, equation solving — behind a
+# whitelisted tokenizer. Only ever given expressions that passed that whitelist; never user code.
+sympy>=1.12
