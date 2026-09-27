@@ -33,14 +33,26 @@ class Cap:
     LOW_LATENCY = "low_latency"
     HIGH_ACCURACY = "high_accuracy"
     EMBEDDING = "embedding"
+    # Declared by the Study Companion and 3D Studio (capability.py). The ones a local engine can
+    # serve are in capability.ENGINES; the rest need a model that has them.
+    SOURCE_GROUNDING = "source_grounding"
+    SEGMENTATION = "image_segmentation"
+    SCENE_PLANNING = "structured_scene_planning"
+    IMAGE_TO_3D = "image_to_3d"
+    REASONING_3D = "3d_reasoning"
+    BLENDER = "blender_editing"
+    COMPARE = "multimodal_comparison"
 
     ALL = frozenset({CHAT, REASONING, TOOLS, VISION, OCR, CODE, STRUCTURED, STREAMING, LONG_CONTEXT,
                      MULTILINGUAL, HINDI, HINGLISH, RESEARCH, LOCAL, LOW_LATENCY, HIGH_ACCURACY,
-                     EMBEDDING})
+                     EMBEDDING, SOURCE_GROUNDING, SEGMENTATION, SCENE_PLANNING, IMAGE_TO_3D, REASONING_3D,
+                     BLENDER, COMPARE})
 
     # Capabilities a model must have *verified* (by a probe), not merely declared, before a route
     # that needs them will use it. A text model that writes JSON-looking prose is not tool-capable.
-    MUST_VERIFY = frozenset({TOOLS, VISION})
+    # No probe exists yet for image-to-3D, segmentation or image comparison, so no model has them:
+    # those requests are served by local engines or refused honestly.
+    MUST_VERIFY = frozenset({TOOLS, VISION, IMAGE_TO_3D, SEGMENTATION, COMPARE})
 
 
 class Source:

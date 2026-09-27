@@ -78,6 +78,8 @@ _SESSION = [
     ("personal_off", re.compile(r"(?i)\b(?:turn\s+off|disable|stop)\s+personali[sz]ation\b")),
     ("personal_on", re.compile(r"(?i)\b(?:turn\s+on|enable)\s+personali[sz]ation\b")),
 ]
+_JUST_SAID = re.compile(r"(?i)\b(?:just|last)\b.{0,20}\b(?:say|said|told|explain(?:ed)?|bol[ae])\b|"
+                        r"\bwhat\s+(?:did|was)\s+(?:the\s+)?(?:teacher|sir|ma'?am|he|she)\s+(?:say|saying)\b")
 _DEICTIC = re.compile(r"(?i)\b(?:iska|iski|iske|isko|this|that|it)\b|इसका|इसकी|इसके|इसे")
 _NEXT_Q = re.compile(r"(?i)^\s*(?:next(?:\s+question)?|another\s+one|agla(?:\s+sawaal)?|continue)\s*[.!]?\s*$")
 _STOP_QUIZ = re.compile(r"(?i)\b(?:stop|end|quit)\s+(?:the\s+)?quiz\b")
@@ -110,6 +112,7 @@ class StudyCompanion:
         self.recall = recall                 # personal memory lookup (integration); never used for screen questions
         self.recall_calls = 0
         self.quiz: Optional[QuizEngine] = None
+        self.last_plan = None                # the latest revision.RevisionPlan, never acted on here
         self._hints: dict[str, tuple[modes.HintLadder, int]] = {}
         self._last_hint_key = ""
 
@@ -189,6 +192,8 @@ class StudyCompanion:
                        "clearer_capture": "The text on screen is too unclear to read reliably — can you zoom in or select it?",
                        "source": "I don't have that material."}.get(decision.need, "I need the material first.")
                 return self._finish(self._simple(req, msg, needs=[decision.need]), t0)
+            if decision.use is not None and decision.use.kind in ("video", "teacher") and _JUST_SAID.search(text or ""):
+                return self._finish(self._just_said(req, decision.use), t0, req)
             if decision.use is not None:
                 doc_id = ctx.ingest_snapshot(self.store, decision.use)
                 self._audit_doc(doc_id)
@@ -231,6 +236,26 @@ class StudyCompanion:
         if req.task is TaskType.COMPARE:
             return self._via_brain(req, BrainTask.EXPLANATION, label="Class 10-level comparison (AI-written)")
         return self._explain(req)
+
+    def _just_said(self, req: StudyRequest, snap: ctx.ContextSnapshot) -> StudyResponse:
+        """"What did the teacher just say?" — the transcript's last half-minute, cited by time.
+        Nothing is paraphrased or invented; an explanation is offered, not assumed."""
+        lines = snap.window(before_s=30.0, after_s=3.0) or snap.transcript[-4:]
+        resp = self._resp(req, label="From the video transcript")
+        if not lines:
+            resp.sections.append(Section("", "There's no transcript for that part of the video, so I can't tell "
+                                             "what was said.", EN))
+            resp.needs.append("transcript")
+            return resp
+        body = "\n".join(f"[{int(ln.start_s) // 60}:{int(ln.start_s) % 60:02d}] {excerpt(ln.text)}" for ln in lines)
+        resp.sections.append(Section("", body, EN))
+        start = lines[0].start_s
+        resp.citations.append(Citation(chunk_id="", doc_id=snap.doc_id or "video", title=snap.title or "the video",
+                                       locator=f"at {int(start) // 60}:{int(start) % 60:02d}",
+                                       excerpt=excerpt(lines[-1].text)))
+        resp.grounded = True
+        resp.follow_up = "Want me to explain that part?"
+        return resp
 
     # ------------------------------------------------------------------ explain / exam
     def _explain(self, req: StudyRequest) -> StudyResponse:
@@ -688,6 +713,7 @@ class StudyCompanion:
                           weak_only=bool(re.search(r"(?i)\bweak\b", req.text)),
                           formula_run=bool(re.search(r"(?i)formula\s+run|last[\s-]second", req.text)),
                           registry=self.registry)
+        self.last_plan = p                   # its reminder_request is offered through the host's approvals
         resp = self._resp(req, label="Revision plan")
         resp.sections.append(Section(f"{p.total()} minutes", p.text(), req.response_language, "steps"))
         if rng:

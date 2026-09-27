@@ -150,7 +150,9 @@ def excerpt(text: str, around: str = "", limit: int = MAX_EXCERPT) -> str:
 def _split(text: str, section: str) -> list[tuple[int, int, str, str]]:
     """Paragraph-preserving chunks with their char offsets and the section heading in force."""
     out: list[tuple[int, int, str, str]] = []
-    paras = [(m.start(), m.end(), m.group(0)) for m in re.finditer(r"\S(?:.*?\S)?(?=\n\s*\n|\Z)", text, re.S)]
+    # Trailing whitespace is allowed before a paragraph break or the end: a page that ended in a
+    # space or a single newline (most PDF text layers) used to match nothing and was dropped whole.
+    paras = [(m.start(), m.end(), m.group(0)) for m in re.finditer(r"\S(?:.*?\S)?(?=[ \t]*\n\s*\n|\s*\Z)", text, re.S)]
     buf_start, buf_end, buf, cur = None, 0, [], section
     for start, end, para in paras:
         h = _HEADING.match(para.split("\n", 1)[0])

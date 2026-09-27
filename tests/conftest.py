@@ -3,11 +3,27 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _no_leftover_approvals():
-    """The approval manager is process-wide; a test must never inherit another's pending action."""
+    """The approval manager is process-wide; a test must never inherit another's pending action.
+    Nor the conversation's current session: a test that spoke as "voice" left every later tool
+    proposing under "voice" while the next test answered as "local"."""
+    from jarvis import context
     from jarvis.approvals import MANAGER
     MANAGER.clear()
+    context.set_current("local")
     yield
     MANAGER.clear()
+    context.set_current("local")
+
+
+@pytest.fixture(autouse=True)
+def _no_real_study_state(monkeypatch, tmp_path_factory):
+    """The Study Companion never reads or writes the real study folder, and no test inherits
+    another's companion, quiz, renderer or screen reader."""
+    monkeypatch.setenv("JARVIS_STUDY_DIR", str(tmp_path_factory.mktemp("study")))
+    from jarvis import study_live
+    study_live.use()
+    yield
+    study_live.use()
 
 
 @pytest.fixture(autouse=True)

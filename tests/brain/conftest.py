@@ -16,6 +16,9 @@ def _isolated_brain(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_BRAIN_CONFIG", str(tmp_path / "config" / "brain.json"))
     monkeypatch.setenv("JARVIS_KEY_BACKEND", "memory")
     monkeypatch.setenv("JARVIS_DAILY_BRAIN", "1")
+    # These tests cover the Brain's own study route — what answers study turns when the Study
+    # Companion is switched off. The companion path is tests/integration/test_brain_study.py.
+    monkeypatch.setenv("JARVIS_STUDY_COMPANION", "0")
     monkeypatch.delenv("JARVIS_ALLOW_WEAK_TEACHING", raising=False)
     from jarvis.brain import adapters, executor
     executor.mark_online()

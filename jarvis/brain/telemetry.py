@@ -20,7 +20,7 @@ from .privacy import redact
 FIELDS = ("ts", "request_id", "correlation_id", "source", "intent", "route", "tier", "capabilities",
           "language", "privacy", "provider", "model", "fallback", "fallback_reasons", "capability_lost",
           "quality_reduced", "escalated", "tokens_in", "tokens_out", "context_before", "context_after",
-          "latency_ms", "cost_usd", "status", "commit", "refused_kind", "offline")
+          "latency_ms", "cost_usd", "status", "commit", "refused_kind", "offline", "purpose", "engine")
 MAX_BYTES = 1_000_000
 KEEP = 2
 RECENT: deque = deque(maxlen=300)

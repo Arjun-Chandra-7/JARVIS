@@ -48,6 +48,7 @@ KIND_WORDS: dict[str, tuple[str, ...]] = {
     "away": ("away", "away mode", "history"),
     "preference": ("setting", "preference"),
     "repair": ("repair", "fix", "patch"),
+    "reminder": ("reminder", "remind", "revision"),
 }
 
 _YES = re.compile(

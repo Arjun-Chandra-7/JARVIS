@@ -66,10 +66,24 @@ def deterministic_handlers():
         from .youtube_command import handle as f
         return await f(text, config)
 
+    async def study(text, config):
+        # The Study Companion's own state: its session commands ("start a science study session"
+        # was opened as an app by open_command), an answer to its waiting quiz question, "clear
+        # the diagram", and a screen/teacher question while a study session is running. No model
+        # decides these. Clear study *questions* are left to the Daily Brain (study_live.defers).
+        from . import context, study_live
+        if not study_live.routing_active() or not study_live.stateful_claim(text):
+            return None
+        from .brain import daily
+        return await asyncio.to_thread(study_live.ask, text, context.current(), brain=daily.brain())
+
     async def video(text, config):
         # "Explain what he just said", "pause and explain this part", "summarise the last two
         # minutes" — answered from the video's own transcript at the current time. Before
         # read_screen, which would OCR the frame for a question the captions already answer.
+        from .study_live import defers
+        if defers(text):
+            return None
         from .video_command import handle as f
         return await f(text, config)
 
@@ -78,8 +92,11 @@ def deterministic_handlers():
         # step", "circle this": drawn on the teaching overlay. Before video, which would answer
         # "pause and explain this" in words alone, and before teach, which explains without a
         # picture. Typed requests draw at reading pace in the background and reply at once.
+        # A syllabus diagram ("explain refraction with a diagram") is the Study Companion's: its
+        # ray, circuit and triangle builders are checked against the physics before drawing.
         from .teach.assistant import handle as f, wants
-        if not wants(text):
+        from .study_live import defers
+        if not wants(text) or defers(text):
             return None
         reply = await f(text, background=True)
         return reply.text if reply else None
@@ -98,6 +115,10 @@ def deterministic_handlers():
     async def teach(text, config):
         # "What is a sequential input in an RNN?", "photosynthesis kya hota hai" — a topic,
         # taught by the strong model. After video/screen, which own anything about the screen.
+        # Class 10 study questions go to the Study Companion through the Daily Brain instead.
+        from .study_live import defers
+        if defers(text):
+            return None
         from .explain_command import handle as f
         return await f(text, config)
 
@@ -189,7 +210,9 @@ def deterministic_handlers():
         return await f(text, config)
 
     return [
-        # The teaching overlay first: its requests are narrow (a lesson "with a diagram" or
+        # The Study Companion's session/quiz/diagram state first: none of it is anyone else's.
+        ("study", study),
+        # The teaching overlay next: its requests are narrow (a lesson "with a diagram" or
         # "visually", or a control while a lesson is on screen), and "pause and explain this step
         # visually" would otherwise be split by chain into a pause and a question.
         ("overlay_lesson", overlay_lesson),

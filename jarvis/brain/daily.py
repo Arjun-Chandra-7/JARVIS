@@ -76,6 +76,9 @@ class DailyBrain:
         self.summaries: dict[str, ce.Summary] = {}
         self.last_context: dict = {}
         self._lock = threading.Lock()
+        # The Study Companion answers study turns; JARVIS_STUDY_COMPANION=0 leaves them to the
+        # Brain's own study route (brain/study.py).
+        self.study_enabled = os.environ.get("JARVIS_STUDY_COMPANION", "1").lower() not in {"0", "false", "no", "off"}
 
     # -- registry, reloaded when the Brain tab saves settings ---------------------------------
     @property
@@ -118,6 +121,22 @@ class DailyBrain:
             return None
         req = self.classify(text, session, source, images)
         attached = _attached_context(text)
+
+        # Study turns go to the Study Companion, whose model calls come back through this Brain's
+        # capability router (brain/study_gateway.py). Actions and memory never get here.
+        if not images and self.study_enabled:
+            try:
+                from .. import study_live
+                if study_live.claims(req.text, req, session):
+                    answer = study_live.ask(req.text, session, brain=self)
+                    if answer:
+                        telemetry.record(request_id=req.request_id, source=req.source, intent=Intent.STUDY,
+                                         route="study_companion", language=req.language, privacy=req.privacy,
+                                         status="ok")
+                        return DailyReply(answer, "study_companion", None, "", True)
+            except Exception as exc:  # noqa: BLE001 — the Brain's own study route still answers
+                telemetry.record(request_id=req.request_id, route="study_companion",
+                                 status=f"error:{type(exc).__name__}")
 
         quiz = self.quiz.get(session)
         if quiz and req.intent in {Intent.CONVERSATION, Intent.STUDY} and not (req.study and req.study.get("mode") == "quiz"):

@@ -262,3 +262,19 @@ def test_suspicious_chunks_are_flagged_but_still_study_content():
     doc = s.ingest_text(INJECTION_TEXT, title="x", source_type=SourceType.NOTES)
     flagged = [ch for ch in s.doc_chunks([doc.doc_id]) if ch.suspicious]
     assert flagged and all("Greenleaf" in ch.text or "Ignore" in ch.text for ch in flagged)
+
+
+def test_a_page_ending_in_whitespace_is_not_dropped():
+    """A PDF text layer usually ends a page with a space or a newline; the page used to vanish."""
+    from jarvis.study.sources import Page, SourceStore
+    from jarvis.study.types import ExtractionMethod, SourceType
+    store = SourceStore()
+    for tail in (" ", "\n", "  \n", "\n\n"):
+        doc = store.ingest([Page(text="Resistance depends on the length of the conductor." + tail, number=4)],
+                           title="p", source_type=SourceType.TEXTBOOK_PDF, extraction=ExtractionMethod.TEXT_LAYER)
+        assert len(doc.chunk_ids) == 1, repr(tail)
+        assert store.chunks[doc.chunk_ids[0]].text.endswith("conductor.")
+    long_page = "Current is the rate of flow of charge. " * 120
+    doc = store.ingest([Page(text=long_page, number=5)], title="p", source_type=SourceType.TEXTBOOK_PDF,
+                       extraction=ExtractionMethod.TEXT_LAYER)
+    assert doc.chunk_ids
