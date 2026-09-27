@@ -33,7 +33,11 @@ worktree while `feat/jarvis-3d-studio` was in progress; nothing from that branch
 * **Not verified:** any real cloud call (none made — no paid/free API calls in this pass), the
   tool/vision probes on Groq/Gemini (run Brain → Providers → Validate after restart; until then
   actions keep the configured model, labelled unverified), a real keyring write/delete, the tab
-  inside the Electron window, the running services. Full suite: see the push report.
+  inside the Electron window, the running services.
+* **Full suite on this branch: 2951 passed, 1 failed** — `test_desktop_apps::test_unknown_app_returns_none`
+  asserts Blender is not installed; the 3D session installed `~/.local/bin/blender` on this machine
+  the same day. Environmental, unrelated to this branch; the 3D branch should replace "blender" in
+  that test with an app that cannot be installed.
 * **Still direct, not yet routed:** `away_mode/engine.py`, `agent/omnicore.py`,
   `integrations/meet_bot.py`, `webserver._contacts_ingest` (contact data to the configured cloud
   brain — should go through privacy routing), `agent/ai_researcher.py`, `vision/analyze.py`.
