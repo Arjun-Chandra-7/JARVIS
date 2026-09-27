@@ -35,7 +35,8 @@ def route_table(registry) -> dict:
                           "fallbacks": [f"{x.provider_id}/{x.model_id}" for x in d.candidates[1:4]]}
         else:
             out[route] = {"ok": False, "why": d.refused if d.refused != "no_verified_tool_model"
-                          else "No model has passed the tool-calling check yet."}
+                          else ("No model has passed the tool-calling check yet, so actions use the configured "
+                                "model unverified. Providers → Validate to check one.")}
     return out
 
 

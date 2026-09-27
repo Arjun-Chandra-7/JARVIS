@@ -565,7 +565,7 @@ els.expandBtn.addEventListener("click", () => setForm("workspace"));
 els.collapseBtn.addEventListener("click", () => setForm("pill"));
 
 // ---------------------------------------------------------------- tabs
-const TABS = ["chat", "tasks", "memory", "system"];
+const TABS = ["chat", "tasks", "memory", "system", "brain"];
 function selectTab(name) {
   for (const t of TABS) {
     const tab = $(`tab-${t}`);
@@ -579,6 +579,7 @@ function selectTab(name) {
   }
   if (name === "tasks") refreshTasks();
   if (name === "system") refreshHealth();
+  if (name === "brain") window.JarvisBrain?.refresh();
 }
 els.tabs.addEventListener("click", (e) => {
   const tab = e.target.closest(".tab");
@@ -1138,7 +1139,7 @@ document.addEventListener("keydown", (e) => {
   // Typing is the commonest thing to want and it needed a click on the right box first.
   // Alt, not a bare number: expanding the panel puts the cursor in the input, so plain 1-4 were
   // unreachable exactly when someone would want them, and typing a digit would have moved the tab.
-  if (/^[1-4]$/.test(e.key) && e.altKey && state.form === "workspace") {
+  if (/^[1-5]$/.test(e.key) && e.altKey && state.form === "workspace") {
     e.preventDefault();
     selectTab(TABS[Number(e.key) - 1]);
     return;
@@ -1290,6 +1291,8 @@ function commandList() {
       run: () => { setForm("workspace"); selectTab("memory"); } },
     { group: "Go to", label: "System", note: "Alt+4",
       run: () => { setForm("workspace"); selectTab("system"); } },
+    { group: "Go to", label: "Brain — models, keys, routing", note: "Alt+5",
+      run: () => { setForm("workspace"); selectTab("brain"); } },
     { group: "Go to", label: "Collapse to the pill", note: "Esc", run: () => setForm("pill") },
     { group: "Go to", label: "Hide the overlay", note: "", run: () => window.jarvis.hide() },
   ];
