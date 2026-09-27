@@ -486,6 +486,11 @@ def speak_segments(
 # measured against (speech onset → this).
 PLAYBACK = {"stopped_at": 0.0}
 BLOCK_S = 0.04     # written 40 ms at a time: a stop is noticed within one block
+# ``latency="low"`` leaves only a very small PipeWire/PortAudio safety buffer.  Kokoro normally
+# synthesises faster than realtime, but a short CPU spike (screen capture, Whisper, Electron)
+# can still starve that buffer and the recovery is heard as a crackle or a burst.  100 ms is
+# enough scheduling headroom for this machine while ``abort()`` still makes barge-in immediate.
+OUTPUT_LATENCY_S = 0.10
 
 
 def _play(
@@ -565,7 +570,7 @@ def _play(
                 stream = None
             if stream is None:
                 stream = sd.RawOutputStream(samplerate=rate, channels=1, dtype="int16",
-                                            device=device, latency="low")
+                                            device=device, latency=OUTPUT_LATENCY_S)
                 stream.start()
                 stream_rate = rate
             if not announced:
