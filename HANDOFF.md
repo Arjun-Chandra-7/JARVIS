@@ -5,6 +5,28 @@ piece was actually taken, and what is next.
 
 ---
 
+## Eleventh pass (2026-09-27): Study Companion (branch `feat/jarvis-study-companion`)
+
+Design, contracts, limits and the integration plan: `docs/STUDY_COMPANION.md`. Code: `jarvis/study/`.
+Based on `73e01d8`; built in isolation alongside `feat/jarvis-3d-studio` and `feat/jarvis-daily-brain`.
+
+* **What exists:** a typed `StudyRequest` from rules alone (task, mode, marks in English/Hindi/Hinglish,
+  language plan incl. "exam in English, explain in Hinglish", source/screen/past references); a
+  curriculum registry with honest coverage labels (12 deep chapters, 29 outline, nothing claimed
+  complete); sources with full provenance and cited, floor-guarded retrieval; deterministic maths
+  (SymPy behind a whitelist) and unit-checked science; marks-based rubrics with mark bands and
+  OCR-uncertainty handling; adaptive one-at-a-time quiz; topic mastery + separate misconceptions
+  with view/correct/reset/delete/off; revision plans that never touch the calendar; persistent
+  sessions; a `TeachingVisualRequest` contract validated against the real overlay protocol; a
+  screen/video context contract; a verifier; safe metrics; Markdown/JSON exports.
+* **No provider stack:** every model call is a typed `BrainRequest` through `StudyBrainGateway`;
+  tests use `FakeStudyGateway`; production default is `UnavailableGateway` (honest offline answers).
+* **Verified here:** 196 focused tests, all synthetic, no network (`tests/test_study_*.py`), covering
+  the ten vertical slices A–J. Shared overlay/screen/provider files were not edited.
+* **Not done / not live:** not wired into voice, HUD, router, screen reader or overlay bus; no study
+  UI (shared shell files belong to parallel branches); no real model run; no live mic/screen test.
+  Full-suite status: see the commit/PR notes for this pass.
+
 ## Tenth pass (2026-09-25): live customization and bounded self-repair
 
 Design, threat model, tiers, recovery: `docs/SELF_REPAIR.md`. Code: `jarvis/settings/`,
