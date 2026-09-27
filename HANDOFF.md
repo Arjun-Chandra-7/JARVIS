@@ -21,11 +21,14 @@ Based on `73e01d8`; built in isolation alongside `feat/jarvis-3d-studio` and `fe
   screen/video context contract; a verifier; safe metrics; Markdown/JSON exports.
 * **No provider stack:** every model call is a typed `BrainRequest` through `StudyBrainGateway`;
   tests use `FakeStudyGateway`; production default is `UnavailableGateway` (honest offline answers).
-* **Verified here:** 196 focused tests, all synthetic, no network (`tests/test_study_*.py`), covering
-  the ten vertical slices A–J. Shared overlay/screen/provider files were not edited.
+* **Verified here:** 164 focused tests, all synthetic, no network (`tests/test_study_{intent,sources,
+  engines,learning,contracts}.py`), covering the ten vertical slices A–J; plus the existing
+  `test_teach_protocol.py` (my overlay adapter uses its validator). The existing focus "study mode"
+  (`jarvis/modes/study.py`) is untouched and its phrases do not collide. Shared overlay/screen/provider files were not edited.
 * **Not done / not live:** not wired into voice, HUD, router, screen reader or overlay bus; no study
   UI (shared shell files belong to parallel branches); no real model run; no live mic/screen test.
-  Full-suite status: see the commit/PR notes for this pass.
+  **Full suite not run**: the machine was under load (load avg ≈ 8 on 8 cores, live voice service and
+  other sessions). It is an integration gate.
 
 ## Tenth pass (2026-09-25): live customization and bounded self-repair
 

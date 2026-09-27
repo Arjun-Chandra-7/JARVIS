@@ -2,7 +2,7 @@
 
 A source-grounded, personalised Class 10 learning system: it explains, answers doubts, checks work,
 writes marks-based answers, runs quizzes, plans revision, and teaches from PDFs, the screen, videos
-and the teacher. Code: `jarvis/study/`. Tests: `tests/test_study_*.py` (196, all synthetic, no network).
+and the teacher. Code: `jarvis/study/`. Tests: `tests/test_study_{intent,sources,engines,learning,contracts}.py` (164, all synthetic, no network).
 
 Branch `feat/jarvis-study-companion`, based on `73e01d8` (the tip of `live-failure-repair` before
 the 3D Studio and Daily Brain branches were cut). **Not wired into the running assistant yet** — see
@@ -240,6 +240,19 @@ stored; mastery and session files are 0600. Exports are Markdown/JSON, 0600, ref
 repository. Documents are data: text addressed to the assistant is flagged, fenced in every prompt,
 recorded as a content-free audit event, and cannot reach a tool or setting — the package exposes no
 such surface. Secrets are scrubbed from prompts **and** from any model output.
+
+## Relationship to the existing "study mode"
+
+The base already has `jarvis/modes/study.py` (focus mode: closes distracting apps/tabs, keeps
+lectures open) and `jarvis/modes/study_chat.py` (opens a ChatGPT tab primed with
+`exam_tutor_prompt.md`), wired through `jarvis/mode_command.py`, with tests in
+`tests/test_study_and_coding_setup.py` and `tests/test_study_watching.py`. The companion does not
+replace or touch them: study mode decides what the *machine* is for; the companion teaches.
+Checked: none of the companion's session commands ("start a science study session", "pause
+studying", "end the session", "continue from where we stopped") trigger `study.asked_to_start`/
+`asked_to_stop`. Integration rule: starting a companion session must not switch focus mode on by
+itself (closing tabs is an outward action); offer it, and use focus mode's own start path if accepted.
+Once the companion is wired in, `study_chat`'s external ChatGPT tab becomes an optional fallback.
 
 ## Known limitations
 
