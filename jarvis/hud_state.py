@@ -25,8 +25,49 @@ _BOOT = time.time()
 # --------------------------------------------------------------------------- #
 # conversation persistence                                                    #
 # --------------------------------------------------------------------------- #
+_RECENT: list[tuple[str, str, float]] = []
+
+
+def _already_logged(who: str, text: str, now: float) -> bool:
+    """A spoken turn reaches the history twice — the voice process's event and the backend's own
+    /chat — and a streamed reply a third time, sentence by sentence. Found in the history after
+    the voice went live: every line doubled. Once is enough."""
+    del _RECENT[:-20]
+    if any(w == who and t == text and now - at < 15 for w, t, at in _RECENT):
+        return True
+    if who == "jarvis":
+        since_you = []
+        for w, t, at in reversed(_RECENT):
+            if w == "you" or now - at > 120:
+                break
+            since_you.append(t)
+        pieces = [p for p in since_you if p and p in text]
+        if pieces and sum(len(p) for p in pieces) >= 0.8 * len(text.strip()):
+            return True           # the whole reply is already there, sentence by sentence
+    return False
+
+
+def as_said(text: str) -> str:
+    """What the person said, without what Jarvis attached to it on the way to the brain: the
+    "(Spoken question, not a request…)" note after it and "[Most recent incoming message…]" or
+    "[Live view…]" context before it. Found in the history as if spoken by the user."""
+    import re
+
+    t = re.split(r"\n\n\((?:Spoken question|Spoken request)", text or "", maxsplit=1)[0]
+    t = re.sub(r"^\s*(?:\[[^\]\n]{0,2000}\]\s*)+", "", t)
+    return t.strip()
+
+
 def log_turn(who: str, text: str) -> None:
     """Append one message to the durable HUD history (best-effort)."""
+    if who == "you":
+        text = as_said(text)
+        if not text:
+            return
+    now = time.time()
+    if _already_logged(who, text, now):
+        return
+    _RECENT.append((who, text, now))
     try:
         _STATE_DIR.mkdir(parents=True, exist_ok=True)
         rec = {"who": who, "text": text, "t": time.time()}

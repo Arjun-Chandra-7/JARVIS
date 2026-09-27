@@ -52,7 +52,9 @@ def test_vs_code_alias(catalogue):
     assert da.resolve("vs code").name == "Visual Studio Code"
 
 
-def test_unknown_app_returns_none(catalogue):
+def test_unknown_app_returns_none(catalogue, monkeypatch):
+    # Nothing on PATH either: this machine may really have Blender installed (3D Studio uses it).
+    monkeypatch.setattr(da.shutil, "which", lambda name: None)
     assert da.resolve("blender") is None
     assert da.resolve("") is None
 

@@ -79,7 +79,29 @@ def _voice_event(kind: str, text: str = "") -> None:
         "phone": f"  📱 {text}",
         "sleep": "  (back to sleep — say the wake word again)\n",
     }
-    print(labels.get(kind, f"  {kind} {text}"))
+    # stdout is the journal. A spoken phone number ends up in "heard", "partial" and "transcript"
+    # lines, so it is masked there; the overlay still shows what was actually heard.
+    import re as _re
+    if kind == "dictation":
+        # Dictation events carry the terminal preview; the journal gets the state and nothing
+        # else, and not the ten-a-second microphone levels at all.
+        import json as _json
+        try:
+            state = _json.loads(text).get("state", "")
+        except ValueError:
+            state = ""
+        if state and state != "level":
+            print(f"  dictation {state}")
+        _push_to_hud(kind, text)
+        return
+    # Transcripts, replies and message text are logged as word counts unless the time-limited
+    # diagnostic mode is on (--voice-diagnostics); the overlay still gets them in full.
+    from .audio.voice_log import journal_line
+    logged = journal_line(kind, text)
+    line = {**labels, "heard": f"\nyou (voice)> {logged}", "reply": f"jarvis> {logged}",
+            "phone": f"  📱 {logged}", "timing": f"  ⏱  {logged}",
+            "loading": f"  {logged}"}.get(kind, f"  {kind} {logged}")
+    print(_re.sub(r"\+?\d[\d\s-]{5,}\d", lambda m: f"<number …{_re.sub(r'[^0-9]', '', m.group(0))[-4:]}>", line))
     _push_to_hud(kind, text)
 
 
@@ -162,6 +184,11 @@ async def _run_voice() -> None:
         try:
             async with _make_voice_agent() as agent:
                 session = VoiceSession(CONFIG, on_event=_voice_event)
+                # Speed, follow-up window and the rest change live, and are reported back so a
+                # "speak faster" is confirmed by the voice itself, not by the file it was written to.
+                from .settings import live as live_settings
+
+                live_settings.attach_voice(session)
                 await session.run(agent)
             return
         except KeyboardInterrupt:
@@ -178,6 +205,9 @@ async def _run_voice() -> None:
 # --------------------------------------------------------------------------- diagnostics
 def _preflight() -> None:
     print("Jarvis preflight\n")
+    from . import providers
+    print("model providers (model lists only, no tokens):")
+    print("  " + providers.summary(providers.health_check(CONFIG)).replace("\n", "\n  ") + "\n")
     print(f"brain: {CONFIG.brain}", end="")
     if CONFIG.brain == "chatgpt":
         from .integrations.chatgpt import PROFILE
@@ -626,10 +656,27 @@ def main() -> None:
                         help="one-time: sign in to Instagram so Jarvis can read your DMs")
     parser.add_argument("--sleep", action="store_true", help="soft off: stay running but silent until woken")
     parser.add_argument("--wake", action="store_true", help="undo --sleep")
+    parser.add_argument("--voice-diagnostics", metavar="MINUTES", type=float,
+                        help="log what the voice hears and says (masked) for MINUTES; 0 turns it off")
+    parser.add_argument("--voice-report", action="store_true",
+                        help="voice latency and interruption figures from the safe metrics log")
     args = parser.parse_args()
 
     try:
-        if args.sleep or args.wake:
+        if args.voice_diagnostics is not None:
+            from .audio import voice_log
+            if args.voice_diagnostics <= 0:
+                voice_log.disable_diagnostics()
+                print("Voice diagnostics off: transcripts are logged as word counts.")
+            else:
+                until = voice_log.enable_diagnostics(args.voice_diagnostics)
+                import time as _time
+                print("Voice diagnostics on until", _time.strftime("%H:%M", _time.localtime(until)),
+                      "— numbers, e-mail addresses and tokens stay masked.")
+        elif args.voice_report:
+            from .audio import voice_report
+            print(voice_report.render())
+        elif args.sleep or args.wake:
             from .power import set_asleep
             set_asleep(args.sleep)
             print("Jarvis is now", "asleep." if args.sleep else "awake.")
@@ -677,6 +724,9 @@ def main() -> None:
         elif args.meeting:
             asyncio.run(_run_meeting())
         elif args.voice:
+            from . import build_info
+
+            build_info.publish("voice")
             asyncio.run(_run_voice())
         else:
             asyncio.run(_run_text_repl())

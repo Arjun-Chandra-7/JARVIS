@@ -277,6 +277,57 @@ function toast(msg) {
   if (win && !win.isDestroyed()) win.webContents.send("toast", msg);
 }
 
+// --------------------------------------------------------------------------- dictation capsule
+// A separate, tiny window: it can never take focus (the text field you are dictating into keeps
+// it), ignores the mouse, and is transparent whenever dictation is idle.
+let dictationWin = null;
+function createDictationCapsule() {
+  if (process.env.JARVIS_DICTATION_INDICATOR === "0") return;
+  const area = screen.getPrimaryDisplay().workArea;
+  const width = 600, height = 150;
+  dictationWin = new BrowserWindow({
+    x: Math.round(area.x + (area.width - width) / 2),
+    y: Math.round(area.y + area.height - height - 24),
+    width, height,
+    transparent: true,
+    frame: false,
+    resizable: false,
+    movable: false,
+    focusable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    fullscreenable: false,
+    // White under the alpha, as for the main window: a compositor that refuses transparency
+    // must not paint a black box over the bottom of the screen.
+    backgroundColor: "#00ffffff",
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false },
+  });
+  dictationWin.setIgnoreMouseEvents(true);
+  dictationWin.setAlwaysOnTop(true, "screen-saver");
+  dictationWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  dictationWin.loadFile("dictation.html", { query: { port: PORT } });
+  dictationWin.once("ready-to-show", () => dictationWin.showInactive());
+  dictationWin.on("closed", () => { dictationWin = null; });
+}
+
+// --------------------------------------------------------------------------- teaching layer
+// Drawing and explaining over the desktop (overlay/teach/). Its own window, created hidden at
+// startup and only mapped while a lesson or pen mode has something on it.
+let teachLayer = null;
+function createTeachLayer() {
+  if (process.env.JARVIS_TEACH === "0") return;
+  try {
+    teachLayer = require("./teach/main-teach.js").setup({
+      app, BrowserWindow, ipcMain, screen, globalShortcut, port: PORT,
+      shortcuts: (state.shortcuts && state.shortcuts.teach) || undefined,
+      log: (m) => console.log(m),
+    });
+  } catch (e) {
+    // The HUD must come up even if the teaching layer cannot.
+    console.error("teaching layer unavailable:", e && e.message);
+  }
+}
+
 // --------------------------------------------------------------------------- window
 function createWindow() {
   const bounds = state.bounds[state.form] ? clampToDisplay(state.bounds[state.form])
@@ -391,6 +442,8 @@ ipcMain.on("click-through", (_e, through) => {
 });
 
 ipcMain.on("hide", hide);
+// "Show the overlay" as a setting: shown without taking focus, so it never steals the keyboard.
+ipcMain.on("show", () => show({ focus: false }));
 ipcMain.on("focus-window", () => {
   if (win && !win.isDestroyed()) win.focus();
 });
@@ -528,6 +581,8 @@ app.whenReady().then(() => {
     ["media", "mediaKeySystem", "display-capture"].includes(permission));
 
   createWindow();
+  createDictationCapsule();
+  createTeachLayer();
   // A previous run that ended inside the frame can leave the window fullscreen, and Mutter keeps
   // the top bar and dock hidden for as long as one exists. Cleared here, where there is actually
   // a window to clear — the same check placed before createWindow() silently did nothing.
@@ -549,6 +604,7 @@ app.on("will-quit", () => {
   app.isQuiting = true;
   rememberBounds();
   globalShortcut.unregisterAll();
+  if (teachLayer) teachLayer.quit();
   for (const k of kids) {
     try { k.kill("SIGTERM"); } catch { /* already gone */ }
   }

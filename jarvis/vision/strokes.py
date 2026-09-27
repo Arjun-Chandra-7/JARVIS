@@ -218,8 +218,11 @@ def _hatch(tone, levels: int, spacing: int, coverage: float, min_run: int = 6) -
 
 def from_image(path: str | Path, budget: int = DEFAULT_BUDGET,
                detail: float = DEFAULT_DETAIL,
-               short_side: int = WORKING_SIZE) -> Optional[Plan]:
-    """A drawable plan for the picture at `path`, or None when it yields nothing worth drawing."""
+               short_side: int = WORKING_SIZE, hatch: bool = True) -> Optional[Plan]:
+    """A drawable plan for the picture at `path`, or None when it yields nothing worth drawing.
+
+    ``hatch=False`` traces outlines only — for line art, where the lines already are the picture,
+    and for the overlay, whose stroke limit hatching would spend before any outline was reached."""
     import cv2
     import numpy as np
 
@@ -250,7 +253,7 @@ def from_image(path: str | Path, budget: int = DEFAULT_BUDGET,
     equalised = cv2.createCLAHE(clipLimit=CLAHE_CLIP, tileGridSize=(8, 8)).apply(image)
     tone = cv2.GaussianBlur(equalised, (0, 0), 2.0)
     hatch_strokes = _hatch(tone, levels=HATCH_LEVELS, spacing=HATCH_SPACING,
-                           coverage=HATCH_COVERAGE)
+                           coverage=HATCH_COVERAGE) if hatch else []
 
     found = _trace(_edges(image, detail))
     if not found and not hatch_strokes:

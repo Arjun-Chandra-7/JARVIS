@@ -30,7 +30,6 @@ hidden_imports = [
     "jarvis.agent.remote",
     "jarvis.agent.groq_core",
     "jarvis.agent.groq_tools",
-    "jarvis.agent.sdk_tools",
     "jarvis.agent.prompt",
     "jarvis.memory.vault",
     "jarvis.audio",

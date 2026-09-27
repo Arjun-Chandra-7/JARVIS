@@ -1,6 +1,6 @@
 """Launching and opening things — on the laptop and (best-effort) on the phone.
 
-Laptop: open URLs in the user's browser (Opera GX by default) and launch desktop apps.
+Laptop: open URLs in the user's browser (the desktop default, here Zen) and launch desktop apps.
 Phone: KDE Connect can open a URL, ring the phone, or run a preconfigured command — Android does
 not allow launching arbitrary apps remotely, so that's the ceiling.
 """
@@ -48,18 +48,29 @@ def open_url(url: str, browser: str = "", *, new_window: bool = False) -> str | 
         browser = CONFIG.browser
     if not url.startswith(("http://", "https://", "file://")):
         url = "https://" + url
-    exe = (shutil.which(browser) or shutil.which("opera-gx") or shutil.which("opera")
-           or shutil.which("xdg-open"))
-    if not exe:
+    # The preferred browser is often a desktop id ("app.zen_browser.zen", a flatpak), not a
+    # program on PATH. Found live: `which` found nothing for it and this fell through to
+    # opera-gx, so every page Jarvis opened went to Opera while Zen was the default browser.
+    # Now: the browser itself (as a flatpak when it is one), then the desktop's default through
+    # xdg-open, and only then whatever else is installed.
+    launch = None
+    if not shutil.which(browser):
+        from .firefox_launch import flatpak_id
+        app = flatpak_id(browser)
+        if app:
+            launch = ["flatpak", "run", app]
+    exe = (shutil.which(browser) or shutil.which("xdg-open") or shutil.which("opera-gx")
+           or shutil.which("opera"))
+    if launch is None and not exe:
         return None
-    argv = [exe]
-    if new_window and Path(exe).name in _OPERA_BINARIES:
+    argv = list(launch) if launch else [exe]
+    if new_window and Path(argv[0]).name in _OPERA_BINARIES:
         argv.append("--new-window")
     argv.append(url)
     if not _spawn(argv):
         # Opera may return nonzero after handing a URL to its existing window.
         # Its live process is enough evidence that the launch was accepted.
-        if Path(exe).name not in _OPERA_BINARIES:
+        if Path(argv[0]).name not in _OPERA_BINARIES:
             return None
         try:
             running = subprocess.run(
@@ -74,7 +85,7 @@ def open_url(url: str, browser: str = "", *, new_window: bool = False) -> str | 
             running = False
         if not running:
             return None
-    if new_window and shutil.which("wmctrl"):
+    if new_window and Path(argv[0]).name in _OPERA_BINARIES and shutil.which("wmctrl"):
         _spawn(["wmctrl", "-a", "Opera"])
     return url
 

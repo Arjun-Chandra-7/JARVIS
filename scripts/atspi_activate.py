@@ -21,10 +21,10 @@ import sys
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
 
-from atspi_snapshot import _safe, _resolve_root  # noqa: E402
+from atspi_snapshot import _safe, _resolve_root, describe  # noqa: E402
 
 
-def activate(app_hint: str, path: list[int], expect: str, action: str = "") -> dict:
+def activate(app_hint: str, path: list[int], expect: str, action: str = "", text: str = "") -> dict:
     import gi
 
     gi.require_version("Atspi", "2.0")
@@ -46,6 +46,22 @@ def activate(app_hint: str, path: list[int], expect: str, action: str = "") -> d
     if expect and name.casefold() != expect.casefold():
         return {"ok": False,
                 "reason": f"That position now holds '{name}', not '{expect}' — not touching it."}
+
+    role = _safe(node.get_role_name, "") or ""
+    if action == "focus":
+        component = _safe(node.get_component_iface)
+        done = bool(component is not None and _safe(component.grab_focus, False))
+        return {"ok": done, "name": name, "role": role, "action": "focus", "app": app_name,
+                "window": title, "after": describe(Atspi, node),
+                "reason": "" if done else f"'{name or role}' would not take focus."}
+    if action == "set_text":
+        editable = _safe(node.get_editable_text_iface)
+        if editable is None:
+            return {"ok": False, "reason": f"'{name or role}' is not an editable text field."}
+        done = bool(_safe(lambda: editable.set_text_contents(text), False))
+        return {"ok": done, "name": name, "role": role, "action": "set_text", "app": app_name,
+                "window": title, "after": describe(Atspi, node),
+                "reason": "" if done else "The field refused the text."}
 
     iface = _safe(node.get_action_iface)
     if iface is None:
@@ -71,7 +87,7 @@ def activate(app_hint: str, path: list[int], expect: str, action: str = "") -> d
         return {"ok": False, "reason": f"'{name}' has no actions."}
 
     done = bool(_safe(lambda: iface.do_action(index), False))
-    return {"ok": done, "name": name, "role": _safe(node.get_role_name, "") or "",
+    return {"ok": done, "name": name, "role": role, "after": describe(Atspi, node),
             "action": names[index], "app": app_name, "window": title,
             "reason": "" if done else f"The '{names[index]}' action on '{name}' was refused."}
 
@@ -80,7 +96,8 @@ if __name__ == "__main__":
     try:
         payload = json.loads(sys.argv[1])
         print(json.dumps(activate(payload.get("app", ""), payload.get("path", []),
-                                  payload.get("expect", ""), payload.get("action", ""))))
+                                  payload.get("expect", ""), payload.get("action", ""),
+                                  payload.get("text", ""))))
     except Exception as exc:  # noqa: BLE001 - the caller only ever sees JSON
         print(json.dumps({"ok": False, "reason": f"{type(exc).__name__}: {exc}"}))
         sys.exit(1)

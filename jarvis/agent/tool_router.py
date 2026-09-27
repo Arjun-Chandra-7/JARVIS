@@ -80,6 +80,7 @@ ALIASES: dict[str, str] = {
     "capture_screen": "look at my screen, what's on screen, screenshot, read this error, "
                       "observe a desktop app or game before and after acting, see the basket",
     "set_timer": "timer, countdown, remind me in n minutes, alarm for n minutes",
+    "draw_picture": "draw, sketch, draw me, drawing of, whiteboard, draw it on screen, show me a drawing",
     "set_reminder": "remind me at a time, reminder, don't let me forget, at six pm",
     "media_control": "pause music, play, next track, skip song, resume playback",
     "set_volume": "volume, louder, quieter, mute level",
@@ -106,9 +107,10 @@ ALIASES: dict[str, str] = {
     "browser_key": "press enter escape space, play pause the video, fullscreen, mute the video",
     "browser_scroll": "scroll the page down up",
     "browser_back": "go back to the previous page",
-    "browser_enable_control": "restart opera with control, enable browser control, "
+    "browser_enable_control": "restart zen with control, restart the browser with control, "
+                              "restart opera with control, enable browser control, "
                               "let jarvis click in the browser",
-    "open_app": "open opera gx, open vs code, open spotify, open settings, open the terminal, "
+    "open_app": "open zen, open opera gx, open vs code, open spotify, open settings, open the terminal, "
                 "launch an installed application or program on this computer, start an app",
     "list_apps": "what apps do i have installed, which applications, list programs",
     # Scoped to native windows: inside a web page browser_click is exact, this one guesses from a

@@ -35,6 +35,10 @@ class LocalWakeWord:
         self._model = Model(wakeword_model_paths=[wake_ref])
         self._armed = True          # refractory gate: one trigger per utterance
         self._hits = 0              # consecutive frames over threshold (needs a sustained match)
+        # Set by the voice session while a video plays with no echo cancellation: a lecture
+        # saying something like "Jarvis" should need a clearer, longer match than a person does.
+        self.strict = False
+        self.last_score = 0.0
 
     def process(self, frame) -> bool:
         arr = np.asarray(frame, dtype=np.int16)
@@ -46,13 +50,15 @@ class LocalWakeWord:
         if best < self.threshold * 0.4:
             self._armed = True
 
-        if best >= self.threshold:
+        self.last_score = float(best)
+        threshold = min(0.95, self.threshold + 0.15) if self.strict else self.threshold
+        if best >= threshold:
             self._hits += 1
         else:
             self._hits = 0
 
-        # Require two consecutive strong frames AND the gate to be armed.
-        if self._hits >= 2 and self._armed:
+        # Require consecutive strong frames (two, three when strict) AND the gate to be armed.
+        if self._hits >= (3 if self.strict else 2) and self._armed:
             self._armed = False
             self._hits = 0
             return True

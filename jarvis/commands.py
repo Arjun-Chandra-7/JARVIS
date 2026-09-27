@@ -14,8 +14,12 @@ def clean_text(text: str) -> str:
     command — "open netflix" became "netflix (Spoken request. DO the action with a tool first...)"
     and matched nothing. Any bracketed or parenthesised line is machinery, not speech.
     """
-    lines = [line for line in text.splitlines() if not line.strip().startswith(("[", "("))]
-    return re.sub(r"^(?:hey\s+)?jarvis[,.!:\s]*", "", " ".join(lines).strip(), flags=re.I).strip()
+    # A bracketed block can span lines (an incoming message with line breaks in it), and the
+    # overlay fences an attached selection between two bracket lines: both are removed whole,
+    # so none of that text can be read as the owner's command. See trust.own_words.
+    from .trust import own_words
+
+    return re.sub(r"^(?:hey\s+)?jarvis[,.!:\s]*", "", own_words(text), flags=re.I).strip()
 
 
 _SLEEP_RE = re.compile(
@@ -47,6 +51,62 @@ def deterministic_handlers():
         # whiteboard handler, which would look for a picture that had not been made yet.
         from .chain_command import handle as run_chain
         return await run_chain(text, config)
+
+    async def message(text, config):
+        # "Message Papa on WhatsApp: I'll be home by eight". (Its "send it" is approvals.py's.)
+        # Early, because the message text can say anything — "open YouTube tonight" is a message
+        # here, not an instruction to open YouTube.
+        from .message_command import handle as f
+        return await f(text, config)
+
+    async def youtube(text, config):
+        # "Search for Pythagoras theorem" with YouTube open, then "play the first video": the
+        # results page is a URL and the results come from yt-dlp, so neither needs the browser
+        # to be under automation. Before video, which answers questions about what is playing.
+        from .youtube_command import handle as f
+        return await f(text, config)
+
+    async def video(text, config):
+        # "Explain what he just said", "pause and explain this part", "summarise the last two
+        # minutes" — answered from the video's own transcript at the current time. Before
+        # read_screen, which would OCR the frame for a question the captions already answer.
+        from .video_command import handle as f
+        return await f(text, config)
+
+    async def three_d(text, config):
+        # "Make a 3D model of this", and — only while a 3D project is active — its references,
+        # measurements, edits, undo and exports. Before chain, which would split "…and open it in
+        # Blender" in two, and before imagine/draw, whose "make" would take a 3D request.
+        from .three_d.commands import handle as f
+        return await f(text, config)
+
+    async def overlay_lesson(text, config):
+        # "Pause and explain this step visually", "explain RAG with a diagram", "go back one
+        # step", "circle this": drawn on the teaching overlay. Before video, which would answer
+        # "pause and explain this" in words alone, and before teach, which explains without a
+        # picture. Typed requests draw at reading pace in the background and reply at once.
+        from .teach.assistant import handle as f, wants
+        if not wants(text):
+            return None
+        reply = await f(text, background=True)
+        return reply.text if reply else None
+
+    async def generate_and_draw(text, config):
+        from .draw_command import generate_then_draw, make_and_draw
+        subject = make_and_draw(text)
+        return await generate_then_draw(subject) if subject else None
+
+    async def screen_follow_up(text, config):
+        # "What values does this show about Nicola?" right after the chapter on screen was
+        # explained: answered from the same material, not by a brain that never saw it.
+        from .video_command import follow_up as f
+        return await f(text, config)
+
+    async def teach(text, config):
+        # "What is a sequential input in an RNN?", "photosynthesis kya hota hai" — a topic,
+        # taught by the strong model. After video/screen, which own anything about the screen.
+        from .explain_command import handle as f
+        return await f(text, config)
 
     async def modes(text, config):
         # "Study mode" and "Iron Man mode" change what the whole machine is for, so they are
@@ -111,11 +171,6 @@ def deterministic_handlers():
         from .draw_command import handle as f
         return await f(text, config)
 
-    async def self_improve(text, config):
-        # "Fix yourself" — look at what has failed repeatedly and try to mend it.
-        from .selfimprove.command import handle as f
-        return await f(text, config)
-
     async def coding_agent(text, config):
         # "Ok, but now we need to add X" at the editor. Before the task runner, which would try
         # to plan it as browser steps, and before open_command, which would see "open a terminal".
@@ -141,7 +196,24 @@ def deterministic_handlers():
         return await f(text, config)
 
     return [
+        # 3D Studio first: it starts only on explicit 3D/Blender words, and otherwise answers only
+        # while one of its projects is active.
+        ("three_d", three_d),
+        # The teaching overlay next: its requests are narrow (a lesson "with a diagram" or
+        # "visually", or a control while a lesson is on screen), and "pause and explain this step
+        # visually" would otherwise be split by chain into a pause and a question.
+        ("overlay_lesson", overlay_lesson),
+        # "Generate an image of a dragon and draw it": one request, not two for chain to split —
+        # the generator's picture is recreated on the overlay as pen strokes.
+        ("generate_and_draw", generate_and_draw),
+        # YouTube before chain: "open YouTube and open a lecture on X" is one request, and the
+        # chain splitter answered its second half with "I couldn't make a start".
+        ("youtube", youtube),
         ("chain", chain),
+        ("message", message),
+        ("video", video),
+        ("screen_follow_up", screen_follow_up),
+        ("teach", teach),
         ("modes", modes),
         ("system", system),
         ("screen_click", screen_click),
@@ -152,7 +224,6 @@ def deterministic_handlers():
         ("project", describe_project),
         ("imagine", make_a_picture),
         ("draw", draw_something),
-        ("self_improve", self_improve),
         ("coding", coding_agent),
         ("task", run_task),
         ("open", open_something),
@@ -191,6 +262,67 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
     if asleep():
         return "I'm asleep, sir. Say “Jarvis, wake up” to bring me back."
 
+    # An answer to something waiting for approval — "yes", "send the email", "haan bhej do",
+    # "cancel". Matched on the words as said, before the Hinglish rewrite, and only when
+    # something is actually waiting, so an ordinary "yes" in conversation is left alone.
+    from .approvals import MANAGER
+    from . import route_log
+    settled = await MANAGER.answer(clean_text(text), session_id)
+    if settled is not None:
+        route_log.record(intent="approval.answer", action=settled.status,
+                         kind=settled.action.kind if settled.action else "")
+        return settled.message
+
+    # "…, then bye": the goodbye says what to do after the request, it is not part of it. Only a
+    # sentence that is nothing but a goodbye is answered as one — "send 'bye' to Papa" keeps it.
+    from .audio.conversation import split_closing
+    request, closing = split_closing(raw)
+    if closing and not request:
+        route_log.record(intent="session.end", action="goodbye")
+        return "Alright, sir."
+    if closing and not re.search(r"[\"'“‘]", raw):
+        raw = request
+    command = raw.lower().rstrip(".!?")
+
+    # Settings the owner can change by asking — "disable your animations", "thoda tez bolo",
+    # "undo that" — applied live and verified, no code touched. Before away mode, because
+    # "turn off away-mode replies" is the emergency stop, not a request to talk about away mode.
+    # Given the words as said: the Hinglish rewrite turns "band kar do" into "close".
+    # Except "undo"/"redo"/"go back to version 3" while a 3D model is being edited: those mean the
+    # model. 3D Studio claims them only if it was used in the last ten minutes.
+    from .three_d.commands import claims_history, handle as three_d_command
+    if claims_history(raw):
+        answer = await three_d_command(raw, config)
+        if answer is not None:
+            return answer
+    from .settings.command import handle as settings_command
+    answer = await settings_command(text, config, session_id)
+    if answer is not None:
+        return answer
+
+    # Reports of something broken, and requests to change Jarvis's own behaviour, go to the one
+    # classifier; only the owner's own front-ends can start a repair (jarvis.selfrepair).
+    from .selfrepair.command import handle as repair_command
+    answer = await repair_command(text, config, session_id)
+    if answer is not None:
+        return answer
+
+    # Away mode: starting it (only ever through an approval), changing it while it runs, and
+    # "what happened while I was away". Before the notification rules, because "mute Instagram"
+    # during away mode means away mode's Instagram.
+    from .away_mode import control as away_control
+    answer = await away_control.handle(raw, config, session_id)
+    if answer is not None:
+        route_log.record(intent="away", action="handled")
+        return answer
+
+    # Finer control over announcements first: "don't announce Instagram for two hours" also has
+    # the words the all-or-nothing switch below looks for.
+    from .notification_command import handle as notification_rules
+    answer = notification_rules(raw)
+    if answer is not None:
+        return answer
+
     from .preferences import set_notifications
     if re.search(r"\bnotifications?\b", command) and re.search(
         r"\b(?:turn|switch|set|mute|unmute|disable|enable|stop|start|silence|resume|read|reading)\b", command
@@ -211,15 +343,6 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
         from .integrations.apps import phone_mirror
         ok, message = await asyncio.to_thread(phone_mirror)
         return "Opening your phone, sir." if ok else message
-    if re.search(r"\b(?:i'?m|i am) (?:going out|heading out|away|stepping out|unavailable)\b", command) and re.search(r"\b(?:messages|message|reply|replies|handle|cover|deal with)\b", command):
-        from .agent import away, pa_daemon
-        away.set_away(raw, config)
-        pa_daemon.start(config)
-        return "Away mode is on, sir. I'll introduce myself as your assistant, handle new messages, and keep a record for your return."
-    if re.fullmatch(r"(?:i'?m back|i am back|i'?m available|i am available|stop handling my messages|turn off away mode|away mode off)", command):
-        from .agent import away
-        away.set_available(config)
-        return "Welcome back, sir. Away replies are off."
     if re.fullmatch(r"(?:who(?:'?s| is)(?: around| here| nearby| in the room| with me)|"
                     r"is (?:anyone|anybody|someone) (?:here|around|nearby|with me)|"
                     r"(?:scan|check)(?: the)? room|human radar|radar)", command):
@@ -229,9 +352,6 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
         from .integrations import meet_bot
         result = await meet_bot.join_meet("https://meet.google.com/twa-pgjz-gss", "", config)
         return str(result)
-    if re.fullmatch(r"(?:what did i miss|(?:read|show|give me)(?: me)?(?: my| the)? (?:away )?(?:messages? summary|message summary|debrief|catch[- ]?up))", command):
-        from .agent import pa_daemon
-        return pa_daemon.debrief(config)
     # "is my mic working" — a question that could only be answered by trying to talk and failing.
     # Matched on meaning rather than a fixed phrase, because there is no one way people ask it.
     from .audio import mic_report
@@ -251,6 +371,15 @@ async def handle(text: str, config, session_id: str = "local") -> str | None:
         answer = await _handler(raw, config)
         if answer is not None:
             return answer
+
+    # A question about what is on screen right now that nothing above could answer from the
+    # screen. Passed on, the model reaches for its memory tool and answers from an old
+    # conversation; "I can't see it" is the true answer.
+    from . import video_command
+    if video_command.is_current_context(raw):
+        route_log.record(intent="screen.current", action="unavailable", context="none",
+                         lang=video_command.reply_language(raw), memory="not_consulted")
+        return video_command.unavailable(raw)
 
     from .integrations import coding_jobs
     return await coding_jobs.handle_message(raw, session_id=session_id)

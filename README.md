@@ -27,10 +27,11 @@ need their own account, device, or desktop service configured before use.
   n8n integrations when linked.
 - Meeting note capture joins silently with microphone and camera disabled; admission is verified
   before recording.
-- Away mode records direct incoming messages and replies only to direct incoming WhatsApp messages.
-  Group, newsletter, status, outgoing, and duplicate messages are ignored. The away responder uses
-  an isolated temporary ChatGPT tab with no tool access; it falls back to a neutral acknowledgement
-  if unavailable.
+- Away mode: "I'm going out until 8, handle my messages" proposes a bounded session and starts it
+  after your yes. Jarvis replies on WhatsApp as **JARVIS, your assistant** (never as you), takes
+  messages, refuses money/OTP/commitment requests, alerts you only for urgent things, hands a
+  thread to you the moment you write in it, and briefs you when you're back. Calls are noted and
+  repeated ones escalate; they cannot be answered over KDE Connect. See `docs/AWAY_MODE.md`.
 
 - Human radar: webcam face detection gives bearing + metric range, acoustic FMCW gives
   range only, and paired devices give names. See `docs/HUMAN_RADAR.md`.
@@ -99,11 +100,280 @@ worth experimenting with — the one controlled study in this area found swappin
 embedding model moved accuracy 6.2 points — and `tests/test_tool_routing.py` is the instrument to
 judge a change with.
 
+## Messaging people
+
+"Message Papa on WhatsApp: I'll be home by eight" is parsed deterministically — recipient, platform
+and message are separated by the shape of the sentence, and the message goes out exactly as
+spoken. Hinglish works the same way: "papa ko bol dena late aaunga".
+
+Who "Papa" is comes from one resolver (`jarvis/integrations/contacts.py`) over three address
+books: people you told Jarvis about (with aliases such as "Papa" or a nickname), the phone's
+contacts synced by KDE Connect, and the names the WhatsApp bridge has learned. It sends only
+when exactly one person clearly matches. A contact that merely *contains* the word ("Papa Johns
+Atlanta") never matches, "dad" finds a contact saved as "Papa", two different numbers saved
+under one name is a question, and a WhatsApp profile name somebody chose for themselves never
+outranks a name you saved. Local numbers get the home country code
+(`JARVIS_DEFAULT_COUNTRY_CODE`, default 91) before WhatsApp is asked about them.
+
+"Sent" is said only after the bridge returns the chat the message went to. Each send is logged
+to `Jarvis/private/outbox.jsonl` with a masked number and a hash — never the text.
+
+    JARVIS_SEND_APPROVAL=new     preview the first message to someone new (default)
+                         always  preview every message
+                         never   send once the recipient is certain
+    JARVIS_DRY_RUN_SENDS=1       resolve and preview, never send (for development)
+
+A held message goes out on "send it" / "haan bhej do" and is dropped on "cancel" / "rehne do".
+A bare "ok" does neither.
+
+## Approvals
+
+Anything with consequences — sending a message or an email, creating a calendar event, a
+destructive shell command, overwriting a file you wrote, restarting the browser, lifting the
+confirmation gate — is proposed rather than done: "Ready to send an email to … Say "yes" to
+confirm or "cancel"." The next turn settles it, by voice, typed, or with the overlay's buttons
+(`GET /approvals`, `POST /approvals/{id}`), and what runs is exactly what was described.
+
+"Yes", "send it", "confirm", "haan", "haan bhej do", "kar do" approve; "no", "cancel", "mat
+bhejo", "rehne do" cancel. With two things waiting, a bare "yes" approves neither and asks which;
+"send the email", "cancel the message" or "yes, to Mummy" picks one. Pending actions expire after
+three minutes, and a late "yes" is told so. A bare "ok" approves nothing. The terminal still asks
+inline. Every step goes to `~/.local/share/jarvis/approvals.jsonl` with the kind, a masked target
+and a hash — never a message, subject or command.
+
+## Questions about the video you are watching
+
+On a YouTube tab: "explain what he just said", "why is this step valid?", "explain what's on
+screen", "pause and explain this part", "summarise the last two minutes" — and the Hindi or
+Hinglish versions ("abhi kya bola, samjhao", "ruko aur samjhao", "pichle do minute ka summary
+do"). The answer comes from the video's own captions around the current time, not from a
+screenshot, pitched at a CBSE Class 10 student and in the language you asked in. The model is
+told to say when the excerpt does not cover something and to mark its own explanation as such.
+Pausing is checked on the player; playing counts only when the clock moves.
+
+This needs a drivable browser (see below) and a strong model: `JARVIS_STRONG_MODEL` if set, your
+Groq model, the current default Groq model, then Gemini. The small local model is **not** used
+for explanations — it gets steps wrong — and when it is all that is left Jarvis says so and reads
+out the transcript lines instead. `JARVIS_ALLOW_WEAK_TEACHING=1` overrides that.
+
+## Asking about topics
+
+"What is a sequential input in an RNN?", "explain Ohm's law", "photosynthesis kya hota hai" —
+topic questions are taught by the strong model: the idea plainly, a concrete example, a one-line
+takeaway, in the language you asked. "Give me some examples" or "hindi mein samjhao" within ten
+minutes continues the same topic. Questions that point at the screen ("what is this in the
+diagram on my screen?") are answered from the screen instead (see the video section above).
+While a video or song is playing, talking over Jarvis no longer cuts him off — use the wake word,
+push-to-talk or the dictation key to stop him.
+
+## Explaining with pictures — the teaching overlay
+
+"Pause and explain this step visually" over a maths video, or "explain RAG architecture with a
+diagram" from anywhere: Jarvis draws on a transparent, click-through layer over the desktop while
+he speaks, each picture appearing as its words are heard.
+
+* **Any subject.** "Explain the water cycle with a diagram", "photosynthesis ko diagram se
+  samjhao", "draw a diagram of the OSI model", "पाचन तंत्र चित्र बनाकर समझाओ". The strong model
+  writes the lesson as data — parts, links, an optional formula, and what to show on each step —
+  and code checks it and draws it as a flow, cycle, tree, stack, timeline or comparison. It says
+  "Let me draw that out" at once, since writing takes a few seconds. "Explain the X again"
+  replays that part; any other question about it is answered with the diagram as context. If no
+  model is reachable, or the reply doesn't make sense, it says so and draws nothing.
+* **Taught like a teacher, without asking for a diagram.** "Explain the topic on my screen",
+  "teach me this chapter", "ye topic samjhao", "इस अध्याय को समझाओ" become drawn lessons from
+  what is on screen. Specific questions ("why were they reluctant…?") are still answered in words,
+  and if no drawing can be made the explanation comes in words anyway.
+  `JARVIS_VISUAL_EXPLAIN=0` turns this off.
+* **Whatever is on screen.** "Explain this visually" over a video on any subject draws a lesson
+  from the captions around that moment (without captions, it says the lesson is general, not the
+  teacher's words); over a page or an app, from what you've selected or what is in view.
+* **Pythagoras, from the video.** He pauses the video (and checks it stopped), reads the title,
+  the time and the captions around it, and says which of those he is going by. If the triangle is
+  on screen and clear, he traces it; otherwise he draws a clean one beside it and says so. No
+  captions: he says so and goes by the title. Not Pythagoras: he says what it looks like and offers
+  words instead. He never claims the teacher said something the captions don't contain.
+* **RAG, anywhere.** Eight nodes, drawn step by step. Follow-ups change the diagram already there:
+  "explain the vector database again", "show where chunking happens", "what if retrieval is
+  wrong?", "where does hallucination happen?", "compare it with fine-tuning", "make the vector
+  database bigger".
+* **Controls, while something is on screen:** pause, continue, go back one step, skip, explain that
+  again, undo, redo, make it bigger/smaller, move it left/right, leave it, clear it. Talking over
+  him pauses the pictures with the voice; a cough does not end the lesson. A finished lesson
+  clears itself after a few seconds unless you say "leave it".
+* **A whiteboard for the image generator.** "Draw me a cat" makes a clean line drawing with the
+  image generator on this machine (about 5 seconds) and traces it onto the screen, outlines first.
+  "Generate an image of a dragon and draw it" draws the generator's own picture; "draw it" after
+  making one uses that. Without the generator, a reference picture found online is traced instead.
+* **Nothing stays stuck.** A drawing nobody updates clears itself after a few minutes (a lesson
+  you said "leave it" to, or a drawing you asked for, after an hour), and "clear the screen" or
+  "remove the drawing" works whichever part of Jarvis drew it.
+* **Drawing:** "draw a triangle / circle / arrow", "circle this", "highlight this", "label this as
+  X", "erase that", "arrow from this to that". "This" means the thing most recently drawn or
+  pointed at on the overlay; with nothing there he asks which.
+* **Your own pen:** `Ctrl+Super+P` (or "pen mode") — pen, highlighter, eraser, undo, redo, clear,
+  Done. The layer takes the mouse only while the pen is on, and gives it back on Done, after two
+  idle minutes, or after five minutes whatever.
+* **Emergency:** `Ctrl+Super+Escape` hides everything at once and stops the voice.
+  Install the two shortcuts with `scripts/install-teach-shortcuts.sh` (`--remove` to undo).
+
+English, Hinglish, Hindi-in-Devanagari and — asked for explicitly — pure Hindi. Nothing on screen
+is saved or logged: the one screenshot a video lesson takes is cropped to the video, read, and
+deleted. How it works: `docs/TEACHING_OVERLAY.md`.
+
+## Voice writing — dictate into any field
+
+Click into any text field — a browser box, an editor, a chat, a terminal — **tap Right Alt**,
+speak, and tap it again (or hold it while you speak and let go). Clean text appears at the
+cursor: fillers and false starts gone, "at five, actually make that six" written as "at six",
+"comma" and "new paragraph" as punctuation, "first point … second point …" as a list. English,
+Hindi and Hinglish all work, and nothing is translated: in chats Hindi is written the way you
+text (Roman letters), elsewhere in Devanagari. Escape cancels.
+
+Said on its own, "new paragraph", "delete the last sentence", "replace Friday with Monday",
+"make this formal" and "paste last dictation" edit instead of typing. In a terminal the command
+is shown first and inserted only when you press the key again — Enter is never pressed.
+Password, OTP and token fields are refused before anything is transcribed.
+
+Speech goes to Groq Whisper (your existing key), falling back to the local model offline. Audio is
+never written to disk; a 24-hour local history lets you paste or retry the last dictation. Full
+details, settings, measurements and troubleshooting: [docs/DICTATION.md](docs/DICTATION.md).
+
+## Model providers
+
+At startup (and on `python -m jarvis --check`) each configured provider is asked for its model
+list and a one-token reply, and the result is printed and served at `GET /providers`. Failures
+are classified — retired model, permission denied, bad key, rate limit, outage — and a provider
+that fails is paused rather than asked again on every request: hours for a retired model, a
+denied project or a rejected key; the provider's own `Retry-After` for a rate limit; 30 s
+doubling to 10 min for outages. The pauses are shared by every Jarvis process
+(`~/.local/share/jarvis/provider-health.json`; delete it to retry at once). Deterministic
+commands — messaging, notifications, sleep and wake, volume, opening things — need no model.
+
+## Notifications
+
+Incoming messages are grouped before they are spoken: a conversation is announced once it has
+been quiet for five seconds (at most twenty), so seven Instagram messages from one person are
+"Seven new Instagram messages from Arjun. The latest says: …". Senders are said as names:
+numbers become the saved contact or "an unknown number", handles like `arjun.chandra_07` become
+"arjun chandra", and links, order numbers and tracking codes are left out of what is read.
+The same message arriving from two sources is said once.
+
+    "Don't announce Instagram for two hours"      "Only interrupt me for family"
+    "Stop reading messages from this group"       "Summarise my notifications"
+    "Stop reading messages from Rohit"            "Read that again"
+
+Muted things are not lost; they go to the summary. Messages with "urgent", "call me",
+"emergency" and the like are never held back.
+
+## Conversations
+
+Say the wake word once. After each reply Jarvis keeps listening for eight seconds
+(`JARVIS_FOLLOW_UP_S`) without it, so "open YouTube" → "search for Pythagoras theorem" → "play the
+first video" → "wait, pause it" → "ab ye step Hinglish mein samjhao" → "that's all" is one
+conversation. In that window a transcript made only of fillers ("hmm", "okay"), Whisper's silence
+hallucinations or a single non-command word is the room and is ignored — unless Jarvis just asked
+a question, in which case "yes" is the answer.
+
+* **"Stop"**, "wait", "ruko" cut what is being said or done; the conversation stays open.
+* **"That's all"**, "bas", "bye", "thanks Jarvis" end it, and forget what "it" and "the first one"
+  referred to. Silence also ends it; the references then expire on their own after 15 minutes.
+* **"Cancel everything"** stops speaking and cancels queued background work (`/tasks/cancel`).
+* **"Go on"** finishes an answer that was interrupted.
+* A held approval ("say send it to confirm") is kept by the approval manager, not the
+  conversation, so it survives every one of these.
+
+`jarvis/audio/conversation.py` is the one state machine — wake listening, active listening,
+endpointing, thinking, acting, speaking, interrupted, follow-up, dictation, sleeping, error — and
+the voice process publishes it to `$XDG_RUNTIME_DIR/jarvis-conversation.json`. The dictation key
+suspends a conversation and hands it back afterwards without the wake word.
+
+### Talking over him
+
+Barge-in listens from the moment a request is sent, not only while he speaks. It decides on
+Silero's speech probability above a continuously tracked background (his echo, the video), for
+two 80 ms frames with echo cancellation, three without, four with a video playing and nothing
+cancelling it; before his first word it wants two more. The words said over him are kept from
+their onset and become the next request, with the conversation's context. An interruption that
+turns out to be nothing (a cough, the TV) finishes the sentence, or — if he was still thinking —
+asks again under the same event id, so the backend hands back the first answer rather than doing
+the work twice.
+
+Measured through the real voice process over virtual audio devices, with the echo canceller in
+the loop and his own voice echoing into the "room": voice onset → speech stopped **192–199 ms**
+(160 ms of that is deciding it was a person). That is a digital echo path; a real room is
+untested while the microphone is muted.
+
+### Echo cancellation
+
+`scripts/install-aec-service.sh` installs `jarvis-aec`, a small PipeWire client running WebRTC
+echo cancellation (`scripts/pipewire/jarvis-aec.conf`). Its sink is made the default output, so
+everything played — his voice, the browser's video — is the reference; Jarvis listens on the
+cancelled microphone whenever the service is running (`JARVIS_AEC=auto|on|off`).
+`scripts/install-aec-service.sh --remove` undoes it and hands the default output back.
+
+Measured on a digital rig (no microphone): a lecture that says "Hey Jarvis" three times woke him
+**0 times** through the canceller and once without it; a person saying "Hey Jarvis" over the same
+lecture at −10 dB still woke him. Speech after the echo stops is untouched, Hindi included. While
+both play at once (double talk) the canceller does damage the person's words — which is one more
+reason barge-in stops him within a fifth of a second.
+
+Without the service: the wake word needs a longer, clearer match while a video plays, is ignored
+for a second after he stops speaking, and a false wake over a video goes back to sleep silently
+instead of apologising.
+
+### Media
+
+When a conversation starts over a playing video, other applications are turned down (not paused)
+and put back exactly when it ends. "Pause", "wait, pause it", "play", "next" go to the MPRIS player
+that is actually playing, locally, and are checked; "play" resumes only what he paused.
+"Search for X" with YouTube open opens the results page and reads the results with yt-dlp, so
+"play the first video" and "the second one" work without the browser under automation.
+
+### Hearing
+
+The assistant now transcribes with Groq's Whisper large-v3-turbo first and the local model if
+that fails (`JARVIS_ASSISTANT_STT`, default `groq,local`; `local` keeps it all on this machine).
+Measured on the end-to-end run: the local `small` model turned "Ab ye step Hinglish mein samjhao"
+into broken Devanagari in 13.7 s; Groq heard it in 0.26 s, and every English command in 0.25–0.43 s.
+
+### Privacy
+
+The journal gets word counts, not words: "you (voice)> (6 words)". Latencies, states, providers,
+interruptions and error categories go to `~/.local/state/jarvis/voice-metrics.jsonl` through an
+allow-list — a transcript passed as a metric is dropped, not written. `python -m jarvis
+--voice-diagnostics 20` shows the words (numbers, addresses and tokens still masked) for twenty
+minutes and then switches itself off; `python -m jarvis --voice-report` prints the latencies.
+
 ## The voice
 
-Kokoro, 82M parameters, Apache-2.0, on the processor. Measured here: the model loads in 1.0s and
-synthesises at about 2.4x realtime, 24 kHz. Fifty-four voices; the default is `bm_daniel`,
-British male. Set `JARVIS_KOKORO_VOICE` to another installed voice if you prefer it.
+Kokoro, 82M parameters, Apache-2.0, on the processor, 24 kHz. English is `bm_daniel`, British
+male (`JARVIS_KOKORO_VOICE`); Hindi, and Roman Hinglish once written in Devanagari, is
+`hm_omega` through the Hindi phonemiser (`JARVIS_KOKORO_HINDI_VOICE`).
+
+Why, measured (Whisper round trip through a 300–3400 Hz channel with noise at 5 dB SNR):
+
+    English WER, 9 sentences      bm_daniel 0.087   am_michael 0.112   hm_omega 0.126   bm_george 0.153
+    Hindi CER                     bm_daniel 0.46    hm_psi 0.37        hf_alpha 0.31    Piper 0.69
+
+Roman Hinglish used to go to the English phonemiser: "add karte hain" was read /ˈad kˈɑːt hˈeɪn/
+— "add cart hain". Now Hindi words are transliterated and English words kept in Latin letters,
+which the Hindi phonemiser hands to its English rules.
+
+The bigger problem was not the voice at all. The speakers were at 153%; PipeWire's volume is
+cubic, a gain of 3.58, and at that gain **30% of the voiced frames clipped**. Every line is now
+brought to one loudness and its peaks held under what the sink can pass at its current volume
+(`jarvis/audio/loudness.py`); the system volume is left alone.
+
+Before speech, `jarvis/audio/speech_text.py` rewrites what was written for the screen: phone
+numbers become "the number ending 32 10", links their site, `a² + b² = c²` "ay squared plus b
+squared equals c squared", `127.0.0.1:8770` "local port 8770", `arjun-chandra-7` "Arjun Chandra",
+code "the code is on screen"; tokens, keys and long ids are never spoken. Pronunciations come from
+the dictation dictionary's `pronunciation` field. `JARVIS_HONORIFIC` sets "sir" (default), "sire",
+or nothing.
+
+If Kokoro fails, Piper takes over and says so once ("My main voice isn't available…"); Piper is
+English-only here, so Hindi is then shown rather than mangled. Common acknowledgements are
+synthesised at start-up.
 
 Kokoro has no emotion conditioning, and nothing here pretends otherwise. What it has is a speed
 control, and that is enough for *delivery* — four of them, picked from the words before any model
@@ -132,6 +402,14 @@ so the silence contained the entire generation. Now the sentences are spoken as 
 written. Measured end to end against a local model: a three-sentence answer starts 0.76s sooner,
 an eight-sentence answer 3.20s sooner — 56% of the wait. The saving is the generation time of
 everything after the first sentence, so it grows with the answer, which is the right way round.
+
+Measured now, on Groq: the whole 327-character answer arrived 2.12 s after the question and its
+first fragment 2.11 s — generation is so fast that streaming the text buys almost nothing; what
+remains is synthesis. Kokoro costs ~0.45 s plus ~0.29 s per second of speech, so the opening is
+cut at the first clause after ~48 characters (~0.8 s) instead of ~90 (~1.3 s). A request that has
+said nothing after 1.4 s gets a cached "Give me a moment, sir. I'm working on it." Only questions
+are streamed (`/chat/stream`); an action's reply is spoken once it has been checked, because a
+claim to have done something is verified after the model writes it.
 
 A turn that calls a tool speaks nothing while it runs. A model that says "let me open that for
 you" and then calls a tool must not have said it out loud, and unlike a mistake on screen that
@@ -220,6 +498,28 @@ is not offered to the brain at all, so it cannot promise a picture it has no way
 Loaded, the model holds 5.4 GB of memory, so it is released five minutes after the last picture;
 reloading it and making another costs under seven seconds. Generation takes six of eight cores,
 leaving two for Whisper to keep hearing you — measured, that costs the picture nothing.
+
+## Changing how Jarvis behaves — and fixing him
+
+Most requests about Jarvis himself are settings, not code: "disable your animations",
+"animations wapas on kar do", "speak slightly faster", "thoda tez bolo", "don't announce
+notifications for two hours", "keep listening for twelve seconds", "make the teaching pen less
+bright", "turn off away-mode replies immediately", "undo that". Each is applied live, and
+confirmed only when the part that owns it reports back — the overlay counts its running
+animations, the voice reports the speed it will read at. Otherwise the answer says the change
+was saved but not yet confirmed.
+
+A report of something broken — "WhatsApp search is showing the wrong contact again" — gets
+"I'll investigate that. Give me a few minutes." Jarvis reproduces it with a failing test in an
+isolated worktree, prepares the smallest fix, runs the tests in a sandbox with no network, and
+activates only what the safety policy allows: low-risk fixes automatically (announced, health
+checked, rolled back on any failure); anything touching approvals, messaging, contacts, away
+mode, secrets or services only after "approve the … repair". Ask "how far are you?", "show me
+what changed", "cancel that repair" or "undo your last repair". Only your own voice, overlay,
+web UI and terminal can ask; a message, a web page or your screen never can.
+
+`JARVIS_SELF_REPAIR_DISABLED=1` turns code repair off entirely; settings keep working. Design,
+threat model and recovery: `docs/SELF_REPAIR.md`.
 
 ## Coding, in the editor where you can watch it
 

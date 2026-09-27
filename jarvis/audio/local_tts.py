@@ -116,7 +116,19 @@ def warmup(model_path: str) -> bool:
 def _synth_chunk_api(voice, text: str) -> tuple[bytes, int]:
     pcm = bytearray()
     rate = 22050
-    for chunk in voice.synthesize(text):
+    config = None
+    try:
+        from piper import SynthesisConfig
+
+        from ..settings.live import voice_speed_factor
+
+        factor = voice_speed_factor()
+        if abs(factor - 1.0) > 1e-3:
+            # Piper's pace is a length scale: smaller is faster.
+            config = SynthesisConfig(length_scale=round(1.0 / factor, 3))
+    except Exception:  # noqa: BLE001 — an older piper reads at its own pace
+        config = None
+    for chunk in (voice.synthesize(text, syn_config=config) if config else voice.synthesize(text)):
         pcm.extend(chunk.audio_int16_bytes)
         rate = chunk.sample_rate
     return bytes(pcm), rate
@@ -163,8 +175,40 @@ def synth(text: str, model_path: str) -> tuple[bytes, int]:
     return _synth_chunk_cli(text, model_path)
 
 
+# Said once, the first time the backup voice speaks in place of the main one: silently switching
+# to a less clear voice leaves the person wondering what went wrong with their ears.
+FALLBACK_NOTICE = "My main voice isn't available, so I'm using the backup voice."
+_HINDI_UNSAYABLE = "That part is in Hindi, and the backup voice can't say it. It's on screen."
+_fallback = {"announced": False}
+
+
+def _piper_stream(text: str, model_path: str, stop_event: Optional[threading.Event]):
+    from .speech_text import language_of
+
+    voice = _get_voice(model_path)
+    if not _fallback["announced"] and _better_voice_available():
+        # Kokoro is installed and failed: this is a fallback, not the configured voice.
+        _fallback["announced"] = True
+        text = f"{FALLBACK_NOTICE} {text}"
+    said_unsayable = False
+    for chunk in split_for_speech(text):
+        if stop_event is not None and stop_event.is_set():
+            return
+        if language_of(chunk) != "en":
+            # Piper here is English-only: Devanagari comes out as silence, Hinglish as English
+            # misreadings. Say so once rather than mangle it.
+            if said_unsayable:
+                continue
+            chunk, said_unsayable = _HINDI_UNSAYABLE, True
+        if voice is not None:
+            yield _synth_chunk_api(voice, chunk)
+        else:
+            yield _synth_chunk_cli(chunk, model_path)
+
+
 def synth_stream(
-    text: str, model_path: str, stop_event: Optional[threading.Event] = None
+    text: str, model_path: str, stop_event: Optional[threading.Event] = None,
+    split_first: bool = True,
 ) -> Iterator[tuple[bytes, int]]:
     """Yield (pcm, sample_rate) per speakable chunk, synthesising as the caller consumes.
 
@@ -173,28 +217,51 @@ def synth_stream(
     replies and the announcements all get it at once — and a machine without the weights keeps
     working exactly as before.
     """
+    cached = _ACK_CACHE.get(text.strip())
+    if cached is not None:
+        yield cached
+        return
     if _better_voice_available():
         from . import kokoro_tts
 
         emitted = False
         try:
-            for item in kokoro_tts.synth_stream(text, stop_event=stop_event):
+            for item in kokoro_tts.synth_stream(text, stop_event=stop_event, split_first=split_first):
                 emitted = True
                 yield item
+            _fallback["announced"] = False      # the main voice is back: say so again next time
             return
         except Exception:  # noqa: BLE001 - fall through to Piper rather than going silent
             if emitted:
                 # Replaying the whole answer in Piper after Kokoro said its first sentence
                 # sounds like Jarvis repeating himself. The next reply may use the fallback.
                 return
-    voice = _get_voice(model_path)
-    for chunk in split_for_speech(text):
-        if stop_event is not None and stop_event.is_set():
-            return
-        if voice is not None:
-            yield _synth_chunk_api(voice, chunk)
-        else:
-            yield _synth_chunk_cli(chunk, model_path)
+    yield from _piper_stream(text, model_path, stop_event)
+
+
+# Short lines said often, synthesised once at start-up: "Done, sir." should not wait on a model.
+ACKNOWLEDGEMENTS = ("Done, sir.", "Give me a moment, sir. I'm working on it.",
+                    "Give me a moment, sir. I'm checking.", "Alright, sir.", "Stopped, sir.",
+                    "Cancelled, sir.", "Sorry sir, I didn't catch that.", "Paused, sir.",
+                    "Playing, sir.", "Next, sir.", "Going back, sir.")
+_ACK_CACHE: dict[str, tuple[bytes, int]] = {}
+
+
+def warm_acknowledgements(model_path: str) -> int:
+    """Synthesise the acknowledgements into memory. Returns how many are ready."""
+    from .speech_text import with_honorific
+
+    for line in ACKNOWLEDGEMENTS:
+        spoken = with_honorific(line)
+        if spoken in _ACK_CACHE:
+            continue
+        try:
+            pcm, rate = synth(spoken, model_path)
+        except Exception:  # noqa: BLE001 - a cache is an optimisation, never a requirement
+            continue
+        if pcm:
+            _ACK_CACHE[spoken] = (pcm, rate)
+    return len(_ACK_CACHE)
 
 
 # --------------------------------------------------------------- speaking while it is written
@@ -209,7 +276,7 @@ def synth_stream(
 # Cut the opening on a clause as well, for the same reason kokoro_tts does: the first thing said
 # should be short, because nothing can be heard until it is synthesised.
 _CLAUSE_BREAK = re.compile(r",\s")
-_FIRST_PIECE_CHARS = 90
+_FIRST_PIECE_CHARS = 48
 
 # A full stop that is not the end of a sentence. Speaking "Dr" and then "Smith is waiting" as two
 # utterances puts a breath in the middle of a name.
@@ -217,7 +284,7 @@ _NOT_AN_ENDING = re.compile(
     r"(?:\b(?:mr|mrs|ms|dr|prof|sr|jr|st|vs|etc|e\.g|i\.e|approx|fig|no)\.|"
     r"\b[A-Za-z]\.)\s*$", re.IGNORECASE)
 
-_ENDS_A_SENTENCE = re.compile(r"[.!?]['\")\]]?\s")
+_ENDS_A_SENTENCE = re.compile(r"[.!?।]['\")\]]?\s")
 
 
 def sentences_as_they_arrive(deltas: Iterable[str]) -> Iterator[str]:
@@ -234,6 +301,19 @@ def sentences_as_they_arrive(deltas: Iterable[str]) -> Iterator[str]:
             continue
         buffer += delta
         while True:
+            # Inside a code block nothing is a sentence: "x = 1. y = 2" would otherwise be spoken
+            # in pieces. Wait for the fence to close; the normaliser then replaces the block.
+            if buffer.count("```") % 2:
+                break
+            fence = buffer.rfind("```")
+            if fence >= 0:
+                # A closed block goes out whole, with whatever led into it; the normaliser
+                # turns it into "The code is on screen."
+                piece, buffer = buffer[:fence + 3], buffer[fence + 3:]
+                first = False
+                if piece.strip():
+                    yield piece.strip()
+                continue
             # The opening is allowed to break on a comma, once, and only while it is long enough
             # that waiting for the full stop would be the slower thing.
             if first and len(buffer) >= _FIRST_PIECE_CHARS:
@@ -275,6 +355,7 @@ def speak_as_it_arrives(
     on_first_audio: Optional[callable] = None,
     on_level: Optional[callable] = None,
     on_sentence: Optional[callable] = None,
+    on_played: Optional[callable] = None,
 ) -> str:
     """Speak a reply while it is still being written. Returns everything that was said.
 
@@ -285,9 +366,13 @@ def speak_as_it_arrives(
     said: list[str] = []
 
     def pieces() -> Iterator[str]:
+        from .speech_text import is_filler, leaks_internals
+
         for sentence in sentences_as_they_arrive(deltas):
             if stop_event is not None and stop_event.is_set():
                 return
+            if leaks_internals(sentence) or is_filler(sentence):
+                continue                  # a tool name, a greeting, an offer of help: never said
             said.append(sentence)
             if on_sentence is not None:
                 # Here, and not around `deltas`: this is where whole sentences exist. Reporting
@@ -295,12 +380,28 @@ def speak_as_it_arrives(
                 on_sentence(sentence)
             yield sentence
 
-    def audio() -> Iterator[tuple[bytes, int]]:
-        for sentence in pieces():
-            yield from synth_stream(sentence, model_path, stop_event)
+    def audio() -> Iterator[tuple]:
+        from .speech_text import normalize
 
-    _play(audio(), output_device, stop_event, on_first_audio, on_level)
+        for index, sentence in enumerate(pieces()):
+            yield from _labelled(normalize(sentence), sentence, model_path, stop_event, index == 0)
+
+    _play(audio(), output_device, stop_event, on_first_audio, on_level, on_played)
     return " ".join(said)
+
+
+def _labelled(spoken: str, label: str, model_path: str, stop_event, first: bool) -> Iterator[tuple]:
+    """(pcm, rate, label) for one sentence; the label is attached to its last chunk only, so
+    `on_played` fires once the whole sentence has actually been heard."""
+    if not spoken.strip():
+        return
+    last = None
+    for item in synth_stream(spoken, model_path, stop_event, split_first=first):
+        if last is not None:
+            yield (*last, None)
+        last = item
+    if last is not None:
+        yield (*last, label)
 
 
 def _peak(pcm: bytes) -> float:
@@ -323,6 +424,7 @@ def speak(
     stop_event: Optional[threading.Event] = None,
     on_first_audio: Optional[callable] = None,
     on_level: Optional[callable] = None,
+    on_played: Optional[callable] = None,
 ) -> None:
     """Speak `text`, starting playback on the first sentence.
 
@@ -333,26 +435,91 @@ def speak(
     text = (text or "").strip()
     if not text:
         return
-    _play(synth_stream(text, model_path, stop_event), output_device, stop_event,
-          on_first_audio, on_level)
+    if text in _ACK_CACHE:
+        _play(iter([(*_ACK_CACHE[text], text)]), output_device, stop_event, on_first_audio,
+              on_level, on_played)
+        return
+
+    def audio() -> Iterator[tuple]:
+        for index, sentence in enumerate(sentences_as_they_arrive([text + " "])):
+            if stop_event is not None and stop_event.is_set():
+                return
+            yield from _labelled(sentence, sentence, model_path, stop_event, index == 0)
+
+    _play(audio(), output_device, stop_event, on_first_audio, on_level, on_played)
 
 
-def _play(
-    audio: Iterator[tuple[bytes, int]],
+def speak_segments(
+    segments: list[str],
+    model_path: str,
     output_device: int = -1,
     stop_event: Optional[threading.Event] = None,
     on_first_audio: Optional[callable] = None,
     on_level: Optional[callable] = None,
+    on_start: Optional[callable] = None,
+    on_played: Optional[callable] = None,
 ) -> None:
-    """Play (pcm, rate) pairs as they are produced.
+    """Speak ``segments`` in order, each one a unit that something else is waiting on.
+
+    For the teaching overlay: every segment is a phrase with a picture that belongs to it, so
+    the segments are never merged or re-split into other sentences, and ``on_start(i, at_ms)``
+    is called as segment *i*'s first audio is handed to the device — ``at_ms`` being the wall
+    clock time it will actually be heard, the write time plus the stream's output latency. That
+    is what the picture is scheduled against: the sound, not an estimate of when it might start.
+    """
+    from .speech_text import normalize
+
+    def audio() -> Iterator[tuple]:
+        for index, segment in enumerate(segments):
+            if stop_event is not None and stop_event.is_set():
+                return
+            spoken = normalize(segment)
+            first = True
+            for item in _labelled(spoken, segment, model_path, stop_event, index == 0):
+                yield (*item, index if first else None)
+                first = False
+
+    _play(audio(), output_device, stop_event, on_first_audio, on_level, on_played, on_start)
+
+
+# When playback last actually stopped because it was asked to — what barge-in latency is
+# measured against (speech onset → this).
+PLAYBACK = {"stopped_at": 0.0}
+BLOCK_S = 0.04     # written 40 ms at a time: a stop is noticed within one block
+# ``latency="low"`` leaves only a very small PipeWire/PortAudio safety buffer.  Kokoro normally
+# synthesises faster than realtime, but a short CPU spike (screen capture, Whisper, Electron)
+# can still starve that buffer and the recovery is heard as a crackle or a burst.  100 ms is
+# enough scheduling headroom for this machine while ``abort()`` still makes barge-in immediate.
+OUTPUT_LATENCY_S = 0.10
+
+
+def _play(
+    audio: Iterator[tuple],
+    output_device: int = -1,
+    stop_event: Optional[threading.Event] = None,
+    on_first_audio: Optional[callable] = None,
+    on_level: Optional[callable] = None,
+    on_played: Optional[callable] = None,
+    on_start: Optional[callable] = None,
+) -> None:
+    """Play (pcm, rate[, label[, start]]) items as they are produced.
 
     Split out of `speak` so that speaking a finished reply and speaking one still being written
     share a player rather than having two of them drift apart. A worker synthesises ahead while
     this thread plays, so the gap between sentences is covered by audio already queued.
+
+    Every chunk is brought to one loudness and held under what the speakers can pass at their
+    current volume (loudness.py). A label on an item is handed to `on_played` once that item has
+    been played to the end — how an interrupted reply knows what was actually heard.
+
+    Stopping aborts the device stream rather than draining it: `stop()` plays out whatever is
+    buffered, which is exactly the half-second that makes an interruption feel ignored.
     """
     import sounddevice as sd
 
-    pending: "queue.Queue[Optional[tuple[bytes, int]]]" = queue.Queue(maxsize=2)
+    from . import loudness
+
+    pending: "queue.Queue[Optional[tuple]]" = queue.Queue(maxsize=2)
 
     def produce() -> None:
         try:
@@ -370,22 +537,42 @@ def _play(
 
     device = None if output_device < 0 else output_device
     stream = None
+    stream_rate = 0
     announced = False
+    stopped = False
+    gain = loudness.sink_gain()
     try:
         while True:
-            item = pending.get()
+            # Waiting for the next sentence is still speaking: a stop must be noticed here too.
+            # Found on the end-to-end run — an interruption in the gap between "Give me a moment"
+            # and the answer waited 1.3 s for the answer's first sentence before stopping.
+            try:
+                item = pending.get(timeout=BLOCK_S)
+            except queue.Empty:
+                if stop_event is not None and stop_event.is_set():
+                    stopped = True
+                    break
+                continue
             if item is None:
                 break
-            pcm, rate = item
+            pcm, rate = item[0], item[1]
+            label = item[2] if len(item) > 2 else None
+            start = item[3] if len(item) > 3 else None
             if not pcm:
                 continue
             if stop_event is not None and stop_event.is_set():
+                stopped = True
                 break
+            if stream is not None and rate != stream_rate:
+                # The fallback voice speaks at another rate: a stream is one rate.
+                stream.stop()
+                stream.close()
+                stream = None
             if stream is None:
-                stream = sd.RawOutputStream(
-                    samplerate=rate, channels=1, dtype="int16", device=device
-                )
+                stream = sd.RawOutputStream(samplerate=rate, channels=1, dtype="int16",
+                                            device=device, latency=OUTPUT_LATENCY_S)
                 stream.start()
+                stream_rate = rate
             if not announced:
                 announced = True
                 if on_first_audio is not None:
@@ -393,18 +580,40 @@ def _play(
                         on_first_audio()
                     except Exception:  # noqa: BLE001
                         pass
-            chunk = 4096
+            if start is not None and on_start is not None:
+                # Heard once what is already queued ahead of it has played: the stream's output
+                # latency, which is also how far ahead of the speaker these writes run.
+                try:
+                    ahead = float(getattr(stream, "latency", 0.0) or 0.0)
+                    on_start(start, (__import__("time").time() + ahead) * 1000.0)
+                except Exception:  # noqa: BLE001 — a picture must never stop the voice
+                    pass
+            pcm = loudness.shape(pcm, gain)
+            chunk = max(512, int(rate * BLOCK_S) * 2)
             for i in range(0, len(pcm), chunk):
                 if stop_event is not None and stop_event.is_set():
+                    stopped = True
                     break
                 block = pcm[i : i + chunk]
                 if on_level is not None:
                     on_level(_peak(block))
                 stream.write(block)
+            if stopped:
+                break
+            if label is not None and on_played is not None:
+                try:
+                    on_played(label)
+                except Exception:  # noqa: BLE001
+                    pass
     finally:
         if stream is not None:
-            stream.stop()
+            if stopped:
+                stream.abort()
+            else:
+                stream.stop()
             stream.close()
+        if stopped:
+            PLAYBACK["stopped_at"] = __import__("time").monotonic()
         # Drain so the producer thread can finish instead of blocking on a full queue.
         try:
             while pending.get_nowait() is not None:

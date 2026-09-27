@@ -253,6 +253,7 @@ def test_gain_pinned_at_maximum_is_turned_down(monkeypatch):
 def test_recovery_stops_at_the_first_rung_that_works(monkeypatch):
     """A rung that did not help must not be reported as the fix."""
     monkeypatch.setattr(inputs, "refresh_devices", lambda: None)
+    monkeypatch.setattr(inputs, "is_muted", lambda: False)     # never the real mixer
     # The first look after reopening finds a healthy device, so the ladder must stop there.
     verdicts = iter([False])
     monkeypatch.setattr(inputs, "sample", lambda *a, **k: inputs.Heard())
@@ -267,6 +268,7 @@ def test_recovery_stops_at_the_first_rung_that_works(monkeypatch):
 
 def test_recovery_admits_when_nothing_worked(monkeypatch):
     monkeypatch.setattr(inputs, "refresh_devices", lambda: None)
+    monkeypatch.setattr(inputs, "is_muted", lambda: False)     # never the real mixer
     monkeypatch.setattr(inputs, "sample", lambda *a, **k: inputs.Heard())
     monkeypatch.setattr(inputs, "broken_without_anyone_speaking", lambda _h: True)
     monkeypatch.setattr(inputs, "calm_the_gain", lambda: False)

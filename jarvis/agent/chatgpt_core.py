@@ -58,6 +58,8 @@ ROUTING:
   (compose a natural message yourself; the name resolves to their number). Save numbers with remember_contact.
 - Check email: <function=google_email_check>{{}}</function> · read one: google_email_read · send: google_email_send.
 - Calendar: <function=google_agenda>{{"days":"1"}}</function> · add event: google_calendar_create.
+- Draw something on the screen ("draw me a dragon", "sketch the Mona Lisa"): <function=draw_picture>{{"subject":"a dragon"}}</function>
+  You CAN draw — never say there is no drawing or image tool.
 - Check Instagram DMs: <function=instagram_dms>{{}}</function>
 - "What did I miss?" across WhatsApp + email + calendar: <function=catch_up>{{}}</function>
 - For deep/current RESEARCH or working through a project: use deep_research (it uses Perplexity).
@@ -113,7 +115,7 @@ class ChatGPTAgent:
         await self.session.start()
         # Away mode gets a fresh, no-tool temporary tab from this same browser context. It cannot
         # call this agent's send()/dispatch loop or inherit the primary Jarvis conversation.
-        from . import away
+        from .. import away_mode as away
 
         async def away_responder(messages: list[dict[str, str]]) -> str:
             return await self.session.ask_isolated(messages, timeout_s=60)
@@ -127,9 +129,9 @@ class ChatGPTAgent:
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
-        from . import away
+        from .. import away_mode as away
         # Do not leave a callback referring to a closed browser session behind.
-        if getattr(away, "_responder", None) is self._away_responder:
+        if away.get_responder() is self._away_responder:
             away.set_responder(None)
         await self.session.close()
 

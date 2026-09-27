@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 from ..config import Config
+from ..providers import DEFAULT_GROQ_FALLBACK
 from ..jobs.runner import JobRunner
 from ..memory import vault as vaultmod
 from . import action_claims, spoken, tool_contract, tool_router
@@ -67,7 +68,7 @@ You are running on Groq with function tools. Follow these rules exactly:
    - "Execute Fortress Protocol" or "Engage Focus Mode": Call `do_not_disturb` and set communication defense shields via WhatsApp away messages.
    - "Run Diagnostics Sequence" or "Protocol System Pulse": Call `system_stats` to query thermals, memory load, and system health.
    - "Initiate Protocol Nexus" or automation requests: Call `trigger_automation` to activate n8n webhook workflows that connect to thousands of external apps and services, or use `list_automations`/`remember_automation` to manage them.
-   - "Initiate Protocol Guardian" or OmniCore PA Shield: Use `process_incoming_communication`, `check_pa_status`, or `set_pa_status` to record everything (all texts/calls), detect implicit schedules (e.g. "tuition on 6:10"), and conduct autonomous 2-sided conversational PA interception when Arjun is out or in tuition.
+   - "Initiate Protocol Guardian" or OmniCore PA Shield: Use `set_pa_status` (or `set_away`) to *propose* away mode — the user approves it, replies introduce you as JARVIS, their assistant, and calls are only noted (they cannot be answered); `check_pa_status` reports whether it is on.
    - "Engage Omni-Control" or full laptop control: Use `enable_full_laptop_autonomy` and `control_laptop_full` (along with GUI tools like `find_and_click` and `run_bash`) to command and automate all tools across the entire laptop without friction.
 9. LINKEDIN: Route by semantic intent, never by matching a fixed phrase. Only an explicit request
    for the public profile page uses `linkedin_open_profile`; performance or metrics use
@@ -271,7 +272,7 @@ class GroqAgent:
         base_url, api_key, self.model = config.llm_params()
         # When the primary model is rate-limited (429), fall back to a high-limit fast model so Jarvis
         # keeps answering instead of erroring. Only applies to Groq (llama models on the free tier).
-        self.fallback_model = os.environ.get("JARVIS_GROQ_FALLBACK", "openai/gpt-oss-20b")
+        self.fallback_model = os.environ.get("JARVIS_GROQ_FALLBACK", DEFAULT_GROQ_FALLBACK)
         self._on_fallback = False
         self._on_local = False  # switched to local Ollama after a cloud rate-limit
         # A local Ollama endpoint needs no key, and the SDK refuses to build a client with an empty
@@ -645,10 +646,15 @@ class GroqAgent:
 
     async def send(self, user_text: str) -> str:
         from ..commands import handle
-        direct = await handle(user_text, self.config, getattr(self, "command_session", "local"))
+        session = getattr(self, "command_session", "local")
+        direct = await handle(user_text, self.config, session)
         if direct is not None:
             return direct
+        from ..approvals import MANAGER
+        held_before = {a.id for a in MANAGER.pending(session)}
         self._route_query = user_text   # pick this turn's tool shortlist from what was asked
+        from . import groq_tools as _tools
+        _tools.CURRENT_REQUEST["text"] = user_text      # what the messaging tool checks against
         self._failed_calls.clear()
         self._failed_calls_advice.clear()
         self._tools_ran_this_turn = False
@@ -706,6 +712,15 @@ class GroqAgent:
             # whichever specialist is working.
             self.messages.append({"role": "system",
                                   "content": f"{TURN_NOTE} {self._specialist.instruction}"})
+        # "Shorter answers, please" is a setting, read each turn, so it holds from the next reply.
+        try:
+            from ..settings.runtime import verbosity_instruction
+
+            length = verbosity_instruction()
+        except Exception:  # noqa: BLE001
+            length = ""
+        if length:
+            self.messages.append({"role": "system", "content": f"{TURN_NOTE} {length}"})
         self.messages.append(turn)
         self._turn_times[id(turn)] = time.time()
 
@@ -860,6 +875,13 @@ class GroqAgent:
             linkedin_executed = linkedin_executed or any(
                 name.startswith("linkedin_") for _, name, _ in triples
             )
+            # A tool held something for a yes. The turn ends on the approval prompt itself: given
+            # "Ready to send… say yes" back, the model told the owner "I've sent the message".
+            held = [a for a in MANAGER.pending(session) if a.id not in held_before]
+            if held:
+                reply = " ".join(a.prompt() for a in held)
+                self.messages.append({"role": "assistant", "content": reply})
+                break
 
         vaultmod.git_autocommit(self.config.vault_path, f"jarvis: memory update {now:%Y-%m-%d %H:%M}")
         self._trim()

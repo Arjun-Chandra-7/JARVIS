@@ -8,6 +8,8 @@ Two backends, auto-selected:
 
 from __future__ import annotations
 
+from ..providers import DEFAULT_GEMINI_MODEL
+
 import base64
 import re
 import tempfile
@@ -55,7 +57,21 @@ def _ollama(path: str, question: str, model: str) -> Optional[str]:
         return f"(vision error: {exc})"
 
 
-def _gemini(path: str, question: str, key: str, model: str = "gemini-3.6-flash") -> Optional[str]:
+def _gemini_provider(model: str, key: str):
+    from .. import providers as pv
+    return pv.Provider("gemini", pv.GEMINI_URL, key, model, "strong")
+
+
+def _remember_gemini_failure(model: str, key: str, status: int, message: str) -> None:
+    """Open Gemini's breaker so a persistent 403 is not paid for on every screenshot."""
+    from .. import providers as pv
+
+    class _E(Exception):
+        status_code = status
+    pv.record_failure(_gemini_provider(model, key), pv.classify(_E(message)))
+
+
+def _gemini(path: str, question: str, key: str, model: str = DEFAULT_GEMINI_MODEL) -> Optional[str]:
     import httpx
 
     img = _b64(path)
@@ -74,6 +90,7 @@ def _gemini(path: str, question: str, key: str, model: str = "gemini-3.6-flash")
         j = r.json()
         if not r.is_success:
             message = (j.get("error") or {}).get("message", f"HTTP {r.status_code}")
+            _remember_gemini_failure(model, key, r.status_code, message)
             return f"(vision error: {message[:200]})"
         return "".join(p.get("text", "") for p in j["candidates"][0]["content"]["parts"]).strip()
     except Exception as exc:  # noqa: BLE001
@@ -85,13 +102,18 @@ def available(config) -> str | None:
     if prov == "none":
         return None
     if prov == "gemini":
-        return "gemini" if config.gemini_api_key else None
+        return "gemini" if config.gemini_api_key and not _gemini_paused(config) else None
     if prov == "ollama":
         return "ollama" if _ollama_up(config.ollama_vision_model) else None
-    # auto: local first (free, no quota), then Gemini
+    # auto: local first (free, no quota), then Gemini — unless its breaker is open.
     if _ollama_up(config.ollama_vision_model):
         return "ollama"
-    return "gemini" if config.gemini_api_key else None
+    return "gemini" if config.gemini_api_key and not _gemini_paused(config) else None
+
+
+def _gemini_paused(config) -> bool:
+    from .. import providers as pv
+    return pv.blocked(_gemini_provider(config.gemini_model, config.gemini_api_key)) is not None
 
 
 def describe(path: str, question: str, config) -> Optional[str]:
@@ -102,7 +124,7 @@ def describe(path: str, question: str, config) -> Optional[str]:
         return _ollama(path, q, config.ollama_vision_model)
     if prov == "gemini":
         return _gemini(path, q, config.gemini_api_key,
-                       getattr(config, "gemini_model", "gemini-3.6-flash"))
+                       getattr(config, "gemini_model", DEFAULT_GEMINI_MODEL))
     return None
 
 

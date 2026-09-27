@@ -63,6 +63,24 @@ DEFAULT_MASKS = (
 )
 
 
+def is_secret_path(path: str | Path) -> bool:
+    """Whether a file tool should refuse this path: inside a masked credential directory, or an
+    env/key file. The shell cannot see these through the sandbox; the file tools must not either,
+    or reading a key and fetching a URL with it in the query is a two-call exfiltration."""
+    try:
+        p = Path(path).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return True
+    for mask in DEFAULT_MASKS:
+        root = Path(mask).expanduser()
+        if p == root or root in p.parents:
+            return True
+    name = p.name.lower()
+    return (name == ".env" or name.startswith(".env.") and name != ".env.example"
+            or name.endswith((".pem", ".key")) or name in {"id_rsa", "id_ed25519", "mobile-token",
+                                                          "credentials.json", "token.json"})
+
+
 @dataclass
 class Policy:
     """What a command may reach."""

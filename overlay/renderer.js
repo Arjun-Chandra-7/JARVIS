@@ -130,6 +130,7 @@ function onEvent(kind, text) {
   else if (kind === "heard") { addMsg("you", text); setState("thinking"); }
   else if (kind === "reply") { addMsg("jarvis", text); setState("speaking"); setTimeout(() => setState(null), Math.min(6000, 1600 + text.length * 28)); }
   else if (kind === "phone") { addMsg("sys", "📱 " + text); toast("📱 " + text); }
+  else if (kind === "studio") toast("◆ 3D Studio · " + text);   // "Building parts", "Ready in Blender"
   else if (kind === "sleep") setState(null);
   else if (kind === "sports_toggle") { window.jarvis.sportsToggle(text); }
 }

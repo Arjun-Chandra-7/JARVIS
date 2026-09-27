@@ -50,5 +50,5 @@ def open_setup() -> dict:
     from ..integrations import web_browser
 
     if apps.open_url("https://chatgpt.com/", browser=web_browser.preferred()):
-        opened.append("ChatGPT in Opera")
+        opened.append(f"ChatGPT in {web_browser._spoken(web_browser.preferred()) or 'the browser'}")
     return {"closed": len(closed), "opened": opened}

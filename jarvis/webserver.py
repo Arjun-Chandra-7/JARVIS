@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from .agent.factory import make_agent
 from .config import CONFIG
-from . import hud_state
+from . import build_info, hud_state
 from .memory.vault import ensure_vault
 
 if getattr(sys, "frozen", False):
@@ -26,18 +26,36 @@ else:
 
 _agent: dict = {"a": None}
 _lock = asyncio.Lock()
+_providers: dict = {"summary": "not checked yet", "strong": None}
+
+
+async def _provider_health() -> None:
+    """Which models answer, checked once at startup (model lists only — no tokens). A retired
+    model or a denied project is said here, once, instead of being discovered on every request."""
+    from . import providers
+    try:
+        results = await asyncio.to_thread(providers.health_check, CONFIG, 8.0)
+    except Exception as exc:  # noqa: BLE001 — a health check must never stop the server starting
+        _providers.update(summary=f"provider check failed: {type(exc).__name__}", strong=None)
+        return
+    _providers.update(summary=providers.summary(results),
+                      strong=any(h.ok and h.provider.quality == "strong" for h in results))
+    print("providers:\n  " + _providers["summary"].replace("\n", "\n  "), flush=True)
+    if not _providers["strong"]:
+        await _emit("error", "No strong model available — explanations are off. See /providers.")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_vault(CONFIG.vault_path, CONFIG.user_name)
+    provider_check = asyncio.create_task(_provider_health())
     from .agent import ai_researcher
     ai_researcher.start_research_agent()
     agent = make_agent(CONFIG, mode="text", confirm_fn=None, on_tool=None)
     await agent.__aenter__()
     _agent["a"] = agent
-    from .agent import pa_daemon
-    pa_daemon.start(CONFIG)
+    from .away_mode import daemon as away_daemon
+    away_daemon.start(CONFIG)
     from .integrations import coding_jobs
     loop = asyncio.get_running_loop()
 
@@ -76,7 +94,7 @@ async def lifespan(app: FastAPI):
             presence.service().stop()
         except Exception:  # noqa: BLE001
             pass
-        pa_daemon.stop(CONFIG)
+        away_daemon.stop()
         await agent.__aexit__(None, None, None)
 
 
@@ -153,6 +171,7 @@ app.add_middleware(
 class Chat(BaseModel):
     message: str = Field(min_length=1, max_length=30000)
     session_id: str = Field(default="local", max_length=80)
+    event_id: str = Field(default="", max_length=64)
 
 
 @app.post("/chat")
@@ -161,18 +180,154 @@ async def chat(c: Chat):
     if agent is None:
         return {"reply": "Brain still booting, sir — one moment."}
     from .commands import clean_text
+    from .dedupe import CHAT as dedupe
     shown = clean_text(c.message) or c.message.strip()[:400]
     hud_state.log_turn("you", shown)
     await _emit("heard", shown)          # every turn — typed, voice, phone, telegram — hits the HUD
     async with _lock:
+        # Checked inside the lock: a duplicate queued behind the original sees it finished.
+        again = dedupe.seen(c.message, c.event_id)
+        if again is not None:
+            from . import route_log
+            route_log.record(intent="duplicate", action="skipped")
+            return {"reply": again, "duplicate": True}
         try:
             agent.command_session = c.session_id
             reply = await agent.send(c.message)
         except Exception as exc:  # noqa: BLE001
             reply = f"[error] {exc}"
+        dedupe.done(c.message, reply, c.event_id)
     hud_state.log_turn("jarvis", reply)
     await _emit("reply", reply)
     return {"reply": reply}
+
+
+@app.post("/chat/stream")
+async def chat_stream(c: Chat):
+    """/chat, with the reply's text sent as it is written — one JSON object per line.
+
+    {"delta": "..."} while the model writes, then {"reply": "...", "streamed": bool}. The voice
+    process speaks the deltas as sentences complete, so a spoken answer starts after its first
+    sentence instead of after its last.
+
+    Only questions stream. An answer to "open YouTube" or "send it" is spoken once it is final,
+    because the text a model writes about an action is checked afterwards — a claim that nothing
+    backs up is replaced — and saying "done" before that check is exactly what must not happen.
+    """
+    from fastapi.responses import StreamingResponse
+
+    agent = _agent["a"]
+    if agent is None:
+        async def booting():
+            yield json.dumps({"reply": "Brain still booting, sir — one moment.", "streamed": False}) + "\n"
+        return StreamingResponse(booting(), media_type="application/x-ndjson")
+
+    from .agent.gate import wants_something_done
+    from .commands import clean_text
+    from .dedupe import CHAT as dedupe
+    shown = clean_text(c.message) or c.message.strip()[:400]
+    stream_it = not wants_something_done(shown)
+    deltas: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    async def run() -> str:
+        hud_state.log_turn("you", shown)
+        await _emit("heard", shown)
+        async with _lock:
+            again = dedupe.seen(c.message, c.event_id)
+            if again is not None:
+                from . import route_log
+                route_log.record(intent="duplicate", action="skipped")
+                return again
+            try:
+                agent.command_session = c.session_id
+                if stream_it:
+                    agent.on_reply_delta = lambda piece: loop.call_soon_threadsafe(deltas.put_nowait, piece)
+                reply = await agent.send(c.message)
+            except Exception as exc:  # noqa: BLE001
+                reply = f"[error] {exc}"
+            finally:
+                agent.on_reply_delta = None
+            dedupe.done(c.message, reply, c.event_id)
+        hud_state.log_turn("jarvis", reply)
+        await _emit("reply", reply)
+        return reply
+
+    async def gen():
+        task = asyncio.create_task(run())
+        streamed = False
+        try:
+            while True:
+                getter = asyncio.create_task(deltas.get())
+                done, _ = await asyncio.wait({getter, task}, return_when=asyncio.FIRST_COMPLETED)
+                if getter in done:
+                    streamed = True
+                    yield json.dumps({"delta": getter.result()}, ensure_ascii=False) + "\n"
+                    continue
+                getter.cancel()
+                while not deltas.empty():
+                    streamed = True
+                    yield json.dumps({"delta": deltas.get_nowait()}, ensure_ascii=False) + "\n"
+                break
+            yield json.dumps({"reply": task.result(), "streamed": streamed}, ensure_ascii=False) + "\n"
+        finally:
+            # The listener went away (barge-in, cancel): the turn still finishes — an action
+            # already under way is not abandoned half-done — but nothing more is sent.
+            pass
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
+class ConversationEnd(BaseModel):
+    session_id: str = Field(default="voice", max_length=80)
+
+
+@app.post("/conversation/end")
+async def conversation_end(body: ConversationEnd):
+    """The spoken conversation is over: forget what "it" and "the first one" referred to.
+
+    Approvals are deliberately left alone — a message held for a yes survives the goodbye and
+    expires on its own clock.
+    """
+    from . import context
+    context.forget(body.session_id)
+    return {"ok": True}
+
+
+@app.get("/providers")
+async def provider_status():
+    """The startup provider check, and which breakers are open now."""
+    from . import providers
+    open_now = {p.id: providers.blocked(p) for p in providers.configured(CONFIG)}
+    return {"summary": _providers["summary"], "strong_available": _providers["strong"],
+            "paused": {k: {"kind": v["kind"], "until": v["until"]} for k, v in open_now.items() if v}}
+
+
+@app.get("/approvals")
+async def approvals_pending(session_id: str = "local"):
+    """What is waiting for a yes, for the overlay to show. Summaries only; never the details."""
+    from .approvals import MANAGER
+    return {"pending": [{"id": a.id, "kind": a.kind, "summary": a.summary, "expires": a.expires,
+                         "fingerprint": a.fingerprint()} for a in MANAGER.pending(session_id)]}
+
+
+class Decision(BaseModel):
+    decision: str = Field(pattern="^(confirm|cancel)$")
+    fingerprint: str = Field(default="", max_length=32)
+
+
+@app.post("/approvals/{action_id}")
+async def approvals_decide(action_id: str, d: Decision):
+    """An overlay button. The fingerprint it was shown must still match, or nothing runs."""
+    from .approvals import MANAGER
+    async with _lock:
+        if d.decision == "cancel":
+            out = MANAGER.cancel(action_id)
+        else:
+            out = await MANAGER.confirm(action_id, fingerprint=d.fingerprint or None)
+    hud_state.log_turn("jarvis", out.message)
+    await _emit("reply", out.message)
+    return {"status": out.status, "message": out.message}
 
 
 @app.get("/coding/jobs")
@@ -261,8 +416,24 @@ async def emit(e: Emit):
         hud_state.log_turn("you", e.text)
     elif e.kind == "reply" and e.text:
         hud_state.log_turn("jarvis", e.text)
+    elif e.kind == "teach_event" and '"displays"' in e.text:
+        # The teaching overlay says which monitors it can draw on; a lesson asks here.
+        try:
+            evt = json.loads(e.text)
+            if evt.get("type") == "displays" and isinstance(evt.get("displays"), list):
+                _TEACH_DISPLAYS[:] = evt["displays"][:16]
+        except ValueError:
+            pass
     await _emit(e.kind, e.text)
     return {"ok": True}
+
+
+_TEACH_DISPLAYS: list = []
+
+
+@app.get("/teach/displays")
+async def teach_displays():
+    return {"displays": _TEACH_DISPLAYS}
 
 
 @app.get("/spotify")
@@ -415,7 +586,57 @@ async def health():
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
     h["booting"] = _agent["a"] is None
+    h["build"] = build_info.info()
+    voice = build_info.published("voice")
+    h["voice_build"] = voice and {k: voice.get(k) for k in ("commit", "dirty", "started_at")}
     return h
+
+
+@app.get("/settings")
+async def settings_list():
+    """Every runtime setting with its schema and current value; the overlay applies its part."""
+    from . import preferences
+    from .settings import registry, runtime
+
+    revision = preferences.revision()
+    return {"revision": revision, "settings": registry.describe_all(),
+            "overlay": runtime.overlay_state(revision)}
+
+
+class EffectiveReport(BaseModel):
+    component: str = Field(max_length=20)
+    revision: int = Field(ge=0)
+    values: dict = Field(default_factory=dict)
+    observed: dict = Field(default_factory=dict)
+
+
+@app.post("/settings/effective")
+async def settings_effective(r: EffectiveReport):
+    """The overlay says what it is actually doing after a settings change — measured in the page,
+    not echoed back — so "animations are off" is only said once they are."""
+    from .settings import runtime
+
+    if r.component != "overlay":        # the voice reports through its own file
+        return {"ok": False, "error": "unknown component"}
+    keep = ("motion", "running_animations", "intensity", "visible")
+    observed = {k: r.observed[k] for k in keep if k in r.observed
+                and isinstance(r.observed[k], (bool, int, float, str)) and len(str(r.observed[k])) < 20}
+    values = {k: v for k, v in r.values.items() if k in runtime.OVERLAY_KEYS and isinstance(v, (bool, int, float))}
+    runtime.report("overlay", r.revision, values, observed)
+    return {"ok": True}
+
+
+@app.get("/repairs")
+async def repairs():
+    """Repair jobs — safe metadata only — for the overlay's compact status."""
+    from .selfrepair.jobs import JobStore
+
+    rows = []
+    for job in JobStore().all()[-10:]:
+        rows.append({"id": job.id, "state": job.state, "component": job.component, "summary": job.summary,
+                     "tier": job.tier, "outcome": job.outcome, "updated": job.updated,
+                     "changed_files": job.changed_files, "candidate_commit": job.candidate_commit[:12]})
+    return {"jobs": rows}
 
 
 @app.get("/weather")

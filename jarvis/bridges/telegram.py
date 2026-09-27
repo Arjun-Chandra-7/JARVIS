@@ -71,6 +71,9 @@ class TelegramBridge:
                     except Exception:  # noqa: BLE001
                         pass
                     try:
+                        # Named, not "local": a bridged message may not change settings or
+                        # start a repair, and only the source says which one this is.
+                        agent.command_session = "telegram"
                         reply = await agent.send(text)
                     except Exception as exc:  # noqa: BLE001
                         reply = f"[error] {exc}"

@@ -51,6 +51,12 @@ SAMPLE_RATE = 24000
 # A less metallic British male voice than George. Override with JARVIS_KOKORO_VOICE.
 DEFAULT_VOICE = os.environ.get("JARVIS_KOKORO_VOICE", "bm_daniel")
 
+# Hindi, and Roman Hinglish once it is written in Devanagari (speech_text.voice_text). Measured
+# through Whisper on a speaker-like channel: Hindi read by the English voice, CER 0.46; by the
+# Hindi voices through the Hindi phonemiser, 0.31-0.37. The English voice keeps English, where it
+# measured best (WER 0.087 against 0.11-0.15 for the others).
+HINDI_VOICE = os.environ.get("JARVIS_KOKORO_HINDI_VOICE", "hm_omega")
+
 # American English 'a', British English 'b'. Must agree with the voice's first letter or the
 # grapheme-to-phoneme stage mispronounces its way through everything.
 _LANG_FOR_PREFIX = {"a": "a", "b": "b"}
@@ -200,6 +206,33 @@ def _lang_for(voice: str) -> str:
     return "en-gb" if voice.startswith("b") else "en-us"
 
 
+_LANGUAGE_FLAG = re.compile(r"\((?:en|hi|en-us|en-gb)\)")
+
+
+def effective_speed(delivery: Delivery) -> float:
+    """The speed a line with this delivery is actually read at: its pace times the owner's
+    "speak faster / slower" setting. The voice reports this number back when asked whether a
+    speed change took, so it has to be the same one handed to the model."""
+    from ..settings.live import voice_speed_factor
+
+    return round(delivery.speed * voice_speed_factor(), 3)
+
+
+def _create(model, sentence: str, voice: str, speed: float):
+    """One sentence in the right voice: Hindi and Hinglish through the Hindi phonemiser.
+
+    The phonemiser marks its switches into English for Latin words — "(en)skwˈeəɹ(hi)" — and
+    those markers are not phonemes; left in, the model would try to say them.
+    """
+    from .speech_text import voice_text
+
+    lang, text = voice_text(sentence)
+    if lang == "hi":
+        phonemes = _LANGUAGE_FLAG.sub("", model.tokenizer.phonemize(text, "hi"))
+        return model.create(phonemes, voice=HINDI_VOICE, speed=speed, is_phonemes=True)
+    return model.create(sentence, voice=voice, speed=speed, lang=_lang_for(voice))
+
+
 def synth(text: str, voice: str = "", delivery: Optional[Delivery] = None) -> tuple[bytes, int]:
     """The whole line as one buffer, matching local_tts.synth's shape."""
     said = (text or "").strip()
@@ -208,13 +241,16 @@ def synth(text: str, voice: str = "", delivery: Optional[Delivery] = None) -> tu
     chosen = delivery or delivery_for(said)
     use_voice = voice or chosen.voice or DEFAULT_VOICE
     model = _get_pipeline(use_voice)
-    samples, rate = model.create(said, voice=use_voice, speed=chosen.speed,
-                                 lang=_lang_for(use_voice))
-    return _to_pcm16(samples), int(rate)
+    out, rate = bytearray(), SAMPLE_RATE
+    for sentence in _sentences(said, split_first=False):
+        samples, rate = _create(model, sentence, use_voice, effective_speed(chosen))
+        out += _to_pcm16(samples)
+    return bytes(out), int(rate)
 
 
 def synth_stream(text: str, voice: str = "", delivery: Optional[Delivery] = None,
-                 stop_event: Optional[threading.Event] = None) -> Iterator[tuple[bytes, int]]:
+                 stop_event: Optional[threading.Event] = None,
+                 split_first: bool = True) -> Iterator[tuple[bytes, int]]:
     """Yield (pcm, rate) per sentence, so speech starts before the line is finished.
 
     Split here rather than handing the whole line over, because the point is time-to-first-audio:
@@ -226,17 +262,16 @@ def synth_stream(text: str, voice: str = "", delivery: Optional[Delivery] = None
     chosen = delivery or delivery_for(said)
     use_voice = voice or chosen.voice or DEFAULT_VOICE
     model = _get_pipeline(use_voice)
-    lang = _lang_for(use_voice)
-    for sentence in _sentences(said):
+    for sentence in _sentences(said, split_first=split_first):
         if stop_event is not None and stop_event.is_set():
             return
-        samples, rate = model.create(sentence, voice=use_voice, speed=chosen.speed, lang=lang)
+        samples, rate = _create(model, sentence, use_voice, effective_speed(chosen))
         pcm = _to_pcm16(samples)
         if pcm:
             yield pcm, int(rate)
 
 
-_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?।])\s+")
 
 # The first piece is cut short on purpose. Measured: a single five-second sentence took 1.67s to
 # synthesise, and every one of those seconds was silence, because nothing could be spoken until
@@ -245,7 +280,7 @@ _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 #
 # Only the first piece. Later ones are whole sentences, because a clause break mid-reply is
 # audible as a stumble and there is no latency left to buy by then.
-FIRST_PIECE_CHARS = 90
+FIRST_PIECE_CHARS = 48     # measured: ~0.8 s to synthesise 41 chars against 1.3 s for 76
 
 # Past this a piece is too long to synthesise in one go whatever its punctuation says.
 MAX_PIECE_CHARS = 320
@@ -259,14 +294,21 @@ def _split_on_a_clause(part: str, limit: int) -> tuple[str, str]:
     """
     if len(part) <= limit:
         return part, ""
+    # The last boundary before the limit; failing that, the first one soon after it — a
+    # 50-character opening clause is still far quicker to synthesise than the 100-character
+    # sentence it belongs to.
     for mark in (", ", "; ", ": ", " — ", " and ", " but "):
         cut = part.rfind(mark, 0, limit)
         if cut > limit // 3:
             return part[:cut + (1 if mark == ", " else 0)].strip(), part[cut + len(mark):].strip()
+    for mark in (", ", "; ", ": ", " — "):
+        cut = part.find(mark, limit, limit * 2)
+        if cut > 0 and len(part) - cut > 12:
+            return part[:cut + (1 if mark == ", " else 0)].strip(), part[cut + len(mark):].strip()
     return part, ""
 
 
-def _sentences(text: str, max_chars: int = MAX_PIECE_CHARS) -> list[str]:
+def _sentences(text: str, max_chars: int = MAX_PIECE_CHARS, split_first: bool = True) -> list[str]:
     """Speakable pieces, shortest first so a voice starts as soon as possible."""
     out: list[str] = []
     for part in _SENTENCE_SPLIT.split(text):
@@ -274,7 +316,7 @@ def _sentences(text: str, max_chars: int = MAX_PIECE_CHARS) -> list[str]:
         if not part:
             continue
         # Only the very first piece of the whole reply is cut for latency.
-        if not out:
+        if not out and split_first:
             head, tail = _split_on_a_clause(part, FIRST_PIECE_CHARS)
             if tail:
                 out.append(head)

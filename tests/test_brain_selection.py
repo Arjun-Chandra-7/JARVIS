@@ -15,6 +15,9 @@ from jarvis.config import Config
 ])
 def test_llm_params_route_per_brain(monkeypatch, brain, host, model_env):
     monkeypatch.setenv("JARVIS_BRAIN", brain)
+    # "ollama" alone now means open-source models (hosted when a Groq key is there); the purely
+    # local brain is asked for explicitly.
+    monkeypatch.setenv("JARVIS_BRAIN_LOCAL_ONLY", "1")
     base, key, model = Config().llm_params()
     assert host in base
     if brain == "ollama":

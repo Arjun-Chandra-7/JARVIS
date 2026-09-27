@@ -63,6 +63,35 @@ async def _compose_message(config: Config, name: str, about: str) -> str:
     return f"Hey {first}, {about}".strip()
 
 
+# What the person said this turn, set by the brain before it runs. The messaging tool checks
+# against it: found live, "Oh, message papa hai" (a mis-heard "message Papa") reached the model,
+# which proposed sending "Oh, I see. Is there anything specific you need help with today?" — its
+# own previous reply — to somebody else entirely.
+CURRENT_REQUEST = {"text": ""}
+
+
+def said_it(to: str, message: str, request: str) -> str:
+    """"" when the person named this recipient and said (most of) this message this turn;
+    otherwise what to say instead of drafting it."""
+    import re as _re
+
+    heard = " ".join(l for l in (request or "").splitlines() if not l.strip().startswith(("[", "(")))
+    heard_words = set(_re.findall(r"[\w']+", heard.lower()))
+    digits = _re.sub(r"\D", "", heard)
+    name_words = [w for w in _re.findall(r"[a-z\u0900-\u097f]{3,}", (to or "").lower())]
+    to_digits = _re.sub(r"\D", "", to or "")
+    named = (to_digits and len(to_digits) >= 6 and to_digits[-6:] in digits) or \
+        any(w in heard_words for w in name_words)
+    if not named:
+        return (f"I won't draft a message to {to or 'someone'} — I didn't hear you name them. "
+                "Who should it go to, and what should it say?")
+    body = _re.findall(r"[\w']+", (message or "").lower())
+    if body and sum(w in heard_words for w in body) < 0.6 * len(body):
+        return ("I didn't hear the words you want sent, so I haven't drafted anything. "
+                "What should the message say?")
+    return ""
+
+
 def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[str], Awaitable[bool]]]):
     """Return (schemas, dispatch). `dispatch(name, args)` runs a tool and returns text."""
     reg: dict[str, tuple[dict, Callable]] = {}
@@ -74,8 +103,15 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
             return fn
         return deco
 
-    async def _confirm(desc: str) -> bool:
-        return bool(confirm_fn and await confirm_fn(desc))
+    async def _gate(kind: str, summary: str, details: dict, execute) -> str:
+        """Hold a side effect for approval (approvals.py). In the terminal ``confirm_fn`` answers
+        at once; everywhere else — web, voice, overlay — it waits for "yes" on a later turn, and
+        ``execute`` runs then, exactly as proposed."""
+        from .. import context
+        from ..approvals import MANAGER
+        out = await MANAGER.propose_or_ask(kind, summary, details, execute, ask=confirm_fn,
+                                           session=context.current())
+        return out.message
 
     # ---------------- built-in equivalents (shell / files / web) ----------------
     @tool("run_bash", "Run a shell command on this Linux machine and return stdout/stderr.",
@@ -83,8 +119,11 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     async def run_bash(a):
         cmd = a.get("command", "")
         if is_destructive(cmd) and not config.allow_unconfirmed_shell:
-            if not await _confirm(f"run this command:\n    {cmd}"):
-                return "User declined the command."
+            return await _gate("shell", f"run the command: {cmd[:120]}",
+                               {"action": "run command", "command": cmd}, lambda: _shell(cmd))
+        return await _shell(cmd)
+
+    async def _shell(cmd: str) -> str:
         # The confirmation above is a denylist and says so in its own docstring. The sandbox is
         # the part that does not depend on having thought of the command in advance: your home is
         # there, because a shell that cannot see your files is useless, but the credentials are
@@ -104,6 +143,9 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
 
     @tool("read_file", "Read a text file.", {"path": {"type": "string"}}, ["path"])
     async def read_file(a):
+        from .sandbox import is_secret_path
+        if is_secret_path(a.get("path", "")):
+            return "refused: that file holds credentials, and file tools do not read those."
         try:
             return Path(a["path"]).expanduser().read_text(errors="ignore")[:8000]
         except Exception as exc:  # noqa: BLE001
@@ -112,18 +154,26 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     @tool("write_file", "Create or overwrite a text file.",
           {"path": {"type": "string"}, "content": {"type": "string"}}, ["path", "content"])
     async def write_file(a):
+        from .sandbox import is_secret_path
+        if is_secret_path(a.get("path", "")):
+            return "refused: that path holds credentials, and file tools do not write there."
         try:
             p = Path(a["path"]).expanduser().resolve()
             if p.exists() and not config.allow_unconfirmed_shell:
                 head = p.read_text(errors="ignore")[:400]
                 if "author: jarvis" not in head and "/scratch" not in str(p) and "/tmp" not in str(p):
-                    if not await _confirm(f"overwrite existing file not created by Jarvis:\n    {p}"):
-                        return "User declined overwriting this file."
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(a.get("content", ""))
-            return f"wrote {p}"
+                    content = a.get("content", "")
+                    return await _gate("file", f"overwrite {p.name}, a file Jarvis didn't create",
+                                       {"action": "overwrite file", "to": str(p), "content": content},
+                                       lambda: _write(p, content))
+            return _write(p, a.get("content", ""))
         except Exception as exc:  # noqa: BLE001
             return f"error: {exc}"
+
+    def _write(p: Path, content: str) -> str:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content)
+        return f"wrote {p}"
 
     @tool("list_dir", "List a directory.", {"path": {"type": "string"}}, ["path"])
     async def list_dir(a):
@@ -319,6 +369,16 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         tid = timers.set_timer(_i(a.get("seconds"), 60), a.get("label", ""))
         return f"timer #{tid} set."
 
+    @tool("draw_picture",
+          "Draw a picture ON THE USER'S SCREEN, like a whiteboard. Jarvis makes a line drawing of "
+          "'subject' with the local image generator and draws it as pen strokes. Use for any request to "
+          "draw, sketch or show a drawing of something. subject = what to draw, e.g. 'a dragon'. "
+          "subject 'it' draws the last picture Jarvis generated.",
+          {"subject": {"type": "string"}}, ["subject"])
+    async def draw_picture(a):
+        from ..draw_command import run as draw_run
+        return await draw_run((a.get("subject") or "").strip() or "it")
+
     @tool("set_reminder", "Reminder at an ISO-8601 time (persists).",
           {"when": {"type": "string"}, "text": {"type": "string"}}, ["when", "text"])
     async def set_reminder(a):
@@ -333,7 +393,13 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
           {"to": {"type": "string"}, "message": {"type": "string"}}, ["to", "message"])
     async def whatsapp_send(a):
         from ..integrations import whatsapp
-        return whatsapp.smart_send(a.get("to", ""), a.get("message", ""))["message"]
+        refusal = said_it(a.get("to", ""), a.get("message", ""), CURRENT_REQUEST["text"])
+        if refusal:
+            return refusal
+        # The model chose to send, so the owner sees it first — always, known contact or not.
+        # "Yeah, message Papa" once went out as text the model wrote itself, unseen.
+        return (await asyncio.to_thread(lambda: whatsapp.smart_send(
+            a.get("to", ""), a.get("message", ""), confirm=True)))["message"]
 
     @tool("instagram_dms", "Read the user's recent Instagram direct-message threads (their account).", {})
     async def instagram_dms(a):
@@ -457,28 +523,34 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
             (a.get("category") or "BUILD_LOG").upper(),
         )
 
-    @tool("find_contact", "Look up a person's WhatsApp contact by name (before sending).",
+    @tool("find_contact", "Look up who a name or relationship (Papa, Mummy, a nickname) refers to, "
+          "before sending. Says whether it is certain or which people it could be.",
           {"name": {"type": "string"}}, ["name"])
     async def find_contact(a):
-        from ..integrations import contacts, phone_contacts, whatsapp
+        from ..integrations import contacts, whatsapp
         name = a.get("name", "")
-        out = []
-        local = contacts.lookup(name)
-        if local:
-            out.append(f"{local['name']}" + (f" ({local['number']})" if local.get("number") else "") + " [remembered]")
-        for c in phone_contacts.lookup(name)[:6]:
-            out.append(f"{c['name']} ({c['number']})")
-        out += [c["name"] for c in whatsapp.resolve(name)[:4]]
-        return "; ".join(out) if out else f"No contact matching '{name}'."
+        res = await asyncio.to_thread(contacts.resolve, name, whatsapp.resolve)
+        if res.ok:
+            c = res.best
+            return f"{c.name} ({contacts.mask_number(c.number or c.jid)}, {c.why}) — certain."
+        if res.status == "ambiguous":
+            return "Not certain. Could be: " + "; ".join(
+                f"{c.name} ({contacts.mask_number(c.number or c.jid)})" for c in res.candidates[:5])
+        return f"No contact matching '{name}'."
 
     @tool("remember_contact",
-          "Permanently remember a person's phone number (and optional note) in the vault, so you can "
-          "message/call them later. Use whenever the user tells you someone's number or who someone is.",
-          {"name": {"type": "string"}, "number": {"type": "string"}, "note": {"type": "string"}},
+          "Permanently remember a person: their number, a note, and what the user calls them "
+          "(aliases such as 'Papa' or a nickname). Use whenever the user tells you someone's number, "
+          "who someone is, or 'X means Y'.",
+          {"name": {"type": "string"}, "number": {"type": "string"}, "note": {"type": "string"},
+           "aliases": {"type": "string", "description": "comma-separated names the user uses for them"},
+           "relationship": {"type": "string"}},
           ["name"])
     async def remember_contact(a):
         from ..integrations import contacts
-        return contacts.remember(a.get("name", ""), a.get("number", ""), a.get("note", ""))["message"]
+        aliases = [x.strip() for x in str(a.get("aliases", "")).split(",") if x.strip()]
+        return contacts.remember(a.get("name", ""), a.get("number", ""), a.get("note", ""),
+                                 aliases=aliases, relationship=a.get("relationship", ""))["message"]
 
     @tool("wifi_scan",
           "List nearby Wi-Fi networks and reveal the passwords THIS computer has already "
@@ -539,16 +611,22 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     @tool("message_person",
           "Message someone by INTENT — you give the person's name and what the message is ABOUT, and "
           "Jarvis composes a natural, friendly WhatsApp message and sends it. Use this for requests like "
-          "'message Pradhuman about his health' (about='ask how his health is'). For exact dictated text "
-          "use whatsapp_send instead.",
+          "'message <name> about <topic>' (about='ask how they are'). Only ever the person the user "
+          "named in this request. For exact dictated text use whatsapp_send instead.",
           {"name": {"type": "string"}, "about": {"type": "string"}}, ["name", "about"])
     async def message_person(a):
         from ..integrations import whatsapp
         name, about = a.get("name", ""), a.get("about", "")
+        # Found live: the example here used to be a real contact's name, and a vague "message papa"
+        # became a draft to that contact. The recipient must be one the person just named.
+        refusal = said_it(name, "", CURRENT_REQUEST["text"])
+        if refusal:
+            return refusal
         text = await _compose_message(config, name, about)
-        res = whatsapp.smart_send(name, text)
-        if res.get("ok"):
-            return f'Sent to {name}: "{text}"'
+        # Words the model composed are never sent unseen.
+        res = await asyncio.to_thread(lambda: whatsapp.smart_send(name, text, confirm=True))
+        if res.get("status") == "sent":
+            return f'{res["message"]} It said: "{text}"'
         return res["message"]
 
     @tool("place_call", "Open the phone dialer for a number.", {"number": {"type": "string"}}, ["number"])
@@ -562,18 +640,20 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         ok, msg = apps.phone_mirror()
         return msg
 
-    @tool("set_away", "Away mode ON — auto-reply to messages/calls.", {"reason": {"type": "string"}})
+    @tool("set_away", "Propose away mode (the user must approve it): Jarvis answers WhatsApp as the user's "
+          "assistant until a time. Pass the user's own words, e.g. 'going out until 8, only family'.",
+          {"request": {"type": "string"}})
     async def set_away(a):
-        from . import away, pa_daemon
-        away.set_away(a.get("reason", ""), config)
-        pa_daemon.start(config)
-        return "away mode on."
+        from .. import context
+        from ..away_mode import control
+        said = a.get("request") or a.get("reason") or "I'm away, handle my messages"
+        return control.propose_start(config, said, context.current(), created_from="tool")
 
-    @tool("set_available", "Away mode OFF.", {})
+    @tool("set_available", "Away mode OFF, with the briefing of what happened.", {})
     async def set_available(a):
-        from . import away
-        away.set_available(config)
-        return "away mode off."
+        from ..away_mode import control, summary
+        ended = control.end(config)
+        return ("Away mode is off. " + summary.spoken(ended)) if ended else "Away mode wasn't on."
 
     # ---------------- system / media / apps ----------------
     @tool("set_volume", "Set output volume percent (0-150).", {"percent": {"type": "string"}}, ["percent"])
@@ -750,20 +830,22 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         res = await browser.go_back()
         return res.get("message") or res.get("error", "Could not go back.")
 
+    from ..integrations import web_browser as _wb
+    _browser_name = _wb._spoken(_wb.preferred()) or "the browser"
+
     @tool("browser_enable_control",
-          "Restart Opera GX so Jarvis can click inside pages. Closes the current tabs — only do "
-          "this when the user has agreed.", {})
+          f"Restart {_browser_name} so Jarvis can click inside pages. Closes the current tabs — "
+          "only do this when the user has agreed.", {})
     async def browser_enable_control(a):
         from ..integrations import browser
         if browser.control_ready():
-            return "Opera GX is already under control."
-        if not await _confirm("restart Opera GX (this closes your current tabs)"):
-            return "user declined."
-        state = browser.ensure(allow_restart=True)
-        return state["message"]
+            return f"{_browser_name} is already under control."
+        return await _gate("browser", f"restart {_browser_name}, which closes your current tabs",
+                           {"action": "restart browser", "app": _browser_name},
+                           lambda: browser.ensure(allow_restart=True)["message"])
 
     @tool("open_app",
-          "Open an installed application by the name you would say out loud — 'Opera GX', "
+          "Open an installed application by the name you would say out loud — 'Zen', "
           "'VS Code', 'Spotify', 'Settings'. For websites use browser_open instead.",
           {"name": {"type": "string"}}, ["name"])
     async def open_app(a):
@@ -795,7 +877,7 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     # same job, the blunt one wins often enough to matter, and because it takes a raw URL the model
     # invents plausible-looking ones (observed: a fabricated netflix.com/title/... link). browser_open
     # accepts URLs too, so nothing is lost.
-    @tool("open_url", "Open a URL in the browser (Opera GX).", {"url": {"type": "string"}}, ["url"])
+    @tool("open_url", f"Open a URL in the browser ({_browser_name}).", {"url": {"type": "string"}}, ["url"])
     async def open_url(a):
         from ..integrations import apps
         opened = apps.open_url(a.get("url", ""))
@@ -918,20 +1000,29 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     @tool("google_email_send", "Send an email (confirm first).",
           {"to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}}, ["to", "subject", "body"])
     async def google_email_send(a):
-        if not await _confirm(f"send an email to {a.get('to')} — {a.get('subject')}"):
-            return "user declined."
         from ..integrations.google import gmail
-        return gmail.send(config, a.get("to", ""), a.get("subject", ""), a.get("body", "")) or "Google not connected."
+        to, subject, body = a.get("to", ""), a.get("subject", ""), a.get("body", "")
+
+        def send():
+            sent = gmail.send(config, to, subject, body)
+            return {"ok": bool(sent), "message": sent or "Google isn't connected, so the email wasn't sent."}
+        return await _gate("email", f'send an email to {to} with the subject "{subject}"',
+                           {"recipient": to, "platform": "Gmail", "action": "send email",
+                            "subject": subject, "body": body}, send)
 
     @tool("google_calendar_create", "Create a calendar event. start/end are ISO datetimes.",
           {"title": {"type": "string"}, "start": {"type": "string"}, "end": {"type": "string"},
            "description": {"type": "string"}}, ["title", "start", "end"])
     async def google_calendar_create(a):
-        if not await _confirm(f"create calendar event '{a.get('title')}' at {a.get('start')}"):
-            return "user declined."
         from ..integrations.google import calendar as gcal
-        return gcal.create_event(config, a.get("title", ""), a.get("start", ""), a.get("end", ""),
-                                 a.get("description", "")) or "Google not connected."
+        title, start, end = a.get("title", ""), a.get("start", ""), a.get("end", "")
+
+        def create():
+            made = gcal.create_event(config, title, start, end, a.get("description", ""))
+            return {"ok": bool(made), "message": made or "Google isn't connected, so no event was created."}
+        return await _gate("calendar", f'add "{title}" to your calendar at {start}',
+                           {"title": title, "platform": "Google Calendar", "action": "create event",
+                            "start": start, "end": end}, create)
 
     @tool("google_tasks_list", "List your Google Tasks.", {})
     async def google_tasks_list(a):
@@ -980,27 +1071,20 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         from . import omnicore
         return omnicore.list_recent_recordings(limit=_i(a.get("limit", 15), 15), category_filter=a.get("category"), config=config)
 
-    @tool("check_pa_status", "Check Arjun's real-time computed schedule/busy status and whether 2-sided PA conversational defense is armed.", {})
+    @tool("check_pa_status", "Check Arjun's schedule/busy status and whether away mode is on.", {})
     async def check_pa_status(a):
         from . import omnicore
         status = omnicore.get_current_status(config=config)
         return f"Current Status: {'BUSY / AWAY (' + status.get('reason','') + ') until ' + str(status.get('until','')) if status.get('busy') else 'AVAILABLE'}. [Source: {status.get('source','Normal')}]"
 
-    @tool("set_pa_status", "Set Arjun's status manually (e.g., 'I am going out for 2 hours', 'In a meeting') or mark 'available'.",
+    @tool("set_pa_status", "Set Arjun's status (e.g., 'I am going out for 2 hours') or mark 'available'. "
+          "Going away is only proposed; the user approves it.",
           {"status_reason": {"type": "string"}, "is_busy": {"type": "boolean"}}, ["status_reason"])
     async def set_pa_status(a):
-        # Single owner: away state + the WhatsApp auto-reply daemon are driven the same way
-        # everywhere (voice command router, set_away tool, here).
-        from . import away, omnicore, pa_daemon
+        # One path for away mode everywhere: the approval-gated session in jarvis.away_mode.
         if not _b(a.get("is_busy", True)) or a.get("status_reason", "").strip().lower() in ("available", "free", "back", "off"):
-            away.set_available(config)
-            omnicore.record_event("Status Change", "User", "Marked AVAILABLE / back at desk", config=config)
-            return "Status updated to AVAILABLE. Welcome back, sir!"
-        reason = a.get("status_reason", "Away from desk").strip()
-        away.set_away(reason, config)
-        pa_daemon.start(config)
-        omnicore.record_event("Status Change", "User", f"Marked AWAY/BUSY: {reason}", config=config)
-        return f"Status set to BUSY / AWAY ({reason}). I'll answer new WhatsApp messages as your assistant and brief you on return."
+            return await set_available({})
+        return await set_away({"request": a.get("status_reason", "I'm away, handle my messages")})
 
     @tool("add_user_schedule", "Register a scheduled activity or event (like tuition or classes) with start and end ISO timestamps.",
           {"title": {"type": "string"}, "start": {"type": "string"}, "end": {"type": "string"}}, ["title", "start", "end"])
@@ -1008,27 +1092,21 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
         from . import omnicore
         return omnicore.add_schedule_event(a.get("title", ""), a.get("start", ""), a.get("end", ""), source="Agent Tool", config=config)
 
-    @tool("process_incoming_communication", "Record an incoming text/call for the away-mode debrief. Does NOT auto-reply — the away-mode daemon is the sole WhatsApp auto-responder.",
-          {"type": {"type": "string"}, "sender": {"type": "string"}, "id": {"type": "string"}, "content": {"type": "string"}}, ["type", "sender", "content"])
-    async def process_incoming_communication(a):
-        # Passive recorder only. Automatic replies to incoming WhatsApp/calls are owned
-        # exclusively by jarvis.agent.pa_daemon so there is never a second responder.
-        from . import away
-        c_type = "call" if "call" in a.get("type", "text").lower() else "whatsapp"
-        away.record_event(config, {
-            "id": a.get("id", "") or f"{c_type}:{a.get('sender', '')}",
-            "type": c_type, "sender": a.get("sender", "Unknown"),
-            "jid": a.get("id", "") or a.get("sender", ""),
-            "text": a.get("content", "") or ("Incoming call" if c_type == "call" else ""),
-            "status": "recorded",
-        })
-        return f"Recorded {c_type} from {a.get('sender', 'Unknown')} for your away-mode debrief."
-
     # ---------------- Full Laptop Mastery & Omni-Control ----------------
     @tool("enable_full_laptop_autonomy", "Unlock unconfirmed shell execution and full computer automation permissions so Jarvis can control all tools and the whole laptop fully.",
           {"enable": {"type": "boolean"}})
     async def enable_full_laptop_autonomy(a):
         val = _b(a.get("enable", True))
+        # The model must not be able to lift its own confirmation gate: a webpage or an incoming
+        # message that talks it into calling this would otherwise be one tool call away from an
+        # unconfirmed shell. Turning the gate back on is always allowed; turning it off needs
+        # the person to say yes.
+        if val and not config.allow_unconfirmed_shell:
+            def enable():
+                config.allow_unconfirmed_shell = True
+                return "Full laptop autonomy is on: shell commands and overwrites no longer ask."
+            return await _gate("autonomy", "turn off confirmation for shell commands and file overwrites",
+                               {"action": "enable autonomy"}, enable)
         config.allow_unconfirmed_shell = val
         from . import omnicore
         omnicore.record_event("System Autonomy", "Jarvis", f"Full laptop autonomy set to: {val}", config=config)
@@ -1039,30 +1117,12 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
     async def control_laptop_full(a):
         cmd = a.get("command_or_script", "")
         from . import omnicore
-        if is_destructive(cmd) and not config.allow_unconfirmed_shell:
-            if not await _confirm(f"run this system command:\n    {cmd}"):
-                return "User declined the command."
         omnicore.record_event("Laptop Control", "Jarvis", f"Executing: {cmd} ({a.get('explanation','')})", config=config)
-        try:
-            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
-            out = (r.stdout or "") + (r.stderr or "")
-            return f"[Omni-Control Execution Result] Return Code {r.returncode}:\n{out.strip()[:6000] or '(Command executed successfully, no terminal output)'}"
-        except Exception as exc:
-            return f"[Omni-Control Error]: {exc}"
+        # One shell path, not two: this used to run `shell=True` outside the sandbox, which made
+        # it the way around everything run_bash guards.
+        return await run_bash({"command": cmd})
 
     # ---------------- PA Guardian & Meet Bot ----------------
-
-    @tool("start_pa_daemon", "Activate the PA guardian shield: monitors WhatsApp messages and phone calls while you're away, auto-replies on your behalf, and gives you a full debrief when you're back.", {})
-    async def start_pa_daemon(a):
-        from . import pa_daemon
-        pa_daemon.start(config)
-        return "PA Guardian armed, sir. I'll handle all incoming messages and calls while you're out. I'll brief you the moment you're back."
-
-    @tool("stop_pa_daemon", "Deactivate the PA guardian and get a summary of what happened while you were away.", {})
-    async def stop_pa_daemon(a):
-        from . import pa_daemon
-        brief = pa_daemon.stop()
-        return brief
 
     @tool("whatsapp_scan", "Scan and analyse all WhatsApp contacts and recent chat history from the bridge.", {})
     async def whatsapp_scan(a):

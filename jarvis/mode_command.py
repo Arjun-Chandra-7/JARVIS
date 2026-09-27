@@ -49,8 +49,8 @@ async def handle(text: str, config=None) -> Optional[str]:
         return ("Study mode, sir. " +
                 (f"Closed {shut} distraction{'s' if shut != 1 else ''}, and I'll keep them closed. "
                  if shut else "Nothing to close. ") +
-                ("Opened ChatGPT in Opera with the exam tutor prompt. " if chat else
-                 "I couldn't set the exam tutor prompt in Opera. ") +
+                ("Opened ChatGPT with the exam tutor prompt. " if chat else
+                 "I couldn't set the exam tutor prompt in ChatGPT. ") +
                 "Say “exit study mode” when you're done.")
 
     if coding_setup.asked_to_start(said):

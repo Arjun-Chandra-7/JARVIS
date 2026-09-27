@@ -35,14 +35,21 @@ async def handle(text: str, _config=None) -> Optional[str]:
     """None means 'not mine'."""
     if not wants_control(text):
         return None
-    from .integrations import browser
+    from .integrations import browser, web_browser
 
+    # Said with the browser's real name. Found live: "restart Zen with control" restarted Zen and
+    # then reported "Opera GX is back under my control… your previous tabs did not come back" —
+    # the name was fixed text, and the tab count came from Chromium's protocol, which Zen does
+    # not speak.
+    name = web_browser._spoken(web_browser.preferred())
     if browser.control_ready():
-        return "Opera GX is already under my control, sir."
+        return f"{name} is already under my control, sir."
 
     state = await asyncio.to_thread(browser.ensure, "", True)
     if not state["ok"]:
         return state["message"]
+    if web_browser.family() == "firefox":
+        return state.get("message") or f"{name} is back under my control."
 
     # Say what actually came back rather than what was asked for: --restore-last-session is a
     # request to Chromium, not a guarantee, and claiming the tabs are back when they are not is
@@ -54,8 +61,8 @@ async def handle(text: str, _config=None) -> Optional[str]:
     except Exception:  # noqa: BLE001
         pages = []
     if len(pages) > 1:
-        return f"Opera GX is back under my control, with {len(pages)} of your tabs restored."
+        return f"{name} is back under my control, with {len(pages)} of your tabs restored."
     if pages:
-        return "Opera GX is back under my control. One tab came back."
-    return ("Opera GX is back under my control, but your previous tabs did not come back — "
+        return f"{name} is back under my control. One tab came back."
+    return (f"{name} is back under my control, but your previous tabs did not come back — "
             "check its history if you need them.")

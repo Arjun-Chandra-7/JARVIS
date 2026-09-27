@@ -18,10 +18,29 @@ const os = require("os");
 const path = require("path");
 
 const fs = require("fs");
+
+// libsignal (inside Baileys) console.logs whole Signal session objects — "Closing session:
+// SessionEntry {...}" — private ratchet keys included, and systemd keeps stdout in the journal.
+// Anything that carries session state, or is one of its session chatter lines, goes nowhere.
+function isSessionDump(args) {
+  return args.some((a) => {
+    if (a && typeof a === "object") {
+      const name = a.constructor && a.constructor.name;
+      return name === "SessionEntry" || "_chains" in a || "currentRatchet" in a || "privKey" in a;
+    }
+    return typeof a === "string" && /^(Closing (open )?session|Opening session|Removing old closed session|Session error|Failed to decrypt|Decrypted message with closed session)/.test(a);
+  });
+}
+for (const level of ["log", "info", "warn", "error", "debug"]) {
+  const original = console[level].bind(console);
+  console[level] = (...args) => { if (!isSessionDump(args)) original(...args); };
+}
 const AUTH_DIR = process.env.WA_AUTH_DIR || path.join(os.homedir(), ".local/share/jarvis/whatsapp");
 const PORT = parseInt(process.env.WA_PORT || "8765", 10);
 const LOG = path.join(os.tmpdir(), "jarvis-wa-debug.log");
-const dbg = (s) => { try { fs.appendFileSync(LOG, `[${new Date().toISOString()}] ${s}\n`); } catch {} };
+// Message text is private: the debug log is opt-in and owner-only, never on by default.
+const DEBUG = process.env.WA_DEBUG === "1";
+const dbg = (s) => { if (!DEBUG) return; try { fs.appendFileSync(LOG, `[${new Date().toISOString()}] ${s}\n`, { mode: 0o600 }); } catch {} };
 
 function extractText(msg) {
   if (!msg) return "";
@@ -60,7 +79,10 @@ function normaliseMessage(m) {
   const flags = chatFlags(from);
   const rawTs = Number(m?.messageTimestamp || 0);
   return {
-    id: messageId(m), from, name: m?.pushName || contacts.get(from) || from,
+    // On an outgoing message pushName is the *owner's* name, not the chat's, so it names nobody here.
+    id: messageId(m), from, name: (!m?.key?.fromMe && m?.pushName) || contacts.get(from) || from,
+    // In a group, who wrote it (the chat is `from`); away mode discloses to each new participant.
+    participant: flags.isGroup ? (m?.key?.participant || "") : "",
     text: extractText(m?.message),
     ts: rawTs > 100000000000 ? rawTs : (rawTs ? rawTs * 1000 : Date.now()),
     fromMe: !!m?.key?.fromMe, ...flags,
@@ -112,8 +134,23 @@ function saveContacts() {
   }, 1500);
 }
 
-function recordContact(jid, name) {
+// Names the owner saved in their address book. A profile name someone chose for themselves
+// (pushName) never overwrites one of these: Papa stays "Papa" after he changes his profile.
+const SAVED_FILE = path.join(AUTH_DIR, "contacts-saved.json");
+const savedNames = new Set();
+try { for (const j of JSON.parse(fs.readFileSync(SAVED_FILE, "utf8"))) savedNames.add(j); } catch {}
+function recordSavedContact(c) {
+  if (c?.name && c?.id) {
+    savedNames.add(c.id);
+    try { fs.writeFileSync(SAVED_FILE, JSON.stringify([...savedNames]), { mode: 0o600 }); } catch {}
+    return recordContact(c.id, c.name, true);
+  }
+  return recordContact(c?.id, c?.notify || c?.verifiedName);
+}
+
+function recordContact(jid, name, fromBook = false) {
   if (!jid || !name) return;
+  if (!fromBook && savedNames.has(jid)) return;
   if (jid.includes("@g.us") || jid.includes("@newsletter") || jid.includes("broadcast")) return;
   const clean = String(name).trim();
   if (!clean || /^\d+$/.test(clean) || clean.includes("@")) return; // skip numbers / raw jids
@@ -123,6 +160,32 @@ function recordContact(jid, name) {
   }
 }
 loadContacts();
+
+// Earlier builds recorded pushName on outgoing messages too, which labelled every chat the owner
+// wrote to with the owner's own name. Drop those, keeping the owner's own chat.
+function forgetOwnName() {
+  const me = sock?.user;
+  if (!me?.id) return;
+  const meJid = me.id.split(":")[0] + "@s.whatsapp.net";
+  const own = String(me.name || me.notify || "").trim();
+  if (!own) return;
+  let dropped = 0;
+  for (const [jid, name] of contacts) {
+    if (jid !== meJid && name === own) { contacts.delete(jid); dropped++; }
+  }
+  if (dropped) { console.log(`Forgot ${dropped} chats mislabelled with the owner's name.`); saveContacts(); }
+}
+
+// Exactly these origins may drive the bridge from a browser. A prefix test would let
+// http://127.0.0.1.attacker.example through.
+const TRUSTED_ORIGINS = new Set([
+  "http://127.0.0.1:8770", "http://localhost:8770",
+]);
+// A DNS-rebinding page reaches 127.0.0.1 under its own hostname; the Host header gives it away.
+function trustedHost(host) {
+  const h = String(host || "").toLowerCase();
+  return h === `127.0.0.1:${PORT}` || h === `localhost:${PORT}` || h === "127.0.0.1" || h === "localhost";
+}
 
 async function start() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
@@ -140,12 +203,12 @@ async function start() {
   sock.ev.on("creds.update", saveCreds);
 
   // Build the address book so we can resolve "message <name>" to the right JID.
-  const ingest = (list) => (list || []).forEach((c) => recordContact(c.id, c.name || c.notify || c.verifiedName));
+  const ingest = (list) => (list || []).forEach(recordSavedContact);
   sock.ev.on("contacts.upsert", ingest);
   sock.ev.on("contacts.update", ingest);
   sock.ev.on("messaging-history.set", ({ contacts: cs, messages }) => {
     ingest(cs);
-    (messages || []).forEach(recordHistory); // import-only local mirror; never sends or deletes
+    (messages || []).forEach((m) => { if (!m?.key?.fromMe) recordContact(m?.key?.remoteJid, m?.pushName); recordHistory(m); }); // import-only local mirror; never sends or deletes
   });
 
   sock.ev.on("connection.update", (u) => {
@@ -156,6 +219,7 @@ async function start() {
     }
     if (connection === "open") {
       connected = true;
+      forgetOwnName();
       console.log("WhatsApp connected.");
     }
     if (connection === "close") {
@@ -177,7 +241,7 @@ async function start() {
     for (const m of messages) {
       const text = extractText(m.message);
       dbg(`  from=${m.key.remoteJid} fromMe=${m.key.fromMe} keys=${Object.keys(m.message || {})} text=${JSON.stringify(text)}`);
-      recordContact(m.key.remoteJid, m.pushName);
+      if (!m.key.fromMe) recordContact(m.key.remoteJid, m.pushName);
       const item = recordHistory(m);
       const meJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
       if (m.key.fromMe && m.key.remoteJid !== meJid) continue;
@@ -202,19 +266,37 @@ async function sendMessage(to, text) {
     }
     jid = found[0].jid;
   }
-  await sock.sendMessage(jid, { text });
-  return jid;
+  if (!connected) throw new Error("WhatsApp is not connected");
+  const sent = await sock.sendMessage(jid, { text });
+  // The server assigns the message a key once it accepts it; without one, it did not go out.
+  if (!sent?.key?.id) throw new Error("WhatsApp did not acknowledge the message");
+  return { jid, id: sent.key.id };
 }
+
+// Which commit this bridge loaded, so "is the running code the checked-out code" has an answer.
+const BUILD_COMMIT = (() => {
+  try {
+    return require("child_process")
+      .execFileSync("git", ["rev-parse", "HEAD"], { cwd: __dirname, timeout: 3000 })
+      .toString().trim().slice(0, 12);
+  } catch {
+    return "unknown";
+  }
+})();
 
 http
   .createServer((req, res) => {
     res.setHeader("Content-Type", "application/json");
     const origin = req.headers.origin;
-    if (origin && !origin.startsWith("http://127.0.0.1") && !origin.startsWith("http://localhost")) {
+    if (!trustedHost(req.headers.host) || (origin && !TRUSTED_ORIGINS.has(origin))) {
       res.statusCode = 403;
       return res.end(JSON.stringify({ error: "Unauthorized cross-origin request" }));
     }
-    if (req.url === "/status") return res.end(JSON.stringify({ connected }));
+    if (req.url === "/status") {
+      // `me`: the linked account's own chat, where the owner types commands to Jarvis.
+      const me = sock?.user?.id ? sock.user.id.split(":")[0] + "@s.whatsapp.net" : "";
+      return res.end(JSON.stringify({ connected, me, commit: BUILD_COMMIT }));
+    }
     if (req.url === "/inbox") return res.end(JSON.stringify(inbox.slice(-30)));
     if (req.url.startsWith("/chats")) {
       const url = new URL(req.url, "http://127.0.0.1");
@@ -240,8 +322,8 @@ http
       req.on("end", async () => {
         try {
           const { to, text } = JSON.parse(body);
-          const jid = await sendMessage(to, text);
-          res.end(JSON.stringify({ ok: true, jid }));
+          const { jid, id } = await sendMessage(to, text);
+          res.end(JSON.stringify({ ok: true, jid, id }));
         } catch (e) {
           res.statusCode = 500;
           res.end(JSON.stringify({ ok: false, error: String(e && e.message ? e.message : e) }));

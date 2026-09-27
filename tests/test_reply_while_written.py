@@ -143,11 +143,13 @@ def test_the_hosted_voice_waits_for_the_whole_reply():
 def test_each_sentence_reaches_the_screen_as_it_is_spoken():
     """Before this, the text was published only once the brain returned — so you heard the whole
     answer with nothing on screen, and then read it as Jarvis fell silent."""
+    # (Not "Good morning." as the first sentence: a standalone greeting is no longer said or shown
+    # — see test_dumb_and_repeating.)
     session, _brain, _got, handled = run(
-        ["Good morning. ", "Your first meeting is at ten."],
-        "Good morning. Your first meeting is at ten.")
+        ["It rained overnight. ", "Your first meeting is at ten."],
+        "It rained overnight. Your first meeting is at ten.")
     shown = [text for kind, text in session.events if kind == "reply"]
-    assert shown == ["Good morning.", "Your first meeting is at ten."]
+    assert shown == ["It rained overnight.", "Your first meeting is at ten."]
     assert handled is True          # so the caller does not print the whole thing underneath
 
 

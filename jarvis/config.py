@@ -12,12 +12,15 @@ import shutil
 import sys
 from dataclasses import dataclass, field
 
+from . import providers as _DEFAULTS  # model defaults live in one place
+
 
 def _preferred_browser() -> str:
     from .integrations.web_browser import preferred
 
     return preferred() or "firefox"
 from pathlib import Path
+
 
 try:
     from dotenv import load_dotenv
@@ -71,7 +74,7 @@ class Config:
     # --- Groq (OpenAI-compatible) ---
     groq_api_key: str = field(default_factory=lambda: os.environ.get("GROQ_API_KEY", ""))
     groq_model: str = field(
-        default_factory=lambda: os.environ.get("JARVIS_GROQ_MODEL", "qwen/qwen3.6-27b")
+        default_factory=lambda: os.environ.get("JARVIS_GROQ_MODEL", _DEFAULTS.DEFAULT_GROQ_MODEL)
     )
     # Set true only if the chosen Groq model accepts images (e.g. a llama-4 vision model). The
     # default text model can't see screenshots, so we skip image injection to avoid API errors.
@@ -79,12 +82,24 @@ class Config:
 
     # --- Gemini (OpenAI-compatible endpoint; generous free tier + native vision) ---
     gemini_api_key: str = field(default_factory=lambda: os.environ.get("GEMINI_API_KEY", ""))
-    gemini_model: str = field(default_factory=lambda: os.environ.get("JARVIS_GEMINI_MODEL", "gemini-3.6-flash"))
+    gemini_model: str = field(default_factory=lambda: os.environ.get("JARVIS_GEMINI_MODEL", _DEFAULTS.DEFAULT_GEMINI_MODEL))
 
     # --- Ollama (LOCAL, OpenAI-compatible, no rate limits) — also the auto-fallback when a
     # cloud brain is rate-limited. Needs `ollama serve` + a tool-capable model pulled. ---
     ollama_base: str = field(default_factory=lambda: os.environ.get("JARVIS_OLLAMA_BASE", "http://localhost:11434/v1"))
-    ollama_model: str = field(default_factory=lambda: os.environ.get("JARVIS_OLLAMA_MODEL", "qwen2.5:3b"))
+    ollama_model: str = field(default_factory=lambda: os.environ.get("JARVIS_OLLAMA_MODEL", _DEFAULTS.DEFAULT_OLLAMA_MODEL))
+
+    def __post_init__(self) -> None:
+        # JARVIS_BRAIN=ollama means "open-source models", not "only the 3B one on this laptop".
+        # Asked for on 24 Sep ("use open source models"), after the history showed the local
+        # qwen2.5:3b answering most turns with filler ("I see a text document… what can I assist
+        # you with now?"). With a Groq key the brain runs on open-weight models hosted there —
+        # gpt-oss-120b, falling back to gpt-oss-20b on a rate limit — and the local model is still
+        # the last resort when neither answers. JARVIS_BRAIN_LOCAL_ONLY=1 keeps it on this machine.
+        local_only = os.environ.get("JARVIS_BRAIN_LOCAL_ONLY", "").lower() in {"1", "true", "yes"}
+        if self.brain == "ollama" and self.groq_api_key and not local_only and _DEFAULTS.OPEN_STRONG:
+            self.brain = "groq"
+            self.groq_model = _DEFAULTS.OPEN_STRONG[0]
 
     # --- image understanding (screen vision; optional) ---
     # "auto"/"gemini" use Gemini (needs GEMINI_API_KEY); the local moondream path stays as a
@@ -176,10 +191,13 @@ class Config:
     partial_every_ms: int = field(default_factory=lambda: _int("JARVIS_PARTIAL_EVERY_MS", 700))
     partial_model: str = field(default_factory=lambda: os.environ.get("JARVIS_PARTIAL_MODEL", "tiny.en"))
     max_utterance_s: int = field(default_factory=lambda: _int("JARVIS_MAX_UTTERANCE_S", 30))
-    follow_up_s: int = field(default_factory=lambda: _int("JARVIS_FOLLOW_UP_S", 6))
+    follow_up_s: int = field(default_factory=lambda: _int("JARVIS_FOLLOW_UP_S", 8))
     enable_barge_in: bool = field(default_factory=lambda: _bool("JARVIS_BARGE_IN", True))  # talk over him to cut him off
     screen_always: bool = field(default_factory=lambda: _bool("JARVIS_SCREEN_ALWAYS", False))  # keep screen vision on from start
-    enable_followup: bool = field(default_factory=lambda: _bool("JARVIS_FOLLOWUP", False))  # keep listening after a reply (no wake word)
+    # Keep the conversation open after a reply, so follow-ups need no wake word. On by default now
+    # that audio/conversation.py filters fillers, room noise and "that's all"; JARVIS_FOLLOWUP=0
+    # restores wake-word-per-turn.
+    enable_followup: bool = field(default_factory=lambda: _bool("JARVIS_FOLLOWUP", True))
     afk_minutes: int = field(default_factory=lambda: _int("JARVIS_AFK_MIN", 15))  # idle time before a welcome-back brief
     city: str = field(default_factory=lambda: os.environ.get("JARVIS_CITY", "Bangalore"))  # for weather
     # 0 = auto-calibrate from ambient noise at startup; else an explicit RMS threshold
