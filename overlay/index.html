@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="tokens.css" />
     <link rel="stylesheet" href="app.css" />
     <link rel="stylesheet" href="ironman.css" />
+    <link rel="stylesheet" href="brain.css" />
     <title>JARVIS</title>
   </head>
   <body data-form="pill" data-state="idle">
@@ -71,8 +72,10 @@
                   aria-controls="view-memory" type="button">Memory</button>
           <button class="tab" role="tab" id="tab-system" aria-selected="false"
                   aria-controls="view-system" type="button">System</button>
+          <button class="tab" role="tab" id="tab-brain" aria-selected="false"
+                  aria-controls="view-brain" type="button">Brain</button>
           <div class="tabs-spacer"></div>
-          <span class="keyhint" aria-hidden="true">Ctrl+K commands &middot; Alt+1&ndash;4 tabs &middot; / to type &middot; Esc to close</span>
+          <span class="keyhint" aria-hidden="true">Ctrl+K commands &middot; Alt+1&ndash;5 tabs &middot; / to type &middot; Esc to close</span>
           <button class="icon-btn" id="collapseBtn" type="button"
                   aria-label="Collapse to pill" title="Collapse (Esc)">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /></svg>
@@ -218,6 +221,15 @@
             <pre class="log-dump mono" id="eventDump" aria-label="Recent backend events"></pre>
           </details>
         </section>
+
+        <!-- ---------- brain: providers, keys, routing (brain.js) ---------- -->
+        <section class="view" id="view-brain" role="tabpanel" aria-labelledby="tab-brain" hidden>
+          <div class="view-head">
+            <h2>Brain</h2>
+            <p class="hint">Which models answer, with which keys, under which rules.</p>
+          </div>
+          <div id="brainRoot" style="display:flex;flex-direction:column;gap:var(--space-2);min-height:0;flex:1 1 auto"></div>
+        </section>
       </main>
 
       <!-- ================= the command palette =================
@@ -259,6 +271,7 @@
          which it did — the ids were renamed in one and the page kept running the other. -->
     <div id="ironmanHud" hidden></div>
     <script src="settings.js"></script>
+    <script src="brain.js"></script>
     <script src="app.js"></script>
     <script src="ironman.js"></script>
   </body>

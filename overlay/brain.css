@@ -1,0 +1,87 @@
+/* The Brain tab: providers, keys, routing, local models, usage.
+ * Same language as the System tab — raised cards on the panel, one accent spent on state and
+ * focus, semantic colours only for health. Every value comes from tokens.css, so both
+ * appearances follow without a rule of their own here. */
+
+#view-brain { overflow: hidden; }
+.brain-nav { display: flex; gap: var(--space-1); flex-wrap: wrap; flex: 0 0 auto; }
+.brain-nav button {
+  border: 1px solid transparent; background: transparent; color: var(--text-muted);
+  font: inherit; font-size: var(--text-sm); padding: 3px var(--space-3); border-radius: 999px; cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.brain-nav button:hover { color: var(--text-primary); background: var(--surface-hover); }
+.brain-nav button[aria-selected="true"] { color: var(--text-primary); border-color: var(--accent-line);
+                                          background: var(--accent-dim); }
+.brain-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: grid; gap: var(--space-3);
+              align-content: start; padding-right: 2px; }
+.brain-status { min-height: 1.2em; font-size: var(--text-sm); color: var(--text-muted); margin: 0; }
+.brain-status.is-error { color: var(--error); }
+
+.b-card { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--surface-raised);
+          padding: var(--space-3); display: grid; gap: var(--space-2); min-width: 0; }
+.b-card h3 { margin: 0; font-size: var(--text-base); font-weight: 600; display: flex; align-items: center;
+             gap: var(--space-2); flex-wrap: wrap; }
+.b-card h4 { margin: var(--space-1) 0 0; font-size: var(--text-sm); color: var(--text-secondary); font-weight: 600; }
+.b-row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; min-width: 0; }
+.b-row > .grow { flex: 1 1 auto; min-width: 0; }
+.b-muted { color: var(--text-muted); font-size: var(--text-sm); }
+.b-faint { color: var(--text-faint); font-size: var(--text-xs); }
+.b-mono { font-family: var(--font-mono); font-size: var(--text-xs); overflow-wrap: anywhere; }
+
+.b-routes { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: var(--space-2); }
+.b-route { border: 1px solid var(--border); border-radius: var(--radius-card); padding: var(--space-2) var(--space-3);
+           background: var(--surface-base); display: grid; gap: 2px; min-width: 0; }
+.b-route strong { font-size: var(--text-sm); text-transform: capitalize; }
+.b-route .b-mono { color: var(--text-secondary); }
+
+.b-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); flex: 0 0 auto; }
+.b-dot.ok { background: var(--success); }
+.b-dot.warn { background: var(--warning); }
+.b-dot.bad { background: var(--error); }
+
+.b-tag { font-size: var(--text-xs); padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border);
+         color: var(--text-muted); white-space: nowrap; }
+.b-tag.local { border-color: var(--success); color: var(--success); }
+.b-tag.cloud { border-color: var(--accent-line); color: var(--text-secondary); }
+.b-tag.warn { border-color: var(--warning); color: var(--warning); }
+.b-tag.bad { border-color: var(--error); color: var(--error); }
+.b-tag.ok { border-color: var(--success); color: var(--success); }
+
+.b-warnings { margin: 0; padding-left: 1.1em; display: grid; gap: 2px; font-size: var(--text-sm); color: var(--warning); }
+.b-list { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+.b-key { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; padding: var(--space-1) var(--space-2);
+         border: 1px solid var(--border); border-radius: var(--radius-chip); background: var(--surface-base); }
+.b-key .grow { flex: 1 1 140px; min-width: 0; }
+.b-key .ghost-btn, .b-card .ghost-btn { padding: 2px var(--space-2); }
+.b-models { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+
+.b-switch { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm);
+            color: var(--text-secondary); cursor: pointer; }
+.b-switch input { accent-color: var(--accent); width: 16px; height: 16px; }
+
+.b-form { display: grid; gap: var(--space-2); }
+.b-form .input { width: 100%; }
+.b-grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-2); }
+.b-field { display: grid; gap: 2px; font-size: var(--text-sm); color: var(--text-secondary); min-width: 0; }
+.b-field select, .b-field input[type="number"] { background: var(--surface-base); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: var(--radius-chip); padding: 4px var(--space-2); font: inherit;
+  font-size: var(--text-sm); min-width: 0; }
+.b-field select:focus-visible, .b-field input:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+.b-primary { border-color: var(--accent-line); color: var(--text-primary); background: var(--accent-dim); }
+
+.b-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.b-table th { text-align: left; color: var(--text-muted); font-weight: 500; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+.b-table td { padding: 4px 6px; border-bottom: 1px solid var(--border); vertical-align: top; overflow-wrap: anywhere; }
+.b-table-wrap { overflow-x: auto; }
+
+.b-bar { height: 6px; border-radius: 3px; background: var(--surface-base); overflow: hidden; }
+.b-bar > span { display: block; height: 100%; background: var(--accent); }
+
+.b-empty { border: 1px dashed var(--border-strong); border-radius: var(--radius-card); padding: var(--space-3);
+           color: var(--text-muted); font-size: var(--text-sm); text-align: center; }
+
+@media (max-width: 420px) {
+  .b-routes { grid-template-columns: 1fr; }
+  .b-key .ghost-btn { flex: 1 1 auto; }
+}

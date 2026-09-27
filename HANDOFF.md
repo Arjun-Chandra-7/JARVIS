@@ -5,6 +5,46 @@ piece was actually taken, and what is next.
 
 ---
 
+## Eleventh pass (2026-09-27): the Daily Brain — one router for every model call
+
+Design, API, measurements, 3D-branch notes: `docs/DAILY_BRAIN.md`. Code: `jarvis/brain/`,
+`overlay/brain.js|css`. Branch `feat/jarvis-daily-brain`, based on `73e01d8` (the
+`live-failure-repair` tip, which contains `cda87eb`, the 3D branch's base). Built in a separate
+worktree while `feat/jarvis-3d-studio` was in progress; nothing from that branch is included.
+
+* **Audit found:** two provider lists plus six hand-built `OpenAI(...)` clients; every
+  non-deterministic turn, questions included, went through the tool loop with the full prompt and
+  tool schemas on one model; the 429 → local fallback was silent in the reply; one key per
+  provider, in `.env`; "vision" meant `brain == "gemini"`.
+* **Now:** a typed request and model-free classifier; a registry with declared vs probe-verified
+  capabilities; one OpenAI-compatible adapter with precise failure kinds; tiers and profiles;
+  a bounded executor with an honest one-sentence notice; keys in the Secret Service with
+  rotation/quarantine/backoff; a context engine that keeps constraints, corrections, approvals
+  and needed tool results and drops the rest (Case I: 1 862 → 222 tokens); study (NCERT-style
+  labels, marks bands, quiz), research with citations, privacy routing, content-free telemetry,
+  and the overlay's Brain tab. `llm.complete` goes through the same router.
+* **Verified here:** 111 brain tests (Cases A–J, fake provider server, fictional keys) + 370
+  existing tests covering the touched files; the Brain tab in Chromium against the real API and a
+  fake server (23/23: masked key field, key never in DOM/responses/settings, add/reorder/test/
+  confirmed remove, routing save, offline and failure states, keyboard, accessible names, dark
+  and light, 360 px). Secret Service read path against the real gnome-keyring (no item written).
+  Local benchmark on the real Ollama: qwen2.5:3b 7/7 roles, 46 s cold start, tool probes 5/6 (not
+  tool-verified); qwen3.5:4b 0/7 (thinking model, empty content); moondream vision probe passed.
+* **Not verified:** any real cloud call (none made — no paid/free API calls in this pass), the
+  tool/vision probes on Groq/Gemini (run Brain → Providers → Validate after restart; until then
+  actions keep the configured model, labelled unverified), a real keyring write/delete, the tab
+  inside the Electron window, the running services.
+* **Full suite on this branch: 2951 passed, 1 failed** — `test_desktop_apps::test_unknown_app_returns_none`
+  asserts Blender is not installed; the 3D session installed `~/.local/bin/blender` on this machine
+  the same day. Environmental, unrelated to this branch; the 3D branch should replace "blender" in
+  that test with an app that cannot be installed.
+* **Still direct, not yet routed:** `away_mode/engine.py`, `agent/omnicore.py`,
+  `integrations/meet_bot.py`, `webserver._contacts_ingest` (contact data to the configured cloud
+  brain — should go through privacy routing), `agent/ai_researcher.py`, `vision/analyze.py`.
+* **Not live until merged and restarted.** Integration order in `docs/DAILY_BRAIN.md`.
+
+---
+
 ## Tenth pass (2026-09-25): live customization and bounded self-repair
 
 Design, threat model, tiers, recovery: `docs/SELF_REPAIR.md`. Code: `jarvis/settings/`,

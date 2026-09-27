@@ -249,6 +249,14 @@ doubling to 10 min for outages. The pauses are shared by every Jarvis process
 (`~/.local/share/jarvis/provider-health.json`; delete it to retry at once). Deterministic
 commands — messaging, notifications, sleep and wake, volume, opening things — need no model.
 
+Which model answers what is decided by the Daily Brain (`docs/DAILY_BRAIN.md`, overlay → Brain
+tab, Alt+5): questions, study answers, current-information research and pictures are answered
+on a route of their own with only the relevant context; actions go to the tool loop on a model
+that passed the tool-calling probes; private input (passwords, OTPs, keys) never goes to a cloud
+model; and when a provider fails, the reply says which fallback answered. Keys can be added,
+ordered, tested and removed in the Brain tab and are kept in the system keyring — `.env` keys
+keep working and are never edited. `JARVIS_DAILY_BRAIN=0` turns it off.
+
 ## Notifications
 
 Incoming messages are grouped before they are spoken: a conversation is announced once it has

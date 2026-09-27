@@ -601,7 +601,25 @@ class GroqAgent:
             return False
         self.client = OpenAI(base_url=base, api_key="ollama", max_retries=0, timeout=120)
         self.model, self._on_local = model, True
+        self._fell_back_this_turn = True
         return True
+
+    def _use_tool_model(self, choice) -> None:
+        """Run this turn's tool loop on the model the Daily Brain verified for tool calling.
+
+        ``choice`` is (base_url, key, model) or None. None — no model has passed the tool probes
+        yet, or the brain is off — leaves the configured model in place, as before.
+        """
+        self._fell_back_this_turn = False
+        if not choice or self._on_local:
+            return
+        base_url, key, model = choice
+        if model == self.model and base_url.rstrip("/") == str(getattr(self.client, "base_url", "")).rstrip("/"):
+            return
+        from openai import OpenAI
+
+        self.client = OpenAI(base_url=base_url, api_key=key or "none", max_retries=0, timeout=45)
+        self.model = model
 
     # A conversation left open for hours is not one conversation. Observed in the log: at 16:41
     # "How you doing?" was answered "I found several matches for 'Arnav Pandey'" — a reply to an
@@ -662,6 +680,8 @@ class GroqAgent:
         action_claims_checked = False
         # episodic journal
         clean = " ".join(l for l in user_text.splitlines() if not l.strip().startswith("["))[:140].strip()
+        from ..brain.privacy import redact
+        clean = redact(clean)            # a password or OTP said aloud never reaches the journal
         if clean:
             try:
                 vaultmod.journal_append(self.config.vault_path, clean)
@@ -693,6 +713,24 @@ class GroqAgent:
 
         if gate.looks_unfinished(user_text):
             return gate.ask_for_the_rest(user_text)
+
+        # The Daily Brain answers questions, study, research and pictures itself — a short
+        # route-specific instruction and only the relevant context, on the model the router picks,
+        # with an honest note when it had to fall back. It never acts: anything that changes the
+        # world comes back as None and carries on into the tool loop below.
+        from ..brain import daily
+        answered = await daily.maybe_answer(user_text, session, history=self.messages,
+                                            on_delta=getattr(self, "on_reply_delta", None))
+        if answered is not None:
+            from ..brain.privacy import redact
+            asked = {"role": "user", "content": f"[time: {now:%A %Y-%m-%d %H:%M %Z}] {redact(user_text)}"}
+            self.messages.append(asked)
+            self._turn_times[id(asked)] = time.time()
+            self.messages.append({"role": "assistant", "content": answered.text})
+            self._trim()
+            self._save_history()
+            return answered.text
+        self._use_tool_model(daily.tool_choice(user_text, session))
 
         # Which specialist this turn belongs to. It changes the instruction, the temperature and
         # which tools are put in front of the model — all of which matter more to a small local
@@ -886,6 +924,12 @@ class GroqAgent:
         vaultmod.git_autocommit(self.config.vault_path, f"jarvis: memory update {now:%Y-%m-%d %H:%M}")
         self._trim()
         self._save_history()
+        # A rate limit moved this turn onto the small local model: say so, once, in the reply —
+        # never let it pass as the cloud model's answer.
+        if getattr(self, "_fell_back_this_turn", False) and reply:
+            reply = (f"{self.config.brain.capitalize()} is rate-limited, so this came from the smaller local "
+                     f"model. {reply}")
+            self._fell_back_this_turn = False
         # The offer of further assistance goes before the reply is spoken, written to the
         # transcript or stored in history — one place rather than three.
         return spoken.trim_trailer(reply) or "(no reply)"
