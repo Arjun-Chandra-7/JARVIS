@@ -88,7 +88,7 @@ class AwaySession:
         "media", "account_recovery", "location", "contact_others", "policy_change"])
     escalation_rules: dict[str, Any] = field(default_factory=lambda: {
         "interrupt": "urgent_only", "spoken": True, "desktop": True, "phone": True, "vip": []})
-    maximum_turns_per_thread: int = 6
+    maximum_turns_per_thread: int = 20
     maximum_reply_rate: int = 30           # replies per hour, all threads together
     quiet_hours: list[str] = field(default_factory=list)   # ["22:30", "07:00"]: no spoken alerts
     live_summary: dict[str, Any] = field(default_factory=dict)

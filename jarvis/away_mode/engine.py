@@ -33,10 +33,10 @@ logger = logging.getLogger("jarvis.away")
 Responder = Callable[[list[dict[str, str]]], Awaitable[str]]
 
 CONTENT_DEDUPE_S = 120.0       # the same text in the same thread within this is one message
-COOLDOWN_S = 12.0              # least time between two replies in one thread
+COOLDOWN_S = 6.0               # least time between two replies in one thread; later ones wait, not drop
 DISCLOSE_AGAIN_AFTER_S = 3 * 3600.0
 BURST_WINDOW_S, BURST_MAX = 60.0, 8   # replies across all threads in a minute
-FAST_ECHO_S = 4.0              # an answer this soon after ours, three times in a thread, is a machine
+FAST_ECHO_S = 2.0              # sent this soon after our reply, three times running, is a machine
 MAX_MODEL_CALLS = 3
 _RECENT_TURNS = 4
 
@@ -78,6 +78,14 @@ class AwayEngine:
         self.clock = clock
         self._lock = asyncio.Lock()
         self._turns: dict[str, deque] = {}      # recent raw turns, memory only
+        # A message that arrived while its thread was cooling down: answered when the cooldown
+        # ends, the latest one per thread, so a burst of three quick messages gets one reply.
+        self.deferred: dict[str, tuple[InboundMessage, float]] = {}
+
+    def reset(self) -> None:
+        """A new away session: nothing remembered from the last one."""
+        self._turns.clear()
+        self.deferred.clear()
 
     # ------------------------------------------------------------------ helpers
     def resolver(self, state: dict[str, Any], session: AwaySession) -> Resolver:
@@ -91,13 +99,18 @@ class AwayEngine:
             {"role": role, "content": policy.redact(text, 400)})
 
     # ------------------------------------------------------------------ the pipeline
-    async def handle(self, msg: InboundMessage) -> Decision:
+    async def handle(self, msg: InboundMessage, *, retry: bool = False) -> Decision:
         async with self._lock:
-            plan = self._decide(msg)
+            plan = self._decide(msg, retry)
             if plan.get("send") is None:
                 decision = plan["decision"]
             else:
                 decision = await self._send(plan)
+            key = plan.get("key")
+            if decision.action == "deferred" and key:
+                self.deferred[key] = (msg, plan["due"])
+            elif key and decision.action in {"replied", "dry_run", "owner"}:
+                self.deferred.pop(key, None)
             alert = plan.get("alert")
         if alert:
             session = plan["session"]
@@ -105,7 +118,17 @@ class AwayEngine:
             decision.escalated = True
         return decision
 
-    def _decide(self, msg: InboundMessage) -> dict[str, Any]:
+    async def flush_deferred(self) -> list[Decision]:
+        """Answer the held messages whose thread has cooled down."""
+        now = self.clock()
+        out = []
+        for key, (msg, due) in list(self.deferred.items()):
+            if now >= due:
+                self.deferred.pop(key, None)
+                out.append(await self.handle(msg, retry=True))
+        return out
+
+    def _decide(self, msg: InboundMessage, retry: bool = False) -> dict[str, Any]:
         now = self.clock()
         if not msg.verified_source or not msg.platform or not msg.thread_id or not msg.event_id:
             return {"decision": Decision("ignored", "unverified event")}
@@ -114,12 +137,13 @@ class AwayEngine:
             session = AwaySession.from_dict(raw) if raw else None
             if session is None or not session.active or session.expired_at(now):
                 return {"decision": Decision("ignored", "away mode is off")}
-            plan = self._decide_locked(state, session, msg, now)
+            plan = self._decide_locked(state, session, msg, now, retry)
             state["session"] = session.to_dict()
             plan["session"] = session
             return plan
 
-    def _decide_locked(self, state: dict[str, Any], session: AwaySession, msg: InboundMessage, now: float) -> dict[str, Any]:
+    def _decide_locked(self, state: dict[str, Any], session: AwaySession, msg: InboundMessage, now: float,
+                       retry: bool = False) -> dict[str, Any]:
         summary = session.live_summary or blank_summary()
         session.live_summary = summary
         sup = summary["suppressed"]
@@ -127,7 +151,7 @@ class AwayEngine:
 
         # 2. duplicate bridge events, and the same words re-delivered under a new id
         seen_key = f"{msg.platform}:{msg.event_id}"
-        if seen_key in state["seen"]:
+        if seen_key in state["seen"] and not retry:
             sup["duplicate"] += 1
             return {"decision": Decision("suppressed", "duplicate event", thread=key)}
         state["seen"][seen_key] = now
@@ -140,14 +164,15 @@ class AwayEngine:
         if msg.ts and msg.ts < session.start_time - 5:
             return {"decision": Decision("ignored", "sent before away mode started", thread=key)}
         body_key = "c:" + hashlib.sha256(f"{key}|{' '.join(msg.text.lower().split())}".encode()).hexdigest()[:16]
-        if now - float(state["seen"].get(body_key, 0)) < CONTENT_DEDUPE_S:
+        if now - float(state["seen"].get(body_key, 0)) < CONTENT_DEDUPE_S and not retry:
             sup["duplicate"] += 1
             return {"decision": Decision("suppressed", "duplicate text", thread=key)}
         state["seen"][body_key] = now
         if not msg.text.strip():
             return {"decision": Decision("ignored", "no text", thread=key)}
 
-        summary["counts"]["received"] += 1
+        if not retry:
+            summary["counts"]["received"] += 1
         if msg.platform in session.muted_platforms:
             sup["muted"] += 1
             return {"decision": Decision("suppressed", "platform muted", thread=key)}
@@ -163,7 +188,7 @@ class AwayEngine:
             return {"decision": Decision("suppressed", "work group", thread=key)}
 
         # 7. what it is and how urgent — with the sender's recent activity as evidence
-        times = [t for t in state.setdefault("recent", {}).get(sender.contact_id, []) if now - t < 900] + [now]
+        times = [t for t in state.setdefault("recent", {}).get(sender.contact_id, []) if now - t < 900] + ([] if retry else [now])
         state["recent"][sender.contact_id] = times[-10:]
         calls = [c for c in summary["calls"] if c.get("contact") == sender.contact_id and now - c.get("at", 0) < 900]
         c = policy.classify(msg.text, family=sender.family, vip=sender.vip, known=sender.known,
@@ -183,7 +208,7 @@ class AwayEngine:
         if sender.contact_id not in thread.contact_ids:
             thread.contact_ids = (thread.contact_ids + [sender.contact_id])[-8:]
         thread.language = c.language if c.language else thread.language
-        thread.incoming_count += 1
+        thread.incoming_count += 0 if retry else 1
         thread.last_activity = now
         gist = policy.redact(msg.text)
         thread.current_request = gist
@@ -200,12 +225,15 @@ class AwayEngine:
             if topic not in thread.promises_avoided:
                 thread.promises_avoided.append(topic)
 
-        self._note_item(summary, thread, sender, msg, c, now)
-        self._remember_turn(key, "user", msg.text)
+        if not retry:       # a held message was noted, and escalated if need be, when it arrived
+            self._note_item(summary, thread, sender, msg, c, now)
+            self._remember_turn(key, "user", msg.text)
 
         # 15. escalation, decided now and delivered after the lock is released
         alert = None
-        if c.urgency in {"urgent", "emergency"} or (msg.is_group is False and session.escalation_rules.get("interrupt") == "all"):
+        if retry:
+            pass
+        elif c.urgency in {"urgent", "emergency"} or (msg.is_group is False and session.escalation_rules.get("interrupt") == "all"):
             level = c.urgency if c.urgency in {"urgent", "emergency"} else "info"
             alert = self.escalator.queue(state, session, _alert(key, sender, msg.platform, c, level))
 
@@ -242,8 +270,12 @@ class AwayEngine:
             thread.status = "bot"
             summary["bots"] = (summary["bots"] + [thread.who])[-20:]
             return stop("suppressed", "automated sender", "bot")
-        if thread.last_reply_at and now - thread.last_reply_at < FAST_ECHO_S:
-            fast = int(state.setdefault("fast", {}).get(key, 0)) + 1
+        # Timed by when the message was *sent*, against when our reply went out. Measuring when it
+        # was processed marked people as bots: three quick messages typed before our reply
+        # arrived were all "answered" within a poll of it.
+        if not retry and msg.ts and thread.last_reply_at and msg.ts >= thread.last_reply_at:
+            fast_now = msg.ts - thread.last_reply_at < FAST_ECHO_S
+            fast = int(state.setdefault("fast", {}).get(key, 0)) + 1 if fast_now else 0
             state["fast"][key] = fast
             if fast >= 3:
                 thread.status = "bot"
@@ -257,7 +289,8 @@ class AwayEngine:
                 sum(1 for t in replies_at if now - t < BURST_WINDOW_S) >= BURST_MAX:
             return stop("recorded", "reply rate limit", "rate_limited")
         if thread.last_reply_at and now - thread.last_reply_at < COOLDOWN_S and c.urgency not in {"urgent", "emergency"}:
-            return stop("recorded", "thread cooling down", "rate_limited")
+            plan["due"] = thread.last_reply_at + COOLDOWN_S
+            return stop("deferred", "thread cooling down; answering when it ends")
         max_turns = min(session.maximum_turns_per_thread, 2) if session.reply_policy == TAKE_MESSAGE \
             else session.maximum_turns_per_thread
         if thread.status == "capped":
@@ -370,6 +403,7 @@ class AwayEngine:
             summary = session.live_summary
             stored = ThreadState.from_dict(state["threads"].get(key, thread.__dict__))
             if result.ok:
+                stored.last_reply_at = self.clock()      # when it actually went out
                 state["outbound"][result.provider_id or ("u-" + secrets.token_hex(4))] = {
                     "at": self.clock(), "fp": fingerprint(text), "thread": key}
                 summary["counts"]["replied"] += 1

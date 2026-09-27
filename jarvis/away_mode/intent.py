@@ -31,11 +31,17 @@ _START = re.compile(
     r"(?:my\s+|all\s+my\s+|mere\s+)?(?:messages?|chats?|texts?|whatsapp|calls?|dms?)"
     r"|\btake\s+(?:my\s+)?messages\b|\baway\s+mode\s+(?:on|start)|\b(?:turn\s+on|start|enable|activate)\s+away\s+mode")
 _MESSAGES_WORDS = re.compile(r"(?i)\b(?:messages?|chats?|texts?|whatsapp|calls?|reply|replies|handle|cover|dms?|away mode)\b")
+# Said anywhere in a short sentence: "okay Jarvis, I'm back", "I'm back home now", "main aa gaya".
 _STOP = re.compile(
-    r"(?ix)^(?:jarvis\s*,?\s*)?(?:stop\s+away\s+mode(?:\s+now)?|away\s+mode\s+off|turn\s+off\s+away\s+mode|"
-    r"end\s+away\s+mode|disable\s+away\s+mode|i'?m\s+back|i\s+am\s+back|i'?m\s+home|main\s+aa\s+gaya|"
-    r"stop\s+handling\s+my\s+messages|stop\s+replying(?:\s+to\s+(?:my\s+)?messages)?|i'?m\s+available(?:\s+now)?|"
-    r"i\s+am\s+available(?:\s+now)?)[.!]*$")
+    r"(?ix)\b(?:i'?m|i\s+am|im)\s+(?:back|home|here\s+now|free\s+now|available(?:\s+now|\s+again)?)\b"
+    r"|\bback\s+home\b|\b(?:i'?ve|i\s+have)\s+(?:come\s+back|returned|got\s+back)\b"
+    r"|\b(?:stop|end|turn\s+off|switch\s+off|disable|cancel|exit|deactivate|close|band\s+kar(?:o|\s+do)?)\s+"
+    r"(?:the\s+|my\s+)?away(?:\s+mode)?\b|\baway\s+mode\s+(?:off|band|stop|khatam)\b"
+    r"|\b(?:main|mai)\s+(?:wapas\s+|ghar\s+)?aa\s+gay[ai]\b|\b(?:wapas|ghar)\s+aa\s+gay[ai]\b"
+    r"|\bstop\s+(?:handling|replying\s+to|answering)\s+(?:my\s+)?(?:messages|chats|whatsapp)\b")
+# Not a return: plans and questions about being back.
+_NOT_STOP = re.compile(r"(?i)\b(?:will|i'?ll|going\s+to|when|until|till|by|later|tomorrow|after)\b.*\bback\b|\?\s*$|"
+                       r"\bback\s+(?:online|up)\b")
 _EXTEND = re.compile(r"(?i)\b(?:extend|prolong)\s+(?:the\s+)?away(?:\s+mode)?\b|\baway\s+mode\s+(?:till|until)\b|"
                      r"\b(?:i'?ll\s+be\s+back\s+later|make\s+it\s+(?:till|until)|keep\s+(?:it|away\s+mode)\s+on\s+(?:till|until|for))")
 _SUMMARY = re.compile(
@@ -208,7 +214,8 @@ def parse_extend(text: str, now: float, tz: str, current_end: Optional[float]) -
 
 
 def is_stop(text: str) -> bool:
-    return bool(_STOP.match(text.strip()))
+    t = text.strip()
+    return len(t.split()) <= 10 and bool(_STOP.search(t)) and not _NOT_STOP.search(t)
 
 
 def is_extend(text: str) -> bool:

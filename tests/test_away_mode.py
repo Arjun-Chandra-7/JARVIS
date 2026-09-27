@@ -59,7 +59,7 @@ class Rig:
 
     def say(self, jid, text, name="", **kw):
         msg = InboundMessage("whatsapp", kw.pop("event_id", f"ev{next(_ids)}"), kw.pop("thread", jid), jid, name, text,
-                             ts=self.clock(), **kw)
+                             ts=kw.pop("ts", self.clock()), **kw)
         return asyncio.run(self.engine.handle(msg))
 
     def session(self):
@@ -344,12 +344,29 @@ def test_answers_faster_than_a_person_types_end_the_thread(tmp_path):
     rig = Rig(tmp_path)
     rig.say(MAYA, "hi", "Maya")
     outcomes = []
-    for n in range(4):
-        rig.clock.advance(13)
-        outcomes.append(rig.say(MAYA, f"message number {n} about the notes", "Maya"))
+    for n in range(4):                     # a machine answers each of our replies within a second
         rig.clock.advance(1)
-        outcomes.append(rig.say(MAYA, f"and another thing {n}", "Maya"))
+        outcomes.append(rig.say(MAYA, f"automatic answer number {n} here", "Maya"))
+        rig.clock.advance(7)
+        outcomes += asyncio.run(rig.engine.flush_deferred())
     assert any(o.reason == "replies arrive faster than a person types" for o in outcomes)
+
+
+def test_a_person_sending_quick_messages_is_not_a_bot_and_gets_one_answer(tmp_path):
+    rig = Rig(tmp_path)
+    rig.say(MAYA, "hi", "Maya")
+    # Three messages typed back to back, sent before our reply could have been read.
+    for n, text in enumerate(["wait", "need the physics notes", "by tomorrow morning pls"]):
+        rig.clock.advance(1)
+        rig.say(MAYA, text, "Maya", ts=rig.clock() - 3)
+    assert rig.thread(MAYA)["status"] == "open"
+    rig.clock.advance(7)
+    answered = asyncio.run(rig.engine.flush_deferred())
+    assert len(answered) == 1 and answered[0].action == "dry_run"
+    assert len(rig.wa.outbox) == 2
+    for n in range(10):                    # and a real conversation keeps going
+        rig.clock.advance(20)
+        assert rig.say(MAYA, f"ok and question {n} about the trip?", "Maya").action == "dry_run"
 
 
 def test_rate_limit_and_cooldown(tmp_path):
@@ -360,7 +377,11 @@ def test_rate_limit_and_cooldown(tmp_path):
     rig2 = Rig(tmp_path / "b")
     rig2.say(MAYA, "hi", "Maya")
     rig2.clock.advance(2)
-    assert rig2.say(MAYA, "one more thing about the notes", "Maya").reason == "thread cooling down"
+    held = rig2.say(MAYA, "one more thing about the notes", "Maya")
+    assert held.action == "deferred" and len(rig2.wa.outbox) == 1
+    rig2.clock.advance(6)
+    assert [d.action for d in asyncio.run(rig2.engine.flush_deferred())] == ["dry_run"]
+    assert len(rig2.wa.outbox) == 2
 
 
 def test_take_message_policy_stops_after_two_replies(tmp_path):
@@ -675,3 +696,52 @@ def test_a_connector_outage_is_closed_when_it_comes_back(tmp_path):
     ls = rig.session().live_summary
     assert ls["offline"] == {} and ls["gaps"][0][0] == "whatsapp"
     assert "Gaps:" not in summary.written(rig.session())        # a five-second blip is not a gap
+
+
+
+@pytest.mark.parametrize("said", ["I'm back", "Jarvis, I'm back.", "okay I'm back now", "I'm back home Jarvis",
+                                  "I am home", "stop away mode", "turn off the away mode please", "main aa gaya",
+                                  "main wapas aa gaya hoon", "away mode off"])
+def test_saying_im_back_stops_away_mode(tmp_path, said):
+    rig = Rig(tmp_path)
+    reply = asyncio.run(control.handle(said, rig.config, store=rig.store))
+    assert reply.startswith("Welcome back. Away mode is off.") or reply.startswith("Away mode is off")
+    assert rig.store.active_session() is None
+
+
+@pytest.mark.parametrize("said", ["I'll be back by 8", "when will I be back?", "I'm back online", "come back"])
+def test_other_sentences_about_back_do_not_stop_it(said):
+    assert not intent.is_stop(said)
+
+
+def test_im_back_after_it_expired_still_gives_the_briefing_once(tmp_path):
+    rig = Rig(tmp_path)
+    rig.say(MAYA, "can he call me?", "Maya")
+    control.end(rig.config, status=EXPIRED, store=rig.store)
+    first = asyncio.run(control.handle("I'm back", rig.config, store=rig.store))
+    assert first.startswith("Welcome back. Away mode had already ended.") and "Maya" in first
+    assert asyncio.run(control.handle("I'm back", rig.config, store=rig.store)) is None
+
+
+def test_a_second_session_starts_clean(tmp_path):
+    rig = Rig(tmp_path, maximum_turns_per_thread=2)
+    for n in range(3):
+        rig.say(MAYA, f"question {n} about the trip?", "Maya")
+        rig.clock.advance(30)
+    assert rig.thread(MAYA)["status"] == "capped"
+    control.end(rig.config, store=rig.store)
+    asyncio.run(control.handle("I'm going out for an hour, handle my messages", rig.config, store=rig.store))
+    assert asyncio.run(MANAGER.answer("yes")).ok
+    rig.clock.t = time.time() + 1
+    d = rig.say(MAYA, "hey again, are you around?", "Maya")
+    assert d.action == "dry_run" and d.reply.startswith("Hi, I'm JARVIS")
+
+
+def test_turning_it_on_again_while_on_updates_it(tmp_path):
+    rig = Rig(tmp_path)
+    rig.say(MAYA, "hi", "Maya")
+    ask = asyncio.run(control.handle("I'm going out until 11 pm, handle my messages", rig.config, store=rig.store))
+    assert ask.startswith("Ready to turn on away mode until 11")
+    out = asyncio.run(MANAGER.answer("yes"))
+    assert out.ok and out.message.startswith("Away mode updated")
+    assert rig.thread(MAYA)["disclosure_sent"] is True           # the conversation carries on

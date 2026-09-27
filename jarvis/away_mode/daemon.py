@@ -134,6 +134,7 @@ async def tick(config, eng: AwayEngine, store: Store, wa: Optional[WhatsAppConne
             if now - last_owner_check[0] >= OWNER_CHECK_S:
                 last_owner_check[0] = now
                 await _owner_takeovers(eng, store, wa, session.start_time, seen)
+    await eng.flush_deferred()
     _expire_threads(store, now)
     for s, alert in eng.escalator.repeat_due(store, now):
         await asyncio.to_thread(eng.escalator.deliver, s, alert)

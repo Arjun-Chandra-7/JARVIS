@@ -103,20 +103,33 @@ def activate(config, s: AwaySession, *, store: Optional[Store] = None) -> dict[s
     now = time.time()
     if s.planned_end_time and s.planned_end_time <= now:
         return {"ok": False, "message": "That end time has already passed, so away mode is still off."}
+    replacing = False
     with store.edit() as state:
         old = state.get("session")
         if old and old.get("status") == ACTIVE:
-            _archive(state, AwaySession.from_dict(old), ENDED, now)
+            replacing = True
+            prev = AwaySession.from_dict(old)
+            s.taken_over = list(prev.taken_over)
+            _archive(state, prev, ENDED, now)
+        else:
+            # A new session starts clean. Thread state from the last one — a conversation that
+            # hit its turn limit, a cooldown, a "closed" — used to carry over, and that person
+            # never got a reply again.
+            state["threads"], state["fast"], state["recent"] = {}, {}, {}
         s.status = ACTIVE
         s.start_time = now
         s.live_summary = blank_summary()
         state["session"] = s.to_dict()
     try:
         from . import daemon
+        if not replacing and daemon._state.get("engine") is not None:
+            daemon._state["engine"].reset()
         daemon.start(config)
     except RuntimeError:
         pass   # no running loop (tests, a sync caller); the backend daemon picks the session up
     until = f" until {s.return_clock()}" if s.planned_end_time else ""
+    if replacing:
+        return {"ok": True, "message": f"Away mode updated{until}."}
     return {"ok": True, "message": f"Away mode is on{until}. I'll answer as JARVIS, never as you, and brief you when you're back."}
 
 
@@ -214,15 +227,23 @@ async def handle(text: str, config, session_id: str = "local", *, store: Optiona
     have_history = active or bool(state["archive"])
 
     if intent.is_stop(said):
-        if not active:
-            return "Away mode isn't on." if re.search(r"(?i)away", said) else None
-        s = end(config, store=store)
-        return "Welcome back. Away mode is off. " + summary.spoken(s) if s else "Away mode is off."
+        if active:
+            s = end(config, store=store)
+            return "Welcome back. Away mode is off. " + summary.spoken(s) if s else "Away mode is off."
+        # It already ran out on its own: "I'm back" still deserves the briefing, once.
+        recent = state["archive"][-1] if state["archive"] else None
+        if recent and time.time() - float(recent.get("ended", 0)) < 6 * 3600 and not recent.get("briefed"):
+            with store.edit() as st:
+                if st["archive"]:
+                    st["archive"][-1]["briefed"] = True
+            acknowledge_all(store)
+            return "Welcome back. Away mode had already ended. " + summary.spoken(AwaySession.from_dict(recent["session"]))
+        return "Away mode isn't on." if re.search(r"(?i)\baway\b", said) else None
     if active and intent.is_extend(said):
         return extend(config, said, store=store)
     if intent.is_start(said):
-        if active:
-            return f"Away mode is already on until {AwaySession.from_dict(raw).return_clock()}. Say “extend away mode” to change the time."
+        # Saying it again while it runs changes it: the new policy is read back and replaces the
+        # old one after a yes, keeping the conversations it is already in.
         return propose_start(config, said, session_id, store=store)
     if _CALLS_Q.match(said):
         return calls.capability_sentence()
