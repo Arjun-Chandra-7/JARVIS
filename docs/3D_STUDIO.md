@@ -193,8 +193,13 @@ optional remote image-to-3D (approval) → ask for another reference.
   ~21 GB with textures. This laptop has an RTX 3050 with 4 GB, ~1.5 GB of it used by the live
   voice stack — neither runs here, and JARVIS does not download weights. A large model needs a
   remote GPU.
-* **Remote endpoint:** set `JARVIS_3D_REMOTE_URL` (HTTPS only). Sending a reference needs an
-  approval that names the host ("yes, send it to mesh.example.com"); a bare "yes" does not count.
+* **Remote endpoint:** set `JARVIS_3D_REMOTE_URL` (HTTPS only). It is offered only when the Daily
+  Brain's privacy policy allows picture uploads (Brain on, not "always local", screenshot upload on),
+  and sending needs an approval that names the host ("yes, send it to mesh.example.com") — said, not
+  clicked; a bare "yes" does not count.
+* **Routing:** every reconstruction mode and edit is a Daily Brain decision
+  (`three_d/brain_routes.py`) that resolves to 3D Studio's local engines — no general model router
+  lives in this package.
 * Cloud vision (Gemini) is never sent a 3D reference; analysis here is local.
 * Measured: headless Blender ~330 MB RSS; a Workbench preview ~580 MB VRAM (renders only when
   the GPU keeps ≥ 300 MB free after it); build 1.8–3.6 s for the demos; one render at a time.

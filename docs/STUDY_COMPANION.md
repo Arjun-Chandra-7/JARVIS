@@ -5,8 +5,9 @@ writes marks-based answers, runs quizzes, plans revision, and teaches from PDFs,
 and the teacher. Code: `jarvis/study/`. Tests: `tests/test_study_{intent,sources,engines,learning,contracts}.py` (164, all synthetic, no network).
 
 Branch `feat/jarvis-study-companion`, based on `73e01d8` (the tip of `live-failure-repair` before
-the 3D Studio and Daily Brain branches were cut). **Not wired into the running assistant yet** — see
-[Integration plan](#integration-plan).
+the 3D Studio and Daily Brain branches were cut). **Wired in** on `feat/jarvis-integrated-v1`: the
+gateway is `jarvis/brain/study_gateway.py` (the Daily Brain's capability router), the live glue is
+`jarvis/study_live.py`, and the overlay has a Study tab (Alt+6) — see `docs/INTEGRATION.md`.
 
 ---
 
@@ -256,18 +257,20 @@ Once the companion is wired in, `study_chat`'s external ChatGPT tab becomes an o
 
 ## Known limitations
 
-* Not connected to voice, the HUD, the real screen reader, the real overlay bus or any model yet.
+* Connected (integrated build): voice/text through the Daily Brain, the real screen reader and YouTube
+  captions (`study_live.LiveContextProvider`), the teach bus (`study_live.OverlayRenderer`, refuses lock/
+  password/OTP screens), approvals for reminders. Live microphone use has not been soak-tested.
 * Verified cards cover 8 topics; other topics need the brain (labelled) or the student's source.
 * Retrieval is lexical; paraphrased questions against sources can miss (then it says so).
 * Hindi exam answers depend on the brain; offline they are English only.
 * Quiz bank is 16 synthetic Electricity questions; generation via the brain is typed but not built.
 * Compare mode has no offline content.
 * Chapter numbering is unverified; no official syllabus or marking scheme is bundled.
-* No study UI was built: the app shell and overlay routing are shared with parallel branches.
-  The response/visual objects are serialisable for a later UI.
+* The Study tab shows the session, the quiz question and practice estimates; there is no editor for
+  mastery records beyond the spoken "reset"/"delete" commands.
 * Live microphone/screen behaviour untested.
 
-## Integration plan
+## Integration plan (done — kept for the record; see docs/INTEGRATION.md)
 
 1. Finish and verify `feat/jarvis-daily-brain`; merge into a clean integration branch.
 2. Rebase/merge `feat/jarvis-study-companion` onto it. Expected conflicts: `requirements.txt`

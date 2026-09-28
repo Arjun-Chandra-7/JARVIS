@@ -210,8 +210,8 @@ the Brain tab says "actions use the configured model unverified".
 | Model | Size | Local role checks (7) | Warm first token | Cold start | Tool probes | Use |
 |---|---|---|---|---|---|---|
 | qwen2.5:3b | 1.9 GB | 7/7 | ~0.38 s | 46 s | 5/6 (calls a tool on "thanks") | offline/private chat, intent, JSON, short Hindi/Hinglish — not tools |
-| qwen3.5:4b | 3.4 GB | 0/7 (thinking model: empty content within 120 tokens, ~14 s/call) | ~14.6 s | 69 s | 3/6 | none of the local roles |
-| moondream | 1.7 GB | — | — | — | vision probe passed | private image description |
+| qwen3.5:4b | 3.4 GB | 0/7 (thinking model: empty content within 120 tokens, ~14 s/call) | ~14.6 s | 69 s | 3/6 | none — denied in `registry.DENIED`; re-measured 2026-09-28: answers only with Ollama's `think:false`, 8–15 s on CPU |
+| moondream | 1.7 GB | — | — | — | passed earlier; 2026-09-28 on CPU: empty answer (0/1) | not verified here — no local vision |
 | nomic-embed-text | 0.3 GB | — | — | — | — | memory embeddings |
 
 The smallest model that passes each role is recommended (`local_models.recommend`): qwen2.5:3b
@@ -267,7 +267,7 @@ two old files kept.
 - Likely overlap: `overlay/index.html` and `overlay/app.js` (tab list, Alt+N shortcut, palette),
   `jarvis/webserver.py` (router includes), `tests/conftest.py`, `README.md`, `HANDOFF.md`.
 
-### Integration order (not done on this branch)
+### Integration order (done on `feat/jarvis-integrated-v1` — see docs/INTEGRATION.md)
 
 1. Finish and verify `feat/jarvis-daily-brain` and `feat/jarvis-3d-studio` independently.
 2. Merge `feat/jarvis-daily-brain` into a fresh integration branch from `live-failure-repair`.

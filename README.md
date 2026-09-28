@@ -1,5 +1,7 @@
 # Jarvis
 
+> **Integrated build** (Daily Brain + Study Companion + 3D Studio): see `docs/INTEGRATION.md` — what is routed where, what was validated, and the known limits.
+
 Jarvis is a local, voice-first personal assistant for a Linux desktop. It combines an optional
 ChatGPT-web, Gemini, or Groq reasoning backend with local desktop integrations and an Obsidian-style
 memory vault.

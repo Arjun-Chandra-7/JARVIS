@@ -5,6 +5,44 @@ piece was actually taken, and what is next.
 
 ---
 
+## Twelfth pass (2026-09-28): the integrated build — Daily Brain + Study Companion + 3D Studio
+
+Branch `feat/jarvis-integrated-v1` from `73e01d8`; real merge commits for `feat/jarvis-daily-brain`
+(`6c6295b`), `feat/jarvis-study-companion` (`5de21bf`), `feat/jarvis-3d-studio` (`09c68d6`). How it
+fits together, what was validated and what is not claimed: **`docs/INTEGRATION.md`**.
+
+* **Conflicts:** only `HANDOFF.md` (kept all sections) and, from the 3D merge, `jarvis/approvals.py`
+  (kept both new kinds) and `jarvis/commands.py` (3D handler first, then the Study handler).
+* **Wired:** Study's fake gateway replaced by `brain/study_gateway.py` over the new
+  `brain/capability.py` (declared capabilities + privacy floor; the Brain picks the model). Study
+  turns reach the companion through `daily.respond`; a deterministic `study` handler owns only its
+  session/quiz/diagram state (open_command used to open "start a science study session" as an app).
+  3D's local engines are Brain capabilities (`three_d/brain_routes.py`); remote upload needs the
+  Brain's privacy policy and a said approval naming the host.
+* **Direct model calls removed:** contacts ingest (was sending WhatsApp history to the cloud brain
+  every 15 min; now deterministic by default, no names/numbers in any prompt), away mode, omnicore
+  (its PA path no longer sends WhatsApp messages at all), meeting notes, vision/analyze, message
+  drafts, paper summaries. qwen2.5:3b never gets tool schemas, not even as the rate-limit fallback.
+* **Found and fixed on the way:** a PDF page ending in whitespace was dropped whole; a random
+  document id with ten digits looked like a phone number and erased citations (intermittent); the
+  overlay's approve button bypassed "say the provider's name" approvals; tiktoken undeclared and
+  downloading at run time; the Blender-dependent desktop-apps test now isolates PATH.
+* **Release hardening ported** from the preserved dirty worktree (patch backed up at
+  `~/Madara/Dev/jarvis-backups/safe-self-repair-2026-09-27/`, sha256 `af4a5817…9cdf`): deploy,
+  doctor, resources, repair records, dictation motion. The worktree itself is untouched.
+* **Verified:** full suite **3336 passed, 0 failed** (5 m 46 s, peak RSS 1.6 GB, peak VRAM 3.7 GB
+  incl. the live voice stack); resource-sensitive groups 3× identical (182 passed each); 114 real
+  headless-Blender tests; overlay 26/26 in Chromium; real gnome-keyring 16/16 with fictional keys;
+  provider probes on Groq's free tier (see INTEGRATION.md — no model passed 6/6 tool probes).
+* **Owner name:** `JARVIS_OWNER_NAME=Aviral` in `~/.config/jarvis/.env` (away mode reads it; the
+  repo `.env` is untouched).
+* **Left for the owner:** decide whether to trust a 5/6 tool model for free-form actions; fix the
+  Gemini project's access; `~/.config/jarvis/study/mastery.json` holds one synthetic record from
+  an early test run (safe to delete); home disk has under 5 GB free.
+
+---
+
+
 ## Eleventh pass (2026-09-27): the Daily Brain — one router for every model call
 
 Design, API, measurements, 3D-branch notes: `docs/DAILY_BRAIN.md`. Code: `jarvis/brain/`,
