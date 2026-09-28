@@ -242,6 +242,8 @@ def check_brain() -> Check:
     makes no model call and never returns a key."""
     st = _get(f"http://127.0.0.1:{PORT}/brain/setup")
     if st is None:
+        if _get(f"http://127.0.0.1:{PORT}/health") is not None:
+            return Check("Daily Brain", DISABLED, "the running backend has no Daily Brain (an older build)")
         return Check("Daily Brain", UNAVAILABLE, "the backend is not answering")
     routes = st.get("routes") or {}
     ok = sorted(r for r, v in routes.items() if v.get("ok"))
@@ -415,7 +417,7 @@ def check_crashes(services: list[Check]) -> Check:
                           "restarts": c.data.get("restarts", 0)}
     worst = max((v["tracebacks_24h"] for v in counts.values()), default=0)
     return Check("crashes", READY if worst == 0 else DEGRADED,
-                 "no tracebacks in 24 h" if worst == 0 else f"up to {worst} traceback(s) in 24 h — `jarvis support-bundle`",
+                 "no tracebacks in 24 h" if worst == 0 else f"up to {worst} traceback(s) in 24 h — journalctl --user -u <unit> to read them",
                  counts)
 
 
