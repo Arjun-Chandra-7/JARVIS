@@ -77,24 +77,39 @@ Installation & Packaging:
 EOF
 }
 
+# The deployment tool, copied out of the checkout before anything moves it: a rollback puts the
+# checkout on a commit that may predate jarvis/deploy.py, and the verification after it must
+# still run. deploy.py is standard-library only and takes the repository from JARVIS_DEPLOY_REPO.
+_DEPLOY_TOOL=""
+_deploy() {
+    if [ -z "$_DEPLOY_TOOL" ]; then
+        local src
+        src="$(cd "$REPO" && "$PY" -c 'import jarvis.deploy as d; print(d.__file__)' 2>/dev/null)" || return 1
+        [ -f "$src" ] || return 1
+        _DEPLOY_TOOL="$(mktemp -d)/deploy.py"
+        cp "$src" "$_DEPLOY_TOOL" || return 1
+    fi
+    ( cd "$REPO" && JARVIS_DEPLOY_REPO="$REPO" "$PY" "$_DEPLOY_TOOL" "$@" )
+}
+
 # Restart with the release taken first when that is safe, then proof that it is running.
 _deployed_restart() {
     local before after
-    if [ ! -x "$PY" ]; then
-        exec "$REPO/scripts/start.sh" --restart "$@"
+    if [ ! -x "$PY" ] || ! _deploy status >/dev/null 2>&1; then
+        exec "$REPO/scripts/start.sh" --restart "$@"      # a checkout without the deployment tool
     fi
     before="$(cd "$REPO" && git rev-parse HEAD 2>/dev/null)"
-    ( cd "$REPO" && "$PY" -m jarvis.deploy pre-restart ) || echo "Update check failed; restarting what is there."
+    _deploy pre-restart || echo "Update check failed; restarting what is there."
     after="$(cd "$REPO" && git rev-parse HEAD 2>/dev/null)"
     "$REPO/scripts/start.sh" --restart "$@" || return $?
-    if ( cd "$REPO" && "$PY" -m jarvis.deploy verify ); then
+    if _deploy verify; then
         return 0
     fi
     if [ -n "$before" ] && [ "$before" != "$after" ]; then
         echo "The update did not come up healthy; going back to ${before:0:7}."
-        ( cd "$REPO" && "$PY" -m jarvis.deploy rollback --to "$before" ) \
+        _deploy rollback --to "$before" \
             && "$REPO/scripts/start.sh" --restart "$@" \
-            && ( cd "$REPO" && "$PY" -m jarvis.deploy verify )
+            && _deploy verify
         return 1
     fi
     echo "Some services are not healthy yet — 'jarvis doctor' says which."
@@ -164,9 +179,9 @@ case "$1" in
         ;;
     rollback|update)
         cmd="$1"; shift || true
-        ( cd "$REPO" && "$PY" -m jarvis.deploy "$cmd" ) || exit $?
+        _deploy "$cmd" || exit $?
         JARVIS_UPDATE_FROM=none "$REPO/scripts/start.sh" --restart "$@" || exit $?
-        ( cd "$REPO" && "$PY" -m jarvis.deploy verify )
+        _deploy verify
         ;;
     sleep|--sleep|wake|--wake)
         [ -x "$PY" ] || { echo "No virtualenv at $PY"; exit 1; }

@@ -34,8 +34,8 @@ fits together, what was validated and what is not claimed: **`docs/INTEGRATION.m
   incl. the live voice stack); resource-sensitive groups 3× identical (182 passed each); 114 real
   headless-Blender tests; overlay 26/26 in Chromium; real gnome-keyring 16/16 with fictional keys;
   provider probes on Groq's free tier (see INTEGRATION.md — no model passed 6/6 tool probes).
-* **Owner name:** `JARVIS_OWNER_NAME=Aviral` in `~/.config/jarvis/.env` (away mode reads it; the
-  repo `.env` is untouched).
+* **Owner name:** `JARVIS_OWNER_NAME=Aviral` appended to the repo `.env` (the only file a source
+  install loads; no other line changed, backup in `~/Madara/Dev/jarvis-backups/`).
 * **Left for the owner:** decide whether to trust a 5/6 tool model for free-form actions; fix the
   Gemini project's access; `~/.config/jarvis/study/mastery.json` holds one synthetic record from
   an early test run (safe to delete); home disk has under 5 GB free.
