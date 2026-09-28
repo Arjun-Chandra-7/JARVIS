@@ -278,3 +278,17 @@ def test_a_page_ending_in_whitespace_is_not_dropped():
     doc = store.ingest([Page(text=long_page, number=5)], title="p", source_type=SourceType.TEXTBOOK_PDF,
                        extraction=ExtractionMethod.TEXT_LAYER)
     assert doc.chunk_ids
+
+
+def test_a_digit_heavy_document_id_still_cites(monkeypatch):
+    """Ids are random hex; one with ten digits in a row looked like a phone number to the scrubber,
+    which erased the chunk tag and turned a cited answer into an uncited one (intermittent)."""
+    from jarvis.study import sources
+    monkeypatch.setattr(sources, "new_id", lambda prefix="S": prefix + "1234567890ab")
+    test_case_e_cites_the_correct_page()
+
+
+def test_phone_numbers_are_still_scrubbed():
+    from jarvis.study.privacy import scrub_for_prompt
+    for said in ("call 9876543210 now", "ring +91 98765 43210", "my number is 98765-43210."):
+        assert "98765" not in scrub_for_prompt(said), said

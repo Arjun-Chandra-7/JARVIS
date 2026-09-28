@@ -40,7 +40,9 @@ _SECRETS = re.compile(
     r"xox[abp]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|"
     r"(?i:(?:api[_-]?key|secret|token|password)\s*[:=]\s*\S{8,}))")
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
-_PHONE = re.compile(r"(?<!\d)(?:\+?\d[\d\s-]{8,}\d)(?!\d)")
+# Not inside a word: a chunk id (``D1234567890ab:42:0``) is random hex and sometimes has ten digits
+# in a row; scrubbing it erased the citation tag and made a cited answer uncited.
+_PHONE = re.compile(r"(?<![\w:])(?:\+?\d[\d\s-]{8,}\d)(?![\w:])")
 _ABS_PATH = re.compile(r"(?:/home/|/Users/|[A-Za-z]:\\\\?Users\\\\?)[^\s'\"]+")
 
 
