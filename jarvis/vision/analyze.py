@@ -44,7 +44,9 @@ def _ollama(path: str, question: str, model: str) -> Optional[str]:
     img = _b64(path)
     if not img:
         return None
-    payload = {"model": model, "prompt": question, "images": [img], "stream": False,
+    from .. import ollama_cpu
+
+    payload = {"model": ollama_cpu.wire(model), "prompt": question, "images": [img], "stream": False,
                "think": False, "options": {"num_predict": 350}}
     try:
         for _ in range(2):  # first call may return empty while the model cold-loads

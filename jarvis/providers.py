@@ -68,6 +68,14 @@ class Provider:
     def id(self) -> str:
         return f"{self.name}:{self.model}"
 
+    @property
+    def wire_model(self) -> str:
+        """The name to send: on Ollama, the processor-only twin (see jarvis/ollama_cpu.py)."""
+        if self.name != "ollama":
+            return self.model
+        from . import ollama_cpu
+        return ollama_cpu.wire(self.model, self.base_url)
+
 
 @dataclass
 class Failure:
@@ -245,7 +253,7 @@ def check(provider: Provider, timeout: float = 8.0, client=None) -> Health:
         record_failure(provider, failure)
         return Health(provider, False, MODEL_GONE, failure.detail, models)
     try:
-        client.chat.completions.create(model=wanted, max_tokens=1,
+        client.chat.completions.create(model=provider.wire_model, max_tokens=1,
                                        messages=[{"role": "user", "content": "ping"}])
     except Exception as exc:  # noqa: BLE001
         failure = classify(exc)

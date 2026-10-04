@@ -60,7 +60,7 @@ def _ask(provider: pv.Provider, system: str, prompt: str, temperature: float, ti
 
     client = OpenAI(base_url=provider.base_url, api_key=provider.key or "none", max_retries=0, timeout=timeout)
     done = client.chat.completions.create(
-        model=provider.model, temperature=temperature,
+        model=provider.wire_model, temperature=temperature,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}])
     return (done.choices[0].message.content or "").strip()
 

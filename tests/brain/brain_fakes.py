@@ -19,6 +19,8 @@ from types import SimpleNamespace
 
 import httpx
 
+from jarvis import ollama_cpu
+
 FAKE_GROQ_KEY = "fictional-groq-key-A"
 FAKE_GROQ_KEY_2 = "fictional-groq-key-B"
 FAKE_GEMINI_KEY = "fictional-gemini-key"
@@ -66,7 +68,9 @@ class FakeProviders:
                 return httpx.Response(beh[1], json=beh[2] if len(beh) > 2 else {"error": {"message": "x"}})
             return httpx.Response(200, json={"data": [{"id": m} for m in self.models.get(host, [])]})
         body = json.loads(request.content or b"{}")
-        model = body.get("model", "")
+        if request.method == "POST" and path.endswith("/api/create"):     # the processor-only twin
+            return httpx.Response(200, json={"status": "success"})
+        model = ollama_cpu.logical(body.get("model", ""))                  # behaviours name the model
         self.calls.append({"host": host, "path": path, "model": model, "auth": auth[-1:] if auth else "",
                            "messages": body.get("messages", []), "tools": body.get("tools"),
                            "stream": body.get("stream", False)})

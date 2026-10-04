@@ -263,12 +263,31 @@ class OllamaAdapter(OpenAICompatibleAdapter):
             raise classify_response(resp)
         return resp.json()
 
+    def _wire(self, model: str) -> str:
+        """The processor-only twin of `model`, created through this adapter's own client."""
+        from .. import ollama_cpu
+
+        def post(url: str, body: dict) -> int:
+            with self._client(30.0) as client:
+                return client.post(url, json=body).status_code
+
+        return ollama_cpu.wire(model, self.root, post)
+
+    def chat(self, model: str, messages: list, key: str = "", **kwargs) -> ChatResult:
+        return super().chat(self._wire(model), messages, key, **kwargs)
+
+    def _tags(self, timeout: float = 4.0) -> list[dict]:
+        # The twins are plumbing, not models anyone installed.
+        from .. import ollama_cpu
+
+        return [m for m in self._get("/api/tags", timeout).get("models", []) if not ollama_cpu.is_twin(m.get("name", ""))]
+
     def list_models(self, key: str = "", timeout: float = 4.0) -> list[str]:
-        return sorted(m["name"] for m in self._get("/api/tags", timeout).get("models", []))
+        return sorted(m["name"] for m in self._tags(timeout))
 
     def installed(self) -> list[dict]:
         out = []
-        for m in self._get("/api/tags").get("models", []):
+        for m in self._tags():
             det = m.get("details") or {}
             out.append({"name": m.get("name"), "size_gb": round((m.get("size") or 0) / 1e9, 2),
                         "parameters": det.get("parameter_size", ""), "family": det.get("family", ""),
@@ -276,12 +295,14 @@ class OllamaAdapter(OpenAICompatibleAdapter):
         return out
 
     def loaded(self) -> list[dict]:
-        return [{"name": m.get("name"), "size_gb": round((m.get("size") or 0) / 1e9, 2),
+        from .. import ollama_cpu
+
+        return [{"name": ollama_cpu.logical(m.get("name") or ""), "size_gb": round((m.get("size") or 0) / 1e9, 2),
                  "vram_gb": round((m.get("size_vram") or 0) / 1e9, 2), "expires_at": m.get("expires_at", "")}
                 for m in self._get("/api/ps").get("models", [])]
 
     def set_loaded(self, model: str, loaded: bool, timeout: float = 60.0) -> None:
-        body = {"model": model, "keep_alive": "10m" if loaded else 0}
+        body = {"model": self._wire(model), "keep_alive": "10m" if loaded else 0}
         try:
             with self._client(timeout) as client:
                 resp = client.post(self.root + "/api/generate", json=body)

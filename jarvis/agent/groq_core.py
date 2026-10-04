@@ -259,6 +259,16 @@ class _StreamedResponse:
         self.choices = [_StreamedChoice(_StreamedMessage(content, built), finish_reason)]
 
 
+def _wire(agent, model: str) -> str:
+    """On the local Ollama, the processor-only twin of `model` (see jarvis/ollama_cpu.py)."""
+    from .. import ollama_cpu
+
+    ollama = ollama_cpu.root_of(getattr(getattr(agent, "config", None), "ollama_base", ""))
+    if not str(getattr(getattr(agent, "client", None), "base_url", "")).startswith(ollama):
+        return model
+    return ollama_cpu.wire(model, ollama)
+
+
 class GroqAgent:
     def __init__(self, config: Config, mode: str = "text",
                  confirm_fn: Optional[ConfirmCallback] = None, on_tool: Optional[ToolCallback] = None) -> None:
@@ -448,7 +458,7 @@ class GroqAgent:
         """One completion, streamed, returned in the same shape as `_complete`."""
         specialist = getattr(self, "_specialist", None)
         stream = self.client.chat.completions.create(
-            model=(specialist.model if specialist and specialist.model else self.model),
+            model=_wire(self, specialist.model if specialist and specialist.model else self.model),
             messages=self.messages,
             **self._tool_kwargs(),
             temperature=(specialist.temperature if specialist is not None
@@ -537,7 +547,7 @@ class GroqAgent:
         """
         specialist = getattr(self, "_specialist", None)
         return self.client.chat.completions.create(
-            model=(specialist.model if specialist and specialist.model else self.model),
+            model=_wire(self, specialist.model if specialist and specialist.model else self.model),
             messages=self.messages,
             **self._tool_kwargs(),
             temperature=(specialist.temperature if specialist is not None
@@ -565,7 +575,7 @@ class GroqAgent:
         Only called for requests that already mention LinkedIn — see `_looks_like_linkedin`.
         """
         response = self.client.chat.completions.create(
-            model=self.model,
+            model=_wire(self, self.model),
             messages=[
                 {
                     "role": "system",

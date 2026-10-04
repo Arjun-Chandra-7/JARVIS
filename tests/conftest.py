@@ -93,6 +93,10 @@ def _no_real_models(monkeypatch, tmp_path_factory):
         raise RuntimeError("network model call attempted in a test")
 
     monkeypatch.setattr("jarvis.llm._ask", refuse)
+    # Nor creates processor-only twins on the real Ollama: without one, the plain name is sent.
+    from jarvis import ollama_cpu
+    monkeypatch.setattr(ollama_cpu, "_default_post", refuse)
+    ollama_cpu.forget()
     import os
     if "JARVIS_STATE_DIR" not in os.environ:
         monkeypatch.setenv("JARVIS_STATE_DIR", str(tmp_path_factory.mktemp("state")))

@@ -13,6 +13,8 @@ from typing import Optional
 
 import httpx
 
+from .. import ollama_cpu
+
 _BASE = "http://localhost:11434"
 
 
@@ -33,7 +35,8 @@ def embed(text: str, model: str = "", timeout: float = 30.0) -> Optional[list[fl
     model = model or embedding_model.name()
     try:
         resp = httpx.post(
-            f"{_BASE}/api/embeddings", json={"model": model, "prompt": text}, timeout=timeout
+            f"{_BASE}/api/embeddings", json={"model": ollama_cpu.wire(model, _BASE), "prompt": text},
+            timeout=timeout,
         )
         resp.raise_for_status()
         return resp.json().get("embedding")
