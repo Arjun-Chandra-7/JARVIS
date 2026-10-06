@@ -57,3 +57,24 @@ def open_at_start(is_muted: Callable[[], Optional[bool]] = inputs.is_muted,
         return "Your microphone was muted, sir. I've unmuted it."
     return ("Your microphone is muted and I couldn't unmute it, sir. "
             "The mute key or Settings will do it.")
+
+
+# wpctl is a subprocess; once every few seconds is plenty to catch a mute key.
+MUTE_CHECK_S = 5.0
+
+
+class MuteWatch:
+    """Notices the microphone being muted, and unmuted, while Jarvis waits for its name."""
+
+    def __init__(self) -> None:
+        self.muted = False
+
+    def seen(self, muted: Optional[bool]) -> Optional[str]:
+        """Note one reading. Returns "muted" or "unmuted" when that is news, else None.
+
+        "Cannot tell" changes nothing: wpctl failing once is not the microphone coming back.
+        """
+        if muted is None or muted == self.muted:
+            return None
+        self.muted = muted
+        return "muted" if muted else "unmuted"

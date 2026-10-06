@@ -218,6 +218,7 @@ class VoiceSession:
         self._media = MEDIA
         self._media_on = False
         self._read_backoff = mic_watch.ReadBackoff()
+        self._mute_watch = mic_watch.MuteWatch()
 
     def _read_frame(self):
         with self._mic_lock:
@@ -243,6 +244,9 @@ class VoiceSession:
                 # The caller emits "wake" for every path, so do not emit it again here — doing so
                 # logged two wakes for one key press and looked like a double trigger.
                 self._ptt_pressed.clear()
+                if self._mute_watch.muted:
+                    # Pressing the key is asking to be heard; a muted mic would hear nothing.
+                    await asyncio.to_thread(inputs.unmute)
                 return ("wake", None)
             if not self._events.empty():
                 return ("event", self._events.get_nowait())
@@ -270,6 +274,29 @@ class VoiceSession:
                 voice_log.metric("wake", reason="detected", aec=self.aec_active, media=self._media_on,
                                  confidence=float(getattr(self.wake, "last_score", 0.0)))
                 return ("wake", None)
+
+    async def _watch_mic_mute(self) -> None:
+        """Say on the HUD when the microphone is muted, since the wake word cannot be heard.
+
+        Not spoken: a mute is often deliberate — a call, a meeting — and Jarvis talking over it
+        would be worse than the silence. Push-to-talk lifts it.
+        """
+        from . import voice_log
+
+        while True:
+            await asyncio.sleep(mic_watch.MUTE_CHECK_S)
+            try:
+                news = self._mute_watch.seen(await asyncio.to_thread(inputs.is_muted))
+            except Exception:  # noqa: BLE001 — a failed check must not end the watcher
+                continue
+            if news is None:
+                continue
+            voice_log.metric("mic", state=news)
+            if news == "muted":
+                self.on_event("error", f"microphone muted — I can't hear the wake word. "
+                                       f"Press {self.config.ptt_key} to unmute and talk")
+            else:
+                self.on_event("timing", "microphone unmuted — listening for the wake word again")
 
     async def _mic_read_failed(self, exc: Exception) -> None:
         """Wait out a failed microphone read, reopening the stream when it keeps failing.
@@ -2081,6 +2108,7 @@ class VoiceSession:
         asyncio.create_task(self._keep_study_mode())  # re-close distractions while studying
         asyncio.create_task(self._watch_coding_agents())  # process activity on the HUD only
         asyncio.create_task(self._watch_claude_stops())  # only a real Claude Stop hook speaks
+        asyncio.create_task(self._watch_mic_mute())  # a muted mic is otherwise a quiet room
 
         if self.config.screen_always:  # keep screen vision on from the start
             from ..vision import live

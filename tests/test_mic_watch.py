@@ -114,3 +114,35 @@ def test_no_way_to_tell_is_not_treated_as_muted():
 def test_a_mute_that_will_not_lift_says_how_to_lift_it():
     said = mic_watch.open_at_start(is_muted=lambda: True, unmute=lambda: False)
     assert "couldn't unmute" in said and "mute key" in said
+
+
+def test_a_mute_is_news_once_and_so_is_lifting_it():
+    watch = mic_watch.MuteWatch()
+    assert [watch.seen(m) for m in (False, True, True, None, True, False, False)] == [
+        None, "muted", None, None, None, "unmuted", None]
+
+
+def test_the_mute_shows_on_the_hud_and_is_not_spoken(monkeypatch):
+    readings = iter([True, True, False])
+    calls = {"n": 0}
+
+    async def sleep(_seconds):
+        calls["n"] += 1
+        if calls["n"] > 3:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(asyncio, "sleep", sleep)
+    monkeypatch.setattr("jarvis.audio.inputs.is_muted", lambda: next(readings))
+    events = []
+    session = SimpleNamespace(
+        _mute_watch=mic_watch.MuteWatch(),
+        config=SimpleNamespace(ptt_key="rightctrl"),
+        on_event=lambda kind, text="": events.append((kind, text)),
+        _speak=lambda *_a, **_k: pytest.fail("a mute must not be spoken over"),
+    )
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(VoiceSession._watch_mic_mute(session))
+    said = [text for _, text in events]
+    assert len(said) == 2
+    assert "muted" in said[0] and "rightctrl" in said[0]
+    assert "unmuted" in said[1]
