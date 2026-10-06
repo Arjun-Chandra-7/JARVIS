@@ -94,6 +94,11 @@ def _voice_event(kind: str, text: str = "") -> None:
             print(f"  dictation {state}")
         _push_to_hud(kind, text)
         return
+    if kind == "agent":
+        # The coding-agent dot, refreshed every four seconds for the HUD. In the journal it was
+        # 900 lines an hour of "agent idle:", which buried the voice log it shares.
+        _push_to_hud(kind, text)
+        return
     # Transcripts, replies and message text are logged as word counts unless the time-limited
     # diagnostic mode is on (--voice-diagnostics); the overlay still gets them in full.
     from .audio.voice_log import journal_line

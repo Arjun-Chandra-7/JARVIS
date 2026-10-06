@@ -20,6 +20,19 @@ def _metrics_elsewhere(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_STATE_DIR", str(tmp_path))
 
 
+def test_the_coding_agent_dot_reaches_the_hud_but_not_the_journal(capsys, monkeypatch):
+    """It refreshes every four seconds: 900 lines an hour that hid the one line that mattered."""
+    import jarvis.__main__ as main
+
+    pushed = []
+    monkeypatch.setattr(main, "_push_to_hud", lambda kind, text="": pushed.append(kind))
+    main._voice_event("agent", "idle:")
+    main._voice_event("error", "microphone muted")
+    out = capsys.readouterr().out
+    assert "agent" not in out and "microphone muted" in out
+    assert pushed == ["agent", "error"]
+
+
 def test_failed_reads_wait_longer_each_time_up_to_a_ceiling():
     backoff = mic_watch.ReadBackoff()
     waits = [backoff.failed()[0] for _ in range(10)]
