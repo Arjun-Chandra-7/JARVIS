@@ -5,6 +5,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from jarvis import doctor
 
 
@@ -86,3 +88,13 @@ def test_the_human_summary_names_every_check():
                          {"name": "y", "status": "degraded", "detail": "slow"}]}
     text = doctor.summary(report)
     assert re.search(r"✅ x\s+fine", text) and re.search(r"🟡 y\s+slow", text)
+
+
+@pytest.mark.parametrize("muted, status", [(True, doctor.USER), (False, doctor.READY), (None, doctor.DEGRADED)])
+def test_a_muted_microphone_is_named_not_called_ready(monkeypatch, muted, status):
+    """Muted for a day and a half while every other check here said ready."""
+    from jarvis.audio import inputs
+
+    monkeypatch.setattr(inputs, "is_muted", lambda: muted)
+    monkeypatch.setattr(inputs, "unmute", lambda: pytest.fail("doctor must not change anything"))
+    assert doctor.check_microphone().status == status

@@ -178,6 +178,20 @@ def check_voice() -> Check:
                                  f"follow-up {obs.get('window_s')} s", obs, core=True)
 
 
+def check_microphone() -> Check:
+    """Muted or not — read only. A muted microphone left the wake word unheard for a day and a
+    half while every other check here said ready."""
+    from .audio import inputs
+
+    muted = inputs.is_muted()
+    if muted is None:
+        return Check("microphone", DEGRADED, "could not ask wireplumber whether it is muted")
+    if muted:
+        return Check("microphone", USER, "muted — Jarvis cannot hear the wake word; "
+                                         "the mute key, Settings, or push-to-talk will lift it")
+    return Check("microphone", READY, "not muted")
+
+
 def check_stt() -> Check:
     try:
         import ctranslate2  # noqa: F401
@@ -447,7 +461,7 @@ def run_all() -> dict:
     services = check_services(head)
     phone = check_phone()
     groups: list[Callable[[], object]] = [
-        lambda: check_deploy(), lambda: check_ports(services), lambda: check_overlay(head), check_voice, check_stt,
+        lambda: check_deploy(), lambda: check_ports(services), lambda: check_overlay(head), check_voice, check_microphone, check_stt,
         check_tts, check_models, check_brain, check_whatsapp, check_browser, check_desktop, lambda: phone,
         lambda: check_notifications(phone), check_approvals, check_away, check_selfrepair, check_resources,
         lambda: check_crashes(services),
