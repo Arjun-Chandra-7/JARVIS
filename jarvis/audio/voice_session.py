@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from ..config import Config
-from . import endpoint, hotkey, inputs, levels, speech_control, stt, tts, vad
+from . import endpoint, hotkey, inputs, levels, mic_watch, speech_control, stt, tts, vad
 from .conversation import END, IGNORE, ConversationSession, split_closing
 from .conversation import State as ConvState
 from .mic import Microphone
@@ -217,6 +217,7 @@ class VoiceSession:
         from .media import MEDIA
         self._media = MEDIA
         self._media_on = False
+        self._read_backoff = mic_watch.ReadBackoff()
 
     def _read_frame(self):
         with self._mic_lock:
@@ -245,7 +246,13 @@ class VoiceSession:
                 return ("wake", None)
             if not self._events.empty():
                 return ("event", self._events.get_nowait())
-            frame = await asyncio.to_thread(self._read_frame)  # frees the loop for D-Bus signals
+            try:
+                frame = await asyncio.to_thread(self._read_frame)  # frees the loop for D-Bus signals
+            except Exception as exc:  # noqa: BLE001 — a dead stream is waited out and reopened
+                await self._mic_read_failed(exc)
+                continue
+            if (failed := self._read_backoff.worked()) is not None:
+                voice_log.metric("mic_back", count=failed)
             # The last quarter second is kept: when the dictation key goes down, the first word
             # has often already started, and this is where it is.
             self._preroll.append(frame)
@@ -263,6 +270,29 @@ class VoiceSession:
                 voice_log.metric("wake", reason="detected", aec=self.aec_active, media=self._media_on,
                                  confidence=float(getattr(self.wake, "last_score", 0.0)))
                 return ("wake", None)
+
+    async def _mic_read_failed(self, exc: Exception) -> None:
+        """Wait out a failed microphone read, reopening the stream when it keeps failing.
+
+        Reading again at once is what filled an hour of the log with 8,730 PortAudioErrors and
+        left Jarvis deaf until it was restarted.
+        """
+        from . import voice_log
+
+        wait, reopen = self._read_backoff.failed()
+        if self._read_backoff.failures == 1:  # once per outage, not once per read
+            voice_log.metric("error", kind=type(exc).__name__, stage="wake_read")
+            self.on_event("timing", f"microphone read failed ({type(exc).__name__}) — retrying")
+        await asyncio.sleep(wait)
+        if reopen:
+            try:
+                await asyncio.to_thread(self._reopen_mic)
+            except Exception as again:  # noqa: BLE001 — the next failed read tries again
+                self.on_event("timing", f"couldn't reopen the microphone ({type(again).__name__})")
+
+    def _reopen_mic(self) -> None:
+        with self._mic_lock:
+            self.mic.reopen()
 
     def _watch_media(self) -> None:
         """Keep `_media_on` current (every 1.5 s) without a subprocess on every frame."""
