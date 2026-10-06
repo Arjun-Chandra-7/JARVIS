@@ -6,10 +6,14 @@ wrong there, found in the log of 5–6 October:
 
 * the capture stream raised PortAudioError on every read, the loop caught it and read again at
   once, 8,730 times in an hour, and the stream was never reopened;
+* the microphone was muted at the system level, so the wake word listener heard digital silence
+  for a day and a half. To that listener a muted microphone is just a quiet room.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Callable, Optional
+
+from . import inputs
 
 # Doubling from a quarter second to a ceiling of ten: quick enough that a device coming back is
 # heard within a few seconds, slow enough that a device that has gone for good costs nothing.
@@ -36,3 +40,20 @@ class ReadBackoff:
         """Note a good read. Returns how many reads had failed before it, when any had."""
         failed, self.failures = self.failures, 0
         return failed or None
+
+
+def open_at_start(is_muted: Callable[[], Optional[bool]] = inputs.is_muted,
+                  unmute: Callable[[], bool] = inputs.unmute) -> Optional[str]:
+    """Unmute the microphone when the voice assistant starts. Returns what to say, if anything.
+
+    Starting the voice assistant is asking to be heard, so a mute left over from a call or a
+    stray key press is lifted rather than obeyed — the same call `inputs.recover` already makes
+    after a failed turn, made before the wait for the wake word instead of after a turn that
+    can never begin.
+    """
+    if not is_muted():
+        return None
+    if unmute():
+        return "Your microphone was muted, sir. I've unmuted it."
+    return ("Your microphone is muted and I couldn't unmute it, sir. "
+            "The mute key or Settings will do it.")

@@ -2087,6 +2087,10 @@ class VoiceSession:
 
             live.set_active(True)
         try:
+            # Before calibrating, which on a muted microphone measures nothing at all.
+            mic_notice = await asyncio.to_thread(mic_watch.open_at_start)
+            if mic_notice:
+                self.on_event("timing", mic_notice)
             # The energy threshold is only needed for the fallback endpointer and for barge-in.
             if self.threshold <= 0:
                 self.on_event("calibrating")
@@ -2147,6 +2151,8 @@ class VoiceSession:
                     marker.touch()
                 except OSError:
                     pass
+            if mic_notice:
+                self._speak(mic_notice)
             while True:
                 try:
                     kind, payload = await self._wait_for_wake_or_event()

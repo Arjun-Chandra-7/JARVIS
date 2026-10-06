@@ -95,3 +95,22 @@ def test_a_reopen_that_fails_does_not_end_the_wait(monkeypatch):
 
     asyncio.run(fail())
     assert any("couldn't reopen" in text for _, text in events)
+
+
+def test_starting_with_the_microphone_muted_unmutes_it_and_says_so():
+    lifted = []
+    said = mic_watch.open_at_start(is_muted=lambda: True, unmute=lambda: lifted.append(1) or True)
+    assert lifted and "unmuted" in said
+
+
+def test_starting_with_an_open_microphone_says_nothing():
+    assert mic_watch.open_at_start(is_muted=lambda: False, unmute=lambda: pytest.fail("unmuted")) is None
+
+
+def test_no_way_to_tell_is_not_treated_as_muted():
+    assert mic_watch.open_at_start(is_muted=lambda: None, unmute=lambda: pytest.fail("unmuted")) is None
+
+
+def test_a_mute_that_will_not_lift_says_how_to_lift_it():
+    said = mic_watch.open_at_start(is_muted=lambda: True, unmute=lambda: False)
+    assert "couldn't unmute" in said and "mute key" in said
