@@ -173,6 +173,21 @@ def classify(repo: Path = REPO, remote_ref: str = REMOTE_REF, *, fetch: bool = F
     return s
 
 
+def waiting(repo: Path = REPO, remote_ref: str = REMOTE_REF) -> Optional[str]:
+    """One line for a service starting behind the release, else None. Never fetches or moves.
+
+    A reboot starts the services on whatever is checked out; only `jarvis restart` takes the
+    release. Without this the newer code just sat there and nothing said so.
+    """
+    try:
+        s = classify(repo, remote_ref)
+    except Exception:  # noqa: BLE001 — a service must start whatever git says
+        return None
+    if s.kind != "update":
+        return None
+    return f"running {s.head[:7]}; the release is {s.behind} commit(s) newer — `jarvis restart` takes it"
+
+
 def _is_revert_of_repair(repo: Path, sha: str, repairs: set[str]) -> bool:
     body = git(repo, "log", "-1", "--format=%B", sha).stdout
     return any(f"This reverts commit {r}" in body for r in repairs)

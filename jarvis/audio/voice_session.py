@@ -275,6 +275,17 @@ class VoiceSession:
                                  confidence=float(getattr(self.wake, "last_score", 0.0)))
                 return ("wake", None)
 
+    async def _note_waiting_release(self) -> None:
+        """Journal and HUD, never spoken: say when this start is older than the release."""
+        try:
+            from .. import deploy
+
+            line = await asyncio.to_thread(deploy.waiting)
+        except Exception:  # noqa: BLE001 — informational only
+            return
+        if line:
+            self.on_event("timing", line)
+
     async def _watch_mic_mute(self) -> None:
         """Say on the HUD when the microphone is muted, since the wake word cannot be heard.
 
@@ -2181,6 +2192,7 @@ class VoiceSession:
                     pass
             if mic_notice:
                 self._speak(mic_notice)
+            asyncio.create_task(self._note_waiting_release())
             while True:
                 try:
                     kind, payload = await self._wait_for_wake_or_event()

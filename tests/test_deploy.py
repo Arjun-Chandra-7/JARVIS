@@ -245,3 +245,22 @@ def test_self_repair_activation_is_recorded_as_a_local_repair(world, monkeypatch
     activate._record("a" * 40, world["base"], "repair activated")
     rec = deploy.load_record()
     assert rec["kind"] == "local-repair" and "a" * 40 in rec["repairs"]
+
+
+def test_a_start_behind_the_release_says_so_without_moving(world):
+    """A reboot starts on what is checked out; the newer release must at least be named."""
+    release(world)
+    git(world["live"], "fetch", "-q", "origin")
+    before = deploy._sha(world["live"], "HEAD")
+    line = deploy.waiting(world["live"], REF)
+    assert line and "1 commit(s) newer" in line and "jarvis restart" in line
+    assert deploy._sha(world["live"], "HEAD") == before
+
+
+def test_a_start_on_the_release_says_nothing(world):
+    assert deploy.waiting(world["live"], REF) is None
+
+
+def test_a_local_repair_ahead_of_the_release_is_not_waiting(world):
+    local_repair(world)
+    assert deploy.waiting(world["live"], REF) is None

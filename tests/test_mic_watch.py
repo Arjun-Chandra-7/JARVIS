@@ -159,3 +159,24 @@ def test_the_mute_shows_on_the_hud_and_is_not_spoken(monkeypatch):
     assert len(said) == 2
     assert "muted" in said[0] and "rightctrl" in said[0]
     assert "unmuted" in said[1]
+
+
+def test_a_waiting_release_goes_to_the_journal_and_hud_not_the_speaker(monkeypatch):
+    from jarvis import deploy
+
+    monkeypatch.setattr(deploy, "waiting", lambda: "running 87a0979; the release is 8 commit(s) newer")
+    events = []
+    session = SimpleNamespace(on_event=lambda kind, text="": events.append((kind, text)),
+                              _speak=lambda *_a, **_k: pytest.fail("not spoken"))
+    asyncio.run(VoiceSession._note_waiting_release(session))
+    assert events == [("timing", "running 87a0979; the release is 8 commit(s) newer")]
+
+
+def test_a_start_on_the_release_notes_nothing(monkeypatch):
+    from jarvis import deploy
+
+    monkeypatch.setattr(deploy, "waiting", lambda: None)
+    events = []
+    session = SimpleNamespace(on_event=lambda kind, text="": events.append((kind, text)))
+    asyncio.run(VoiceSession._note_waiting_release(session))
+    assert events == []
