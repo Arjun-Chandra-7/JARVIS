@@ -32,7 +32,15 @@ class LocalWakeWord:
             pass
 
         self.threshold = threshold
-        self._model = Model(wakeword_model_paths=[wake_ref])
+        import warnings
+
+        # openWakeWord asks onnxruntime for CUDA first, unconditionally; on a build without it
+        # onnxruntime warns on every start and runs on the processor, as it was always going to.
+        # That one warning is dropped, and nothing else.
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=r".*CUDAExecutionProvider.*not in available",
+                                    category=UserWarning)
+            self._model = Model(wakeword_model_paths=[wake_ref])
         self._armed = True          # refractory gate: one trigger per utterance
         self._hits = 0              # consecutive frames over threshold (needs a sustained match)
         # Set by the voice session while a video plays with no echo cancellation: a lecture
