@@ -98,3 +98,22 @@ def test_a_muted_microphone_is_named_not_called_ready(monkeypatch, muted, status
     monkeypatch.setattr(inputs, "is_muted", lambda: muted)
     monkeypatch.setattr(inputs, "unmute", lambda: pytest.fail("doctor must not change anything"))
     assert doctor.check_microphone().status == status
+
+
+def test_a_release_waiting_to_be_taken_is_not_called_ready(monkeypatch):
+    """Fixes pushed to the release do nothing until a restart takes them; a reboot does not."""
+    from jarvis import deploy
+
+    waiting = deploy.State("update", head="87a0979b8197aaaa", behind=5,
+                           message="The release is 5 commit(s) ahead; it can be fast-forwarded.")
+    monkeypatch.setattr(deploy, "classify", lambda *a, **k: waiting)
+    check = doctor.check_deploy()
+    assert check.status == doctor.DEGRADED
+    assert "5 commit(s) behind" in check.detail and "jarvis restart" in check.detail
+
+
+def test_running_the_release_is_ready(monkeypatch):
+    from jarvis import deploy
+
+    monkeypatch.setattr(deploy, "classify", lambda *a, **k: deploy.State("release", head="2bdcc16", message="Running the release."))
+    assert doctor.check_deploy().status == doctor.READY

@@ -442,10 +442,17 @@ def check_deploy() -> Check:
         s = deploy.classify()
     except Exception as exc:  # noqa: BLE001
         return Check("deployment", DEGRADED, f"could not read ({type(exc).__name__})")
-    status = {"release": READY, "local-repair": READY, "update": READY, "pinned": DEGRADED,
+    # A waiting release is not "ready": fixes pushed to it do nothing until a restart takes them,
+    # and a reboot does not. On 7 October the voice fixes sat unloaded behind exactly this, while
+    # this line said ready.
+    status = {"release": READY, "local-repair": READY, "update": DEGRADED, "pinned": DEGRADED,
               "local-commits": DEGRADED, "dirty": USER, "diverged": USER}.get(s.kind, DEGRADED)
-    return Check("deployment", status, f"{s.kind}: {s.message}", {"head": s.head[:12], "kind": s.kind,
-                                                                   "actions": s.actions})
+    message = s.message
+    if s.kind == "update":
+        message = (f"running {s.head[:12]}, {s.behind} commit(s) behind the release; "
+                   "`jarvis restart` takes them")
+    return Check("deployment", status, f"{s.kind}: {message}", {"head": s.head[:12], "kind": s.kind,
+                                                                "behind": s.behind, "actions": s.actions})
 
 
 # ------------------------------------------------------------------------------ run
