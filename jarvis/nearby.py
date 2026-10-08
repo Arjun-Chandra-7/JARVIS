@@ -95,7 +95,9 @@ def _bt() -> list[dict]:
     _run(["rfkill", "unblock", "bluetooth"], 2)
     _run(["bluetoothctl", "power", "on"], 2)
     # short discovery scan
-    _run(["bluetoothctl", "--timeout", "4", "scan", "on"], 5)
+    # Skip scanning while anything is connected: the MT7922 drops A2DP audio mid-scan.
+    if not _run(["bluetoothctl", "devices", "Connected"], 2).strip():
+        _run(["bluetoothctl", "--timeout", "4", "scan", "on"], 5)
     out = _run(["bluetoothctl", "devices"], 4)
     devs = []
     for line in out.splitlines():
