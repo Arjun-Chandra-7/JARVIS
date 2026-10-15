@@ -1107,6 +1107,12 @@ class VoiceSession:
         if remaining and not already:
             return reply, False   # nothing streamed — a tool ran, so the caller says it
         if remaining and already and not remaining.startswith(already[:40]):
+            # A routing notice put in front of an answer that was already streamed ("Groq is
+            # unavailable…, so this answer is from the smaller local model"): only the notice is
+            # new. Saying the whole reply again read every fallback answer out twice.
+            at = remaining.find(already[:40])
+            if at > 0:
+                return remaining[:at].strip(), False
             # The brain's final answer is not what was streamed — a tool ran after the text, or
             # the answer was rewritten. Say the real one; a half-answer left hanging is worse
             # than a repeated word.

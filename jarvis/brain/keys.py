@@ -40,7 +40,12 @@ from .registry import BrainSettings, BrainState
 
 _APP = "jarvis"
 BACKOFF_DEFAULT_S = 60.0
+# The longest a quota may park a key, and how long when the provider gives no hint. The floor used
+# to be six hours whatever the provider said: Groq's daily limits are a rolling window and its 429
+# says "try again in 7m12s", but one burst of ten background calls at start-up parked the only key
+# — for both models, though each has its own budget — for six hours, seven times in two weeks.
 QUOTA_BACKOFF_S = 6 * 3600.0
+QUOTA_DEFAULT_S = 3600.0
 MAX_KEYS_PER_PROVIDER = 12
 _PENDING_DELETE: dict[str, tuple[str, float]] = {}
 
@@ -370,11 +375,37 @@ class KeyStore:
         return row
 
     # -- choosing --------------------------------------------------------------------------
-    def usable(self, pid: str, env_var: str = "", now: float | None = None, distribute: bool = False) -> list[dict]:
+    def model_block(self, kid: str, model: str, now: float | None = None) -> Optional[dict]:
+        """This key's rate/quota block for one model, if it is still running."""
+        now = time.time() if now is None else now
+        hit = (self.state.data["keys"].get(kid, {}).get("models") or {}).get(model)
+        if hit and float(hit.get("until", 0)) > now:
+            return {"reason": hit.get("why", ""), "until": float(hit["until"])}
+        return None
+
+    def blocked_until(self, pid: str, env_var: str = "", model: str = "", now: float | None = None):
+        """(reason, until) when every enabled key is only waiting out a limit, else None."""
+        now = time.time() if now is None else now
+        waits = []
+        for e in self.entries(pid, env_var):
+            if not e.get("enabled", True):
+                continue
+            st = self.status(e["id"], now)
+            if st["state"] == "backoff":
+                waits.append((st.get("reason", ""), now + st.get("seconds", 0)))
+            elif model and (b := self.model_block(e["id"], model, now)):
+                waits.append((b["reason"], b["until"]))
+            else:
+                return None
+        return min(waits, key=lambda w: w[1]) if waits else None
+
+    def usable(self, pid: str, env_var: str = "", now: float | None = None, distribute: bool = False,
+               model: str = "") -> list[dict]:
         """Keys that may be tried now, in the order they should be tried."""
         now = time.time() if now is None else now
         rows = [e for e in self.entries(pid, env_var) if e.get("enabled", True)
-                and self.status(e["id"], now)["state"] in {"ok", "untested"}]
+                and self.status(e["id"], now)["state"] in {"ok", "untested"}
+                and not (model and self.model_block(e["id"], model, now))]
         if distribute and len(rows) > 1:
             top = [r for r in rows if r.get("priority") == rows[0].get("priority")]
             if len(top) > 1:
@@ -383,23 +414,34 @@ class KeyStore:
                 rows = top[i:] + top[:i] + rows[len(top):]
         return rows
 
-    def report(self, kid: str, kind: str, retry_after: float | None = None, now: float | None = None) -> None:
+    def report(self, kid: str, kind: str, retry_after: float | None = None, now: float | None = None,
+               model: str = "") -> None:
+        """Record a key fault. Rate limits and quotas are per model when the model is known:
+        providers such as Groq meter each model separately, so one model's limit leaves the
+        others on the same key usable."""
         now = time.time() if now is None else now
         row = self.state.data["keys"].setdefault(kid, {})
         if kind in (adapters.AUTH, adapters.PERMISSION):
             row["quarantined"] = kind              # until the owner tests or replaces it
-        elif kind == adapters.RATE_LIMIT:
-            row.update(until=now + max(1.0, retry_after or BACKOFF_DEFAULT_S), why=kind)
-        elif kind == adapters.QUOTA:
-            row.update(until=now + max(QUOTA_BACKOFF_S, retry_after or 0), why=kind)
+        elif kind in (adapters.RATE_LIMIT, adapters.QUOTA):
+            if kind == adapters.RATE_LIMIT:
+                wait = max(1.0, retry_after or BACKOFF_DEFAULT_S)
+            else:
+                wait = min(QUOTA_BACKOFF_S, max(60.0, retry_after)) if retry_after else QUOTA_DEFAULT_S
+            if model:
+                row.setdefault("models", {})[model] = {"until": now + wait, "why": kind}
+            else:
+                row.update(until=now + wait, why=kind)
         else:
             return                                 # network, outage, model, malformed: not the key
         self.state.save()
 
-    def report_ok(self, kid: str) -> None:
+    def report_ok(self, kid: str, model: str = "") -> None:
         row = self.state.data["keys"].setdefault(kid, {})
         row.pop("quarantined", None)
         row.pop("until", None)
+        if model:
+            (row.get("models") or {}).pop(model, None)
         row["last_ok"] = time.time()
         self.state.save()
 

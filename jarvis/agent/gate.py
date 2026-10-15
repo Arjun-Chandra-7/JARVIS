@@ -53,12 +53,27 @@ def is_read_only(tool_name: str) -> bool:
 # article; "send a message to" ends on a preposition. Whisper produces these constantly when a
 # phrase is clipped at the end of a capture window, and they are the requests most likely to be
 # completed by a model's imagination rather than by the person.
+#
+# Object pronouns and "this"/"that" are not on the list: a sentence ends on them all the time. With
+# them there, 31 of 56 everyday commands were met with "you trailed off" — "help me", "can you
+# hear me", "explain this", "stop that", "what can you do for me". "That" still counts after a
+# verb of saying ("tell her that"), where it really does introduce what is missing.
 _STOPS_MID_PHRASE = re.compile(
     r"""(?ix)\b(?:
         a | an | the | of | to | for | with | about | into | onto | from | at | by | on | in |
-        and | or | but | that | this | my | your | some | any | it's | its |
-        me | him | her | them | us
+        and | or | but | my | your | some | any | it's | its
     )\s*$""")
+_SAYING_THAT = re.compile(r"(?i)\b(?:tell|tells|told|say|says|said|saying|think|thinks|know|knows|"
+                          r"remind\s+\w+|let\s+\w+\s+know|message\s+\w+|text\s+\w+)\s+(?:\w+\s+)?that\s*$")
+# "Turn the animations back on", "switch it off", "log in": a particle, not a preposition.
+_PARTICLE_END = re.compile(r"(?i)\b(?:back|turn\s+(?:\w+\s+){0,3}|switch\s+(?:\w+\s+){0,3}|put\s+(?:\w+\s+){0,3}|"
+                           r"hold|come|carry|go|log|sign|logged|signed|check|plug(?:ged)?|keep|move|"
+                           r"get|calm|cheer|hang|shut|zoom)\s*(?:on|in|off|up|out|down)\s*$")
+# A question that ends on its preposition is English, not a clipped capture: "what was the last
+# thing I asked you about?", "who is it for?". Articles and conjunctions are still unfinished.
+_QUESTION_START = re.compile(r"(?i)^\s*(?:what|who|whom|which|where|when|why|how|is|are|was|were|do|does|did|"
+                             r"can|could|will|would|should|have|has)\b")
+_STRANDED_PREPOSITION = re.compile(r"(?i)\b(?:of|to|for|with|about|from|at|by|on|in|into)\s*$")
 
 # Two words or fewer is usually a greeting or a false start, not a request to do something.
 _TOO_SHORT_TO_ACT_ON = 2
@@ -66,10 +81,20 @@ _TOO_SHORT_TO_ACT_ON = 2
 
 def looks_unfinished(text: str) -> bool:
     """True when the words stop before the request does."""
-    said = (text or "").strip().rstrip(".!?,;:").strip()
+    raw = (text or "").strip()
+    said = raw.rstrip(".!?,;:").strip()
     if not said:
         return False
-    return bool(_STOPS_MID_PHRASE.search(said))
+    if _SAYING_THAT.search(said):
+        return True
+    if not _STOPS_MID_PHRASE.search(said):
+        return False
+    if _PARTICLE_END.search(said):
+        return False
+    if raw.endswith("?") and _STRANDED_PREPOSITION.search(said) and (
+            _QUESTION_START.match(said) or len(said.split()) >= 4):
+        return False
+    return True
 
 
 def wants_something_done(text: str) -> bool:
@@ -136,4 +161,6 @@ def allowed(schemas: list[dict], user_text: str) -> list[dict]:
 def ask_for_the_rest(text: str) -> str:
     """What to say to a sentence that stopped halfway."""
     said = (text or "").strip().rstrip(".!?")
-    return f"You trailed off after “{said[-40:].strip()}”, sir — what was the rest?"
+    if len(said) > 40:                    # cut at a word, not mid-word ("hat was the last thing…")
+        said = "…" + said[-40:].split(" ", 1)[-1]
+    return f"You trailed off after “{said.strip()}”, sir — what was the rest?"

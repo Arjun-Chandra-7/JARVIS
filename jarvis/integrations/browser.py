@@ -783,6 +783,17 @@ async def open_site(name: str) -> dict:
 
     url = resolve_site(name)
 
+    # Zen/Firefox is driven over Marionette: its tab records carry no `webSocketDebuggerUrl`, so the
+    # DevTools path below died with KeyError('webSocketDebuggerUrl') on every "open"/"play" — after
+    # a search had sometimes already been made, so the page changed while the reply said it failed.
+    if _firefox_now():
+        def nav(conn):
+            conn.navigate(url)
+            title = conn.title() or ""
+            return {"ok": True, "url": url, "title": title, "message": f"Opened {title or url}."}
+
+        return await _through_marionette(nav)
+
     async def go(session: _Session):
         await session.call("Page.enable")
         await session.call("Page.navigate", {"url": url})

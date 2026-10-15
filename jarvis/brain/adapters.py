@@ -72,11 +72,16 @@ def _retry_after(resp: httpx.Response, body_text: str) -> Optional[float]:
             return max(0.0, float(raw))
         except ValueError:
             pass
-    # Groq and Gemini also say it in words: "Please try again in 7.5s" / "retryDelay": "30s".
-    m = re.search(r"(?i)(?:try again in|retry(?:Delay)?[\"':\s]+)\s*\"?(\d+(?:\.\d+)?)\s*(ms|s)", body_text)
+    # Groq and Gemini also say it in words: "Please try again in 7.5s" / "retryDelay": "30s" — and
+    # Groq's daily limits as "try again in 7m12.5s" or "1h2m3s". Only the single-unit form was read,
+    # so a daily-limit 429 lost its hint and the key was parked for the 6-hour default.
+    m = re.search(r"(?i)(?:try again in|retry(?:Delay)?[\"':\s]+)\s*\"?"
+                  r"((?:\d+(?:\.\d+)?\s*(?:h|ms|m|s)\s*)+)", body_text)
     if m:
-        val = float(m.group(1))
-        return val / 1000 if m.group(2).lower() == "ms" else val
+        total = 0.0
+        for num, unit in re.findall(r"(\d+(?:\.\d+)?)\s*(h|ms|m|s)", m.group(1), re.I):
+            total += float(num) * {"h": 3600, "m": 60, "s": 1, "ms": 0.001}[unit.lower()]
+        return total
     return None
 
 

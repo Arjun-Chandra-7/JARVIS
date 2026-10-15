@@ -42,15 +42,43 @@ def language(text: str) -> str:
 # --- freshness ----------------------------------------------------------------------------------
 # "current" alone is not freshness: "current ka direction" is electricity.
 _FRESH = re.compile(
-    r"(?i)\b(?:latest|newest|recent(?:ly)?|today'?s?|tonight|this (?:week|month|year)|right now|"
+    r"(?i)\b(?:latest|newest|recent(?:ly)?|"
     r"news|headlines?|breaking|live score|score (?:of|in)|who won|results? (?:of|for) the|"
     r"current (?:price|rate|status|version|president|prime minister|pm|ceo|champion|weather|affairs|events)|"
     r"price of|stock|share price|exchange rate|weather|forecast|release date|"
-    r"is .{1,40} still|as of (?:now|today)|20[2-9]\d)\b")
+    r"is .{1,40} still|20[2-9]\d)\b")
+# A time word alone is not a request for the news. "How are you doing today?" and "I had a great
+# day today" were sent to web research — which has no local fallback — and failed outright. It
+# counts only when the sentence is about the world rather than about the two people talking.
+_FRESH_TIME = re.compile(r"(?i)\b(?:today'?s?|tonight|this (?:week|month|year)|right now|as of (?:now|today))\b")
+_ABOUT_US = re.compile(r"(?i)\b(?:i|i'?m|i'?ve|i'?d|me|my|mine|you|you'?re|your|we|our|us)\b")
+# The clock and the calendar date are known here, not looked up.
+_CLOCK = re.compile(r"(?i)\b(?:what(?:'s| is) (?:the )?(?:time|date|day)|what time|what day|today'?s date|"
+                    r"which day is it|what(?:'s| is) today)\b")
 
 
 def is_fresh(text: str) -> bool:
-    return bool(_FRESH.search(text or ""))
+    t = text or ""
+    if _CLOCK.search(t):
+        return False
+    if _FRESH.search(t):
+        return True
+    return bool(_FRESH_TIME.search(t)) and not _ABOUT_US.search(t)
+
+
+# The owner's own machine, accounts and day. A model's general knowledge cannot answer these, and
+# with no tools in front of it the Brain answered "How's the battery holding up?" with an `upower`
+# tutorial, "system status report" with `top`/`free -h`, and "what's playing right now?" with
+# cinema listings. They go to the agent, whose tools can look.
+_PERSONAL = re.compile(
+    r"(?i)\b(?:battery|charging|cpu|gpu|ram usage|memory usage|disk (?:space|usage)|"
+    r"system (?:status|report|stats|health)|diagnostics?|status on all systems|"
+    r"(?:my|new|unread|any) (?:e-?mails?|mails?|messages?)|inbox|"
+    r"my (?:calendar|schedule|agenda|day|meetings?|tasks?|to-?do(?: list)?)|next meeting|"
+    r"(?:my|any|the) (?:timers?|reminders?|alarms?)|"
+    r"what(?:'s| is) playing|now playing|this song|which song|"
+    r"what did i miss|catch me up|my (?:files?|documents?|downloads|pdfs?)|"
+    r"wi-?fi|bluetooth|ip address)\b")
 
 
 # --- vision -------------------------------------------------------------------------------------
@@ -162,6 +190,11 @@ def understand(req: BrainRequest, *, asks_for_an_action=None) -> BrainRequest:
         req.intent = Intent.WRITING
     elif _PLAN.search(text) and not _CALENDAR.search(text):
         req.intent = Intent.PLANNING
+    elif _PERSONAL.search(text):
+        req.intent = Intent.ACTION
+        caps.add(Cap.TOOLS)
+        req.tool_permission = "act"
+        req.side_effect_risk = "high" if _SEND_VERBS.search(text) else "low"
     elif req.fresh and (not asks_for_an_action(text) or (_INFO_ONLY.search(text) and not _IN_AN_APP.search(text))):
         req.intent = Intent.RESEARCH
         caps.add(Cap.RESEARCH)

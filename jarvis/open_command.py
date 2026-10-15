@@ -82,6 +82,14 @@ def parse(text: str) -> Optional[str]:
     # Checked before the article is removed, so "open the door" is still recognised as not a launch.
     if not target or _NOT_A_LAUNCH.match(target):
         return None
+    # A second sentence is never part of an app or site name. "Run a full diagnostic. Status on
+    # all systems." became a Google search for that whole text.
+    if re.search(r"[.!?;]\s+\S", target):
+        return None
+    # "run" launches things only when they exist — "run a diagnostic", "run the tests" and "run a
+    # scan" are requests to do something, not names to open or search for.
+    if re.match(r"(?i)^(?:please\s+)?run\b", cleaned) and not _resolves(_LEADING_ARTICLE.sub("", target)):
+        return None
     target = _LEADING_ARTICLE.sub("", target).strip() or target
     # "open the second one" and similar need conversational context; leave those to the model.
     if re.fullmatch(r"(?:it|that|this|one|them|those)", target, re.IGNORECASE):
@@ -234,6 +242,35 @@ def _resolves(target: str) -> bool:
         return False
 
 
+_PLAY_VERB = re.compile(r"(?i)^(?:please\s+)?(?:play|put\s+on|watch)\b")
+_FILLER = re.compile(r"(?i)^(?:some|a\s+little|a\s+bit\s+of|a\s+few|the\s+song|the\s+video)\s+")
+
+
+async def _play(target: str, config) -> str:
+    """Open the top YouTube result for something to play. Says what opened, never that it plays."""
+    import asyncio
+
+    from .integrations import apps, browser
+    from .youtube_command import results_url, top_results
+
+    query = _FILLER.sub("", target).strip() or target
+    found = await asyncio.to_thread(top_results, query, 1)
+    url = found[0][0] if found else results_url(query)
+    opened = False
+    if config.browser_control:
+        try:
+            if browser.ensure(url)["ok"]:
+                opened = bool((await browser.open_site(url)).get("ok"))
+        except Exception:  # noqa: BLE001 - fall back to the desktop's own URL handler
+            opened = False
+    if not opened:
+        opened = apps.open_url(url)
+    if not opened:
+        return f"I couldn't open YouTube for {query}, sir."
+    _remember_site("youtube")
+    return f"Opened “{found[0][1]}” on YouTube." if found else f"Opened YouTube results for {query}."
+
+
 async def handle(text: str, config) -> Optional[str]:
     """Entry point for the deterministic command layer. None means 'not mine'."""
     target = parse(text)
@@ -244,7 +281,17 @@ async def handle(text: str, config) -> Optional[str]:
     if target is None:
         return None
     try:
+        # "Play some AC/DC" names music, not a site: it became a Google search for "some AC/DC".
+        # Something to play that is neither an installed app nor a known site is played from
+        # YouTube's top result instead.
+        if _PLAY_VERB.match(unglue(text or "").strip()) and not _resolves(target):
+            return await _play(target, config)
         return await run(target, config)
     except Exception as exc:  # noqa: BLE001 - never let this swallow a turn; fall back to the model
-        return None if isinstance(exc, (ImportError, AttributeError)) else \
-            f"I couldn't open {target} — {exc}"
+        if isinstance(exc, (ImportError, AttributeError)):
+            return None
+        # The exception's text is for the log, not the listener: "— 'webSocketDebuggerUrl'" was
+        # read out after every failed "play".
+        import logging
+        logging.getLogger(__name__).warning("open %r failed: %r", target, exc)
+        return f"I couldn't open {target}, sir — the browser didn't respond to control."

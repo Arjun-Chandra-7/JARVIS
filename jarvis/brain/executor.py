@@ -117,9 +117,12 @@ def execute(req: BrainRequest, decision: RouteDecision, messages: list, registry
         if p.local or p.auth == "none":
             keys = [None]
         else:
-            keys = keystore.usable(p.id, p.env_var) if keystore else []
+            keys = keystore.usable(p.id, p.env_var, model=model.id) if keystore else []
             if not keys:
-                out.failures.append((cand.provider_id, cand.model_id, "no_key"))
+                # A key that is only waiting out a limit is not a missing key: "no usable key is
+                # configured" sent the owner looking for a configuration problem that did not exist.
+                waiting = keystore.blocked_until(p.id, p.env_var, model.id) if keystore else None
+                out.failures.append((cand.provider_id, cand.model_id, waiting[0] if waiting else "no_key"))
                 continue
         adapter = adapter_for(p)
         for key in keys[:KEYS_PER_MODEL]:
@@ -140,7 +143,7 @@ def execute(req: BrainRequest, decision: RouteDecision, messages: list, registry
                     continue                     # a key problem: the next key may work
                 break                             # a model/network problem: the next candidate
             if key and keystore:
-                keystore.report_ok(key["id"])
+                keystore.report_ok(key["id"], model.id)
             if not p.local:
                 mark_online()
             legacy.record_success(_legacy_provider(registry, p.id, model.id))
@@ -186,7 +189,8 @@ def _on_failure(err: ProviderError, registry: Registry, keystore, key, pid: str,
             mark_offline(now_fn())
         return
     if key and keystore and err.kind in adapters.KEY_FAULTS:
-        keystore.report(key["id"], err.kind, err.retry_after)
+        per_model = mid if err.kind in (adapters.RATE_LIMIT, adapters.QUOTA) else ""
+        keystore.report(key["id"], err.kind, err.retry_after, model=per_model)
         return                                    # the key is at fault, not the model
     legacy_kind = _LEGACY_KIND.get(err.kind)
     if legacy_kind:

@@ -745,7 +745,14 @@ class GroqAgent:
             asked = {"role": "user", "content": f"[time: {now:%A %Y-%m-%d %H:%M %Z}] {redact(user_text)}"}
             self.messages.append(asked)
             self._turn_times[id(asked)] = time.time()
-            self.messages.append({"role": "assistant", "content": answered.text})
+            # The routing notice ("Groq is unavailable…, so this answer is from the smaller local
+            # model") is for the listener, not the conversation: kept in the history, the small
+            # model learned it and began writing it into its own answers, twice in one reply.
+            said = answered.text
+            notice = getattr(answered, "notice", "") or ""
+            if notice and said.startswith(notice):
+                said = said[len(notice):].strip() or said
+            self.messages.append({"role": "assistant", "content": said})
             self._trim()
             self._save_history()
             return answered.text

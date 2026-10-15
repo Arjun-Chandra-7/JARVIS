@@ -563,7 +563,12 @@ _FOLLOWISH = re.compile(
     r"kaun|samjha\w*|batao|dobara|phir\s+se)\b|क्या|क्यों|कैसे|कौन|समझा|बताओ|दोबारा|यह|ये|इस|उस|English|हिंदी")
 _NOT_ABOUT_IT = re.compile(
     r"(?i)\b(?:time|date|weather|temperature|news|score|battery|volume|brightness|remind|reminder|timer|alarm|"
-    r"whatsapp|call|email|open|play|search|send|music|song)\b|समय|मौसम")
+    r"whatsapp|call|email|open|play|search|send|music|song|"
+    # The owner's own day and machine are never about the page: "Catch me up — what did I miss?"
+    # was answered by describing the Google results still on screen.
+    r"miss(?:ed)?|catch\s+(?:me\s+)?up|brief(?:ing)?|agenda|schedule|calendar|meetings?|mail|inbox|unread|"
+    r"messages?|notifications?|playing|tasks?|diagnostics?|status|cpu|gpu|ram|memory|disk|"
+    r"my\s+(?:day|phone|laptop|system|computer|machine))\b|समय|मौसम")
 
 
 def remember_explanation(question: str, material: str, answer: str) -> None:

@@ -41,6 +41,46 @@ PERSONA = (
     "routing. You have no feelings or personal experiences and never claim any. You cannot take actions in "
     "this reply: if asked how to do something, explain how; never say you did something. If a fact may have "
     "changed recently, say you'd need to check.")
+_WEATHER_Q = re.compile(r"(?i)\b(?:weather|temperature|rain(?:ing|y)?|hot|cold|humid(?:ity)?|forecast|"
+                        r"mausam|baarish|garmi|thand)\b|मौसम|बारिश")
+
+
+def live_facts(text: str = "") -> str:
+    """What is true right now and cheap to know: the time, the owner's name, the local weather.
+
+    The Brain had none of these. Its history strips the agent's "[time: …]" stamp, so "what time
+    is it?" got "I don't have real-time capabilities" from every model, and "what's my name?" got
+    "your name isn't specified" while the owner's name sat in the configuration.
+    """
+    import os
+    from datetime import datetime
+
+    now = datetime.now().astimezone()
+    facts = [f"Right now it is {now:%A, %d %B %Y}, {now:%H:%M} {now:%Z}."]
+    owner = os.environ.get("JARVIS_OWNER_NAME", "").strip()
+    if owner:
+        facts.append(f"The owner's name is {owner}.")
+    if _WEATHER_Q.search(text or ""):
+        try:
+            from .. import hud_state
+            w = hud_state.weather()
+        except Exception:  # noqa: BLE001 - weather is a nicety, never a reason to fail a turn
+            w = None
+        if w:
+            facts.append(f"Weather in {w['city']} now: {w['temp_c']}°C (feels like {w['feels_c']}°C), "
+                         f"{w['desc'].lower()}, humidity {w['humidity']}%.")
+    return " ".join(facts)
+
+
+def local_weather_question(text: str, city: str) -> bool:
+    """A weather question about where the owner is (no other place named), answerable from the
+    HUD's own reading instead of a web search that returns four forecast sites' names."""
+    if not _WEATHER_Q.search(text or ""):
+        return False
+    other = re.search(r"(?i)\b(?:in|at|for)\s+([A-Z][\w .'-]{2,30})", text or "")
+    return not other or (city or "").lower() in other.group(1).lower()
+
+
 _OPENERS = re.compile(r"^(?:certainly|sure(?: thing)?|of course|absolutely|great question|good question)[!,.]?\s+", re.I)
 _CONF = re.compile(r"\n?\s*CONFIDENCE:\s*(high|medium|low)\s*$", re.I)
 _CORRECTION = re.compile(r"(?i)^\s*(?:no[,!. ]|nahi|not that|actually[, ]|i meant|galat|wrong[,. ])")
@@ -157,6 +197,8 @@ class DailyBrain:
             return self._no_model(req, "study", study.quote_unavailable(req.language), "quote_unavailable")
 
         sources = []
+        if req.intent == Intent.RESEARCH and local_weather_question(req.text, getattr(self.config, "city", "")):
+            req.intent = Intent.CONVERSATION          # live_facts carries the reading
         if req.intent == Intent.RESEARCH:
             sources = research.gather(req.text, session, self.searcher)
             if not sources:
@@ -241,7 +283,8 @@ class DailyBrain:
 
     def _segments(self, req, system, history, pending, attached, sources) -> list:
         S = ce.Segment
-        segs = [S("system", system, label="route instruction")]
+        segs = [S("system", system, label="route instruction"),
+                S("constraint", live_facts(req.text), protected=True, label="live facts")]
         try:
             from ..settings.runtime import verbosity_instruction
             v = verbosity_instruction()

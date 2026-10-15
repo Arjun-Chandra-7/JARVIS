@@ -245,8 +245,22 @@ def test_rate_limit_backs_off_the_key_not_forever(brain_env, fake):
     fake.set("gemini-3.6-flash", "fine")
     out = _run(reg, ks, "tell me a fun fact about owls")
     assert out.ok and out.decision.selected_provider == "gemini"
-    st = ks.status("env-groq")
-    assert st["state"] == "backoff" and 0 < st["seconds"] <= 20
+    # The limit belongs to the model that hit it; the key stays usable for Groq's other models.
+    assert ks.status("env-groq")["state"] != "backoff"
+    block = ks.model_block("env-groq", "openai/gpt-oss-20b")
+    assert block and 0 < block["until"] - __import__("time").time() <= 20
+    assert ks.usable("groq", "GROQ_API_KEY", model="openai/gpt-oss-120b")
+
+
+def test_a_waiting_key_is_reported_as_its_limit_not_as_missing(brain_env, fake):
+    """'no usable key is configured' sent the owner looking for a configuration problem."""
+    reg, ks = brain_env()
+    reg.settings["routing"]["balanced"] = {"chat": ["groq/openai/gpt-oss-20b"]}
+    ks.report("env-groq", "quota_exhausted", 600, model="openai/gpt-oss-20b")
+    out = _run(reg, ks, "tell me a fun fact about owls")
+    kinds = {kind for _, mid, kind in out.failures if mid == "openai/gpt-oss-20b"}
+    assert kinds == {"quota_exhausted"}
+    assert "no usable key" not in (out.notice or "")
 
 
 def test_network_failure_does_not_mark_key_invalid_and_skips_cloud(brain_env, fake):

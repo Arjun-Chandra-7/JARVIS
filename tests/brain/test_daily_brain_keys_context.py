@@ -90,12 +90,41 @@ def test_report_semantics(store):
     assert store.status(kid, now=1001.0)["state"] == "backoff"
     assert store.status(kid, now=1006.0)["state"] == "untested"
     store.report(kid, adapters.QUOTA, None, now=1000.0)
-    assert store.status(kid, now=1000.0 + 3600)["state"] == "backoff"
+    assert store.status(kid, now=1000.0 + 3599)["state"] == "backoff"      # no hint: an hour
+    assert store.status(kid, now=1000.0 + 3601)["state"] != "backoff"
+    store.report(kid, adapters.QUOTA, 432.5, now=1000.0)                     # "try again in 7m12.5s"
+    assert store.status(kid, now=1000.0 + 430)["state"] == "backoff"
+    assert store.status(kid, now=1000.0 + 440)["state"] != "backoff"        # the hint, not six hours
     store.report(kid, adapters.AUTH)
     assert store.status(kid)["state"] == "quarantined"
     assert store.usable("openrouter") == []
     store.report_ok(kid)
     assert store.status(kid)["state"] == "ok"
+
+
+def test_a_models_limit_leaves_the_keys_other_models_usable(store):
+    """Groq meters each model separately: gpt-oss-20b's daily limit must not park gpt-oss-120b."""
+    kid = store.add("openrouter", NEW_KEY)["id"]
+    store.report(kid, adapters.QUOTA, 600, now=1000.0, model="a/small")
+    assert store.status(kid, now=1001.0)["state"] != "backoff"
+    assert store.usable("openrouter", now=1001.0, model="a/small") == []
+    assert [k["id"] for k in store.usable("openrouter", now=1001.0, model="a/big")] == [kid]
+    reason, until = store.blocked_until("openrouter", model="a/small", now=1001.0)
+    assert reason == adapters.QUOTA and until == 1600.0
+    assert store.blocked_until("openrouter", model="a/big", now=1001.0) is None
+    store.report_ok(kid, "a/small")
+    assert store.usable("openrouter", now=1001.0, model="a/small")
+
+
+def test_groq_compound_retry_hint_is_read():
+    import httpx
+    from jarvis.brain.adapters import _retry_after
+    r = httpx.Response(429)
+    assert _retry_after(r, "Rate limit reached for model `openai/gpt-oss-20b` on tokens per day (TPD). "
+                           "Please try again in 7m12.5s.") == 432.5
+    assert _retry_after(r, "Please try again in 1h2m3s") == 3723.0
+    assert _retry_after(r, "Please try again in 7.5s") == 7.5
+    assert abs(_retry_after(r, "try again in 350ms") - 0.35) < 1e-9
 
 
 def test_key_test_quarantines_then_clears(store, fake):
