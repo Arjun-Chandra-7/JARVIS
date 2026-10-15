@@ -250,3 +250,12 @@ def test_close_never_takes_the_desktop_down(monkeypatch):
     from jarvis.integrations import desktop_apps
     monkeypatch.setattr(desktop_apps, "resolve", lambda t: SimpleNamespace(name="Shell", binary="gnome-shell"))
     assert "won't close" in c.close("shell")
+
+
+@pytest.mark.parametrize("text", ["Read my unread WhatsApp messages.", "Jarvis, what's the status of the WhatsApp bridge?"])
+def test_whatsapp_questions_go_to_tools(text):
+    assert _intent(text) == "action"
+
+
+def test_reading_out_is_asking_for_something():
+    assert asks_for_an_action("Read my unread WhatsApp messages.")

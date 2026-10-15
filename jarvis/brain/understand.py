@@ -73,7 +73,8 @@ def is_fresh(text: str) -> bool:
 _PERSONAL = re.compile(
     r"(?i)\b(?:battery|charging|cpu|gpu|ram usage|memory usage|disk (?:space|usage)|"
     r"system (?:status|report|stats|health)|diagnostics?|status on all systems|"
-    r"(?:my|new|unread|any) (?:e-?mails?|mails?|messages?)|inbox|"
+    r"(?:my|new|unread|any) (?:(?:whatsapp|telegram|instagram|insta)\s+)?(?:e-?mails?|mails?|messages?|chats?|dms?)|inbox|"
+    r"(?:whatsapp|telegram|instagram)\s+(?:bridge|status|messages?|chats?|inbox|dms?)|"
     r"my (?:calendar|schedule|agenda|day|meetings?|tasks?|to-?do(?: list)?)|next meeting|"
     r"(?:my|any|the) (?:timers?|reminders?|alarms?)|"
     r"what(?:'s| is) playing|now playing|this song|which song|"

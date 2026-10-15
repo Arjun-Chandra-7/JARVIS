@@ -224,7 +224,10 @@ _ASKS_FOR_ACTION = re.compile(
         # Keeping and dropping things. "Note this down: …" had its tools withheld as conversation,
         # and the reply that it had been noted was then replaced with "I haven't done anything".
         note | jot | save | remember | forget | record | log | store | bookmark | pin |
-        email | text | whatsapp | ping | pause | resume | skip | cancel | lock | unlock )
+        email | text | whatsapp | ping | pause | resume | skip | cancel | lock | unlock |
+        # Fetching and showing: "Read my unread WhatsApp messages" was refused as a question.
+        # Not "show": "what values does this show about Nicola?" is a question about a page.
+        read | list | check | fetch | pull \s+ up )
     \b
     """,
 )
