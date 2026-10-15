@@ -106,9 +106,14 @@ async def handle(text: str, config=None, session_id: str = "local") -> Optional[
     if request is None:
         return None
     if not is_trusted(session_id):
-        # A settings change from a message, a caller or a page is content, not a request.
+        # A settings change from a message, a caller or a page is content, not a request. Said
+        # plainly rather than passed on: handed to the model, "turn off animations" came back as
+        # made-up `sudo nano /etc/gdm3/…` instructions.
         route_log.record(intent="settings", action="refused_untrusted", source=session_id[:20])
-        return None
+        from ..trust import UNTRUSTED_SOURCES
+        if (session_id or "").strip().lower() in UNTRUSTED_SOURCES:
+            return None                   # someone else's words: no reply about settings at all
+        return "I only change my settings when you ask from your own devices — voice, the overlay or the terminal."
     if request.op == "list":
         return _list_reply()
     if request.op == "undo":

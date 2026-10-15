@@ -19,7 +19,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Optional
 
 
 PROVIDERS = ("codex", "claude", "agy")
@@ -61,7 +61,37 @@ def summarize(job: "CodingJob") -> str:
 
 # Provider invocations that are editor/IDE plumbing or one-shot queries, not a coding task.
 _NOT_A_JOB = re.compile(r"\b(?:app-server|mcp|--mcp|lsp|--version|--help|completion|doctor|"
-                        r"config\s+(?:get|set|list)|whoami|login|logout|update|upgrade)\b")
+                        r"config\s+(?:get|set|list)|whoami|login|logout|update|upgrade|"
+                        # Claude Code's own background plumbing, not tasks: these showed on the HUD
+                        # and in doctor as "5 coding jobs running" and logged "agent running" every 4 s.
+                        r"daemon\s+run|bg-pty-host|bg-spare|--bg-[a-z-]+)(?:\b|(?=\s|$))")
+
+
+MIN_EXTERNAL_AGE_S = 20.0
+
+
+def _process_start(pid: int) -> Optional[float]:
+    """Epoch seconds when `pid` started, or None."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as fh:
+            ticks = int(fh.read().rsplit(")", 1)[1].split()[19])
+        with open("/proc/stat", encoding="utf-8") as fh:
+            boot = next(int(l.split()[1]) for l in fh if l.startswith("btime "))
+        return boot + ticks / os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, IndexError, StopIteration):
+        return None
+
+
+def _same_process(pid: int, started_at: str) -> bool:
+    """Whether `pid` is still the process a job recorded at `started_at` (not a reused pid)."""
+    from datetime import datetime
+
+    began = _process_start(pid)
+    try:
+        recorded = datetime.fromisoformat(started_at).timestamp()
+    except (TypeError, ValueError):
+        return True                       # cannot tell: leave the job as it is
+    return began is None or began <= recorded + 5
 
 
 def scan_provider_processes() -> list[dict[str, Any]]:
@@ -594,13 +624,20 @@ class CodingJobManager:
         self.refresh()
         managed = {j.pid for j in self.jobs.values() if j.pid and j.status not in TERMINAL and not j.external}
         managed |= {j.worker_pid for j in self.jobs.values() if j.worker_pid and j.status not in TERMINAL}
-        ext_by_pid = {j.pid: j for j in self.jobs.values() if j.external and j.pid}
+        # Running ones only: a finished job's pid, reused by a new session, must not hide it.
+        ext_by_pid = {j.pid: j for j in self.jobs.values() if j.external and j.pid and j.status == "running"}
         changed: list[dict[str, Any]] = []
         live_pids: set[int] = set()
         for proc in scan_provider_processes():
             pid = proc["pid"]
             live_pids.add(pid)
             if pid in managed or pid in ext_by_pid:
+                continue
+            # A session, not a one-shot: short `claude` runs (hooks, scripts) lived ~6 s, were
+            # registered as jobs, and each was announced aloud — "Claude completed: 8 files
+            # changed", six times in thirty seconds. One still running after this long is real.
+            began = _process_start(pid)
+            if began is not None and time.time() - began < MIN_EXTERNAL_AGE_S:
                 continue
             job = CodingJob(
                 id=f"ext-{proc['provider']}-{pid}", prompt=f"External {proc['provider']} session",
@@ -611,12 +648,19 @@ class CodingJobManager:
             self.jobs[job.id] = job
             self._event(job, "registered", f"Detected external {proc['provider']} (pid {pid})")
             changed.append(asdict(job))
-        for pid, job in ext_by_pid.items():
-            if pid not in live_pids and job.status == "running":
-                job.finished_at, job.after = _now(), workspace_snapshot(job.workspace)
-                job.status, job.summary = "completed", summarize(job)
-                self._event(job, "completed", "External process exited")
-                changed.append(asdict(job))
+        # Every running external job, not one per pid: pids are reused across reboots, the
+        # pid-keyed map kept only the newest job for each, and the rest stayed "running" forever
+        # (261 of them, back to September). A live pid whose process started after the job did
+        # is somebody else's process.
+        for job in self.jobs.values():
+            if not (job.external and job.pid and job.status == "running"):
+                continue
+            if job.pid in live_pids and _same_process(job.pid, job.started_at):
+                continue
+            job.finished_at, job.after = _now(), workspace_snapshot(job.workspace)
+            job.status, job.summary = "completed", summarize(job)
+            self._event(job, "completed", "External process exited")
+            changed.append(asdict(job))
         if changed:
             self._save()
         return changed

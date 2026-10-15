@@ -449,7 +449,9 @@ async def teach_displays():
 
 
 @app.get("/spotify")
-async def spotify_status():
+def spotify_status():
+    # A plain def on purpose: FastAPI runs it in a worker thread. As `async def` its five blocking
+    # playerctl calls ran on the event loop and held up every chat turn on each overlay poll.
     import subprocess
     import urllib.request
     import urllib.parse

@@ -18,6 +18,24 @@ from jarvis.away_mode.people import Resolver
 from jarvis.away_mode.session import ACTIVE, EXPIRED, TAKE_MESSAGE, AwaySession, Store
 from jarvis.away_mode.session import tzinfo
 
+
+@pytest.fixture(autouse=True)
+def _whatsapp_linked(monkeypatch):
+    """Away mode checks the bridge is linked before offering to cover it; these tests are about
+    away mode itself, not about the machine's WhatsApp, so the bridge is reported linked."""
+    from jarvis.integrations import whatsapp
+    monkeypatch.setattr(whatsapp, "status", lambda: True)
+
+
+def test_not_offered_while_whatsapp_is_unlinked(tmp_path, monkeypatch):
+    from jarvis.integrations import whatsapp
+    monkeypatch.setattr(whatsapp, "status", lambda: False)
+    monkeypatch.setattr(whatsapp, "not_connected_message", lambda: "WhatsApp isn't linked.")
+    config = SimpleNamespace(vault_path=tmp_path, user_name="Arjun")
+    said = asyncio.run(control.handle("I'm going out until 8, handle my messages", config))
+    assert "isn't linked" in said and "stays off" in said
+    assert Store(config).active_session() is None and not MANAGER.pending("local")
+
 TZ = "Asia/Kolkata"
 PEOPLE = [
     {"name": "Papa", "number": "+91 90000 00001", "relationship": "father", "aliases": ["Dad"]},

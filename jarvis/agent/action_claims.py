@@ -220,7 +220,11 @@ _ASKS_FOR_ACTION = re.compile(
         search | find | look \s+ up | google | download | install | delete | remove |
         set | change | turn | mute | unmute | increase | decrease | raise | lower |
         create | make | add | schedule | remind | call | join | share | screenshot |
-        scroll | drag | draw | fix | improve | restart | stop )
+        scroll | drag | draw | fix | improve | restart | stop |
+        # Keeping and dropping things. "Note this down: …" had its tools withheld as conversation,
+        # and the reply that it had been noted was then replaced with "I haven't done anything".
+        note | jot | save | remember | forget | record | log | store | bookmark | pin |
+        email | text | whatsapp | ping | pause | resume | skip | cancel | lock | unlock )
     \b
     """,
 )

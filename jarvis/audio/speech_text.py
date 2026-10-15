@@ -272,12 +272,43 @@ def without_internals(text: str) -> str:
 
 
 # ------------------------------------------------------------------ the whole thing
+# Models write maths as LaTeX — "\[ 2400 \times 0.15 = 360 \]" — and the voice read the
+# backslashes. Only the common pieces are spoken; anything else loses its backslash command.
+_LATEX_WORDS = [
+    (r"\\times|\\cdot", " times "), (r"\\div", " divided by "), (r"\\pm", " plus or minus "),
+    (r"\\approx", " approximately "), (r"\\neq", " is not equal to "), (r"\\leq?", " at most "),
+    (r"\\geq?", " at least "), (r"\\pi", " pi "), (r"\\theta", " theta "), (r"\\alpha", " alpha "),
+    (r"\\beta", " beta "), (r"\\infty", " infinity "), (r"\\degree|\^\{?\\circ\}?", " degrees "),
+    (r"\\%", "%"), (r"\\text\{([^}]*)\}", r" \1 "), (r"\\mathrm\{([^}]*)\}", r" \1 "),
+]
+
+
+def _latex(t: str) -> str:
+    if "\\" not in t:
+        return t
+    t = re.sub(r"\\[\[\]()]", " ", t)                       # \[ \] \( \) delimiters
+    t = re.sub(r"\$\$?", " ", t) if re.search(r"\$[^$\n]+\$", t) else t
+    t = re.sub(r"\\frac\{([^{}]*)\}\{([^{}]*)\}", r" \1 over \2 ", t)
+    t = re.sub(r"\\sqrt\{([^{}]*)\}", r" the square root of \1 ", t)
+    for pat, rep in _LATEX_WORDS:
+        t = re.sub(pat, rep, t)
+    t = re.sub(r"\\[A-Za-z]+", " ", t)                      # anything else: drop the command
+    return re.sub(r"[{}]", "", t)
+
+
+# A memory citation copied into a reply — "[Jarvis/journal/2026-10-15.md]" — is bookkeeping, and was
+# read aloud as a file path.
+_VAULT_CITE = re.compile(r"\[(?:Jarvis|People|Projects|Knowledge)/[^\]\n]{1,120}\.md\]")
+
+
 def normalize(text: str, *, pronunciations: Optional[Iterable[tuple[str, str]]] = None,
               address: Optional[str] = None) -> str:
     """The written reply as it should be said. Never contains a secret, a raw URL or a phone
     number read digit by digit."""
     t = text or ""
     t = _SECRET.sub(" ", t)
+    t = _latex(t)
+    t = _VAULT_CITE.sub(" ", t)
     t = _markup(t)
     t = _URL.sub(_url, t)
     t = _EMAIL.sub(_email, t)

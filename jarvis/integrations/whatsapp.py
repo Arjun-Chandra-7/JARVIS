@@ -36,9 +36,10 @@ def not_connected_message() -> str:
     except Exception:  # noqa: BLE001
         running = False
     if running:
-        return ("WhatsApp isn't linked — the bridge is running but waiting for a QR scan. "
+        return ("WhatsApp isn't connected — it isn't linked: the bridge is waiting for a QR scan. "
                 "Run scripts/relink-whatsapp.sh and scan the code with your phone.")
-    return "WhatsApp bridge isn't running. Start it with: systemctl --user start jarvis-whatsapp"
+    return ("WhatsApp isn't connected — the bridge isn't running. "
+            "Start it with: systemctl --user start jarvis-whatsapp")
 
 
 def send(to: str, text: str) -> dict:

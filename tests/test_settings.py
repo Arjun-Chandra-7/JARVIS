@@ -287,7 +287,12 @@ def test_an_unconfirmed_change_is_never_reported_as_done():
 
 @pytest.mark.parametrize("source", ["whatsapp", "telegram", "away", "unknown-session"])
 def test_only_the_owners_front_ends_may_change_settings(source):
-    assert run(settings_handle("disable your animations", None, source)) is None
+    reply = run(settings_handle("disable your animations", None, source))
+    if source == "unknown-session":
+        # Said plainly, not handed to the model (which invented `sudo nano /etc/gdm3/…` steps).
+        assert reply and "your own devices" in reply
+    else:
+        assert reply is None              # someone else's words get no settings reply at all
     assert registry.value("overlay.animations") is True and registry.last_change() is None
 
 

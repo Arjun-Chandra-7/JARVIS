@@ -382,8 +382,11 @@ def build_registry(config: Config, job_runner, confirm_fn: Optional[Callable[[st
           {"when": {"type": "string"}, "text": {"type": "string"}}, ["when", "text"])
     async def set_reminder(a):
         from ..jobs import reminders
-        r = reminders.add(config.vault_path, a.get("when", ""), a.get("text", ""))
-        return f"reminder #{r['id']} set for {a.get('when')}."
+        try:
+            r = reminders.add(config.vault_path, a.get("when", ""), a.get("text", ""))
+        except ValueError as exc:
+            return f"Not set: {exc}. Give the time as YYYY-MM-DDTHH:MM with the offset, e.g. 2026-10-15T21:35+05:30."
+        return f"reminder #{r['id']} set for {r['due']}."
 
     # ---------------- comms ----------------
     @tool("whatsapp_send",

@@ -770,10 +770,10 @@ class StudyCompanion:
                         f"{len(s.mistakes)} mistake(s), in: " + ", ".join(sorted({x['topic'] for x in s.mistakes})))
             elif name == "end":
                 s = sm.end()
-                say("Session ended." + (f" Summary: {s.summary()}" if s else ""))
+                say("Session ended." + (f" {s.spoken_summary()}" if s else ""))
             elif name == "summary":
                 s = sm.current or sm.last
-                say(str(s.summary()) if s else "No session yet.")
+                say(s.spoken_summary() if s else "No session yet.")
             elif name == "progress":
                 v = self.mastery.view()
                 lines = [f"{k.split('/')[-1].replace('_', ' ')}: {d['estimate']:.0%} ({d['evidence']} answers)"

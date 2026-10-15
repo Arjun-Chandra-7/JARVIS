@@ -100,8 +100,10 @@ def test_open_phone_confirms_only_on_success(monkeypatch):
 
 # --- away mode: single owner, persisted ------------------------------------
 
-def test_away_needs_a_yes_then_persists_and_ends_with_a_briefing():
+def test_away_needs_a_yes_then_persists_and_ends_with_a_briefing(monkeypatch):
     from jarvis import away_mode
+    from jarvis.integrations import whatsapp
+    monkeypatch.setattr(whatsapp, "status", lambda: True)   # this machine's bridge is not the subject
     config = Config()
     ask = run("Jarvis I'm going out until 8, handle my messages for me", config)
     assert ask.startswith("Ready to turn on away mode until 8")

@@ -7,10 +7,13 @@ change so nothing the model does is unrecoverable.
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 from datetime import date
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 SUBDIRS = ["Jarvis", "Jarvis/journal", "Projects", "People", "Topics", "Archive"]
 
@@ -160,10 +163,35 @@ def git_autocommit(vault: Path, message: str) -> bool:
     status = _git(vault, "status", "--porcelain")
     if not status.stdout.strip():
         return False
-    _git(vault, "add", "-A", "--", ".", ":(exclude)Jarvis/private")
+    _clear_stale_lock(vault)
+    if _git(vault, "add", "-A", "--", ".", ":(exclude)Jarvis/private").returncode != 0:
+        log.warning("vault: git add failed; memory changes are not being versioned")
+        return False
     # Private communication context may be the only change; in that case do not attempt an empty
     # commit and report that no durable, shareable note was committed.
     if _git(vault, "diff", "--cached", "--quiet").returncode == 0:
         return False
-    _git(vault, "commit", "-q", "-m", message)
+    # Checked, not assumed: a stale index.lock made every add and commit fail from 5 September
+    # while this kept returning True, and six weeks of memory went unversioned.
+    done = _git(vault, "commit", "-q", "-m", message)
+    if done.returncode != 0:
+        log.warning("vault: git commit failed: %s", (done.stderr or "").strip()[:200])
+        return False
     return True
+
+
+_STALE_LOCK_S = 3600.0
+
+
+def _clear_stale_lock(vault: Path) -> None:
+    """Remove an index.lock nobody holds. Jarvis is the only writer to its vault repo, and a crash
+    mid-commit leaves the lock behind for good."""
+    import time
+
+    lock = vault / ".git" / "index.lock"
+    try:
+        if lock.exists() and time.time() - lock.stat().st_mtime > _STALE_LOCK_S:
+            lock.unlink()
+            log.warning("vault: removed a stale git index.lock")
+    except OSError:
+        pass

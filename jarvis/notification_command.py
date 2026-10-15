@@ -61,6 +61,9 @@ def _span(seconds: float | None) -> str:
     return f"for {int(hours)} hour{'s' if hours != 1 else ''}" if hours < 24 else f"for {int(hours // 24)} days"
 
 
+REPEAT_WINDOW_S = 180.0
+
+
 def handle(text: str) -> str | None:
     said = (text or "").strip().rstrip(".!?")
     if not said:
@@ -69,8 +72,14 @@ def handle(text: str) -> str | None:
     if _SUMMARY.match(said):
         return n.shared_summary()
     if _AGAIN.match(said):
-        last = n.last_announcement().get("last_said")
-        return last or "There's nothing to read again."
+        # Only a notification that was just read out. "Repeat that" means the last thing said, and
+        # that is usually Jarvis's own reply: it read out an 18-day-old WhatsApp message instead.
+        # Anything older falls through, so the conversation answers it.
+        import time
+        last = n.last_announcement()
+        if last.get("last_said") and time.time() - float(last.get("last_said_at") or 0) < REPEAT_WINDOW_S:
+            return last["last_said"]
+        return None
     if _ONLY_FAMILY.match(said):
         n.set_only_family(True)
         return "Only family will interrupt you. Everyone else waits for the summary."

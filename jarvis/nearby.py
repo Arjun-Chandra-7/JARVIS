@@ -39,11 +39,16 @@ def _wifi() -> list[dict]:
             signal = int(sig)
         except ValueError:
             continue
+        here = inuse.strip() == "*"
         cur = best.get(ssid)
         if cur is None or signal > cur["signal"]:
             best[ssid] = {"ssid": ssid, "signal": signal,
                           "secure": bool(sec and sec != "--"),
-                          "current": inuse.strip() == "*"}
+                          "current": here or bool(cur and cur["current"])}
+        elif here:
+            # One SSID, several access points: connected to a weaker one, the strongest row was
+            # kept and the "in use" mark dropped, so the network you are on showed as not current.
+            cur["current"] = True
     return sorted(best.values(), key=lambda d: -d["signal"])[:14]
 
 
@@ -91,13 +96,10 @@ def _lan() -> list[dict]:
 
 
 def _bt() -> list[dict]:
-    # Ensure bluetooth is unblocked and powered
-    _run(["rfkill", "unblock", "bluetooth"], 2)
-    _run(["bluetoothctl", "power", "on"], 2)
-    # short discovery scan
-    # Skip scanning while anything is connected: the MT7922 drops A2DP audio mid-scan.
-    if not _run(["bluetoothctl", "devices", "Connected"], 2).strip():
-        _run(["bluetoothctl", "--timeout", "4", "scan", "on"], 5)
+    # Known devices only. No rfkill unblock / power on: this ran on every refresh (seen in the
+    # journal every ~30 s) and switched Bluetooth back on whenever the owner had turned it off.
+    # No discovery scan either: the MT7922 drops A2DP audio mid-scan, and headphones that connect
+    # moments after a check still got knocked off.
     out = _run(["bluetoothctl", "devices"], 4)
     devs = []
     for line in out.splitlines():

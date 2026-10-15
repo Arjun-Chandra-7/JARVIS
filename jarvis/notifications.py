@@ -343,7 +343,7 @@ class Aggregator:
                 data = _load_shared()
                 last = out[-1].events[-1]
                 data.update(last_said=self.last_said, last_app=last.app, last_who=last.who,
-                            last_thread=last.thread)
+                            last_thread=last.thread, last_said_at=time.time())
                 _save_shared(data)
         return out
 
@@ -367,7 +367,9 @@ def shared_summary(clear: bool = True) -> str:
 
 def last_announcement() -> dict:
     data = _load_shared()
-    return {k: data.get(k, "") for k in ("last_said", "last_app", "last_who", "last_thread")}
+    out = {k: data.get(k, "") for k in ("last_said", "last_app", "last_who", "last_thread")}
+    out["last_said_at"] = float(data.get("last_said_at") or 0.0)
+    return out
 
 
 def summarise(held: list[tuple[str, str]]) -> str:

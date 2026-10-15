@@ -136,6 +136,11 @@ def deterministic_handlers():
         from .mode_command import handle as f
         return await f(text, config)
 
+    async def now_playing(text, config):
+        # "What's playing right now?" — the players know; "right now" sent it to web research.
+        from .now_playing import handle as f
+        return await f(text, config)
+
     async def system(text, config):
         # Volume, brightness and mute: one meaning, one number, no ambiguity. Offered the
         # registered set_brightness tool at the top of its shortlist, the local 3B brain answered
@@ -208,6 +213,12 @@ def deterministic_handlers():
         from .task_runner import handle as f
         return await f(text, config)
 
+    async def close_something(text, config):
+        # "Close the calculator" — the app, by its executable. As a model-proposed `pkill -f`, it
+        # killed its own shell, reported exit 0, and left the calculator open.
+        from .close_command import handle as f
+        return await f(text, config)
+
     async def open_something(text, config):
         # Last, so the specific handlers above keep priority: "open phone" and "open meet" are
         # theirs. Everything else shaped like "open X" has one meaning, and measured, routing it
@@ -240,6 +251,7 @@ def deterministic_handlers():
         ("screen_follow_up", screen_follow_up),
         ("teach", teach),
         ("modes", modes),
+        ("now_playing", now_playing),
         ("system", system),
         ("screen_click", screen_click),
         ("browser_control", take_browser_control),
@@ -251,6 +263,7 @@ def deterministic_handlers():
         ("draw", draw_something),
         ("coding", coding_agent),
         ("task", run_task),
+        ("close", close_something),
         ("open", open_something),
     ]
 

@@ -39,6 +39,20 @@ class StudySession:
     turns: int = 0
     keep_listening: bool = False
 
+    def spoken_summary(self) -> str:
+        """The summary in words. The dict itself was read out — "{'subject': 'science', …}"."""
+        s = self.summary()
+        what = s["subject"] + (f", {s['chapter']}" if s["chapter"] else "")
+        mins = s["minutes"]
+        parts = [f"{mins} minute{'s' if mins != 1 else ''} of {what}" if what else f"{mins} minutes"]
+        if s["completed"]:
+            parts.append("covered " + ", ".join(s["completed"][:4]))
+        if s["mistakes"]:
+            parts.append(f"{s['mistakes']} mistake{'s' if s['mistakes'] != 1 else ''} to look at")
+        if s["to_revise"]:
+            parts.append("revise " + ", ".join(s["to_revise"][:4]))
+        return "; ".join(parts) + "."
+
     def summary(self) -> dict:
         mins = round(((self.ended_at or time.time()) - self.started_at) / 60)
         return {"subject": self.subject, "chapter": self.chapter, "minutes": mins, "mode": self.mode,

@@ -69,7 +69,22 @@ def live_facts(text: str = "") -> str:
         if w:
             facts.append(f"Weather in {w['city']} now: {w['temp_c']}°C (feels like {w['feels_c']}°C), "
                          f"{w['desc'].lower()}, humidity {w['humidity']}%.")
+    if re.search(r"(?i)\bip\b|ip address", text or ""):
+        # "What's my IP address?" got an `ip addr show` tutorial. The local address is one call.
+        ip = _local_ip()
+        if ip:
+            facts.append(f"This computer's local network IP address is {ip} (its public address is not known here).")
     return " ".join(facts)
+
+
+def _local_ip() -> str:
+    import socket
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 9))            # no packet is sent; this only picks the route
+            return s.getsockname()[0]
+    except OSError:
+        return ""
 
 
 def local_weather_question(text: str, city: str) -> bool:

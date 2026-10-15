@@ -78,7 +78,9 @@ _PERSONAL = re.compile(
     r"(?:my|any|the) (?:timers?|reminders?|alarms?)|"
     r"what(?:'s| is) playing|now playing|this song|which song|"
     r"what did i miss|catch me up|my (?:files?|documents?|downloads|pdfs?)|"
-    r"wi-?fi|bluetooth|ip address)\b")
+    r"wi-?fi|bluetooth|who'?s (?:around|nearby|here|home)|anyone (?:around|nearby|here)|"
+    r"(?:do not disturb|dnd)|coding (?:agents?|jobs?)|"
+    r"note (?:this|that|it) down|take a note|jot (?:this|that|it) down)\b")
 
 
 # --- vision -------------------------------------------------------------------------------------
