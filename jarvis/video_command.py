@@ -561,6 +561,19 @@ _FOLLOWISH = re.compile(
     r"summar\w*|values?|moral|lesson|theme|character|story|chapter|poem|teacher|step|part|this|that|they|them|he|she|"
     r"his|her|their|it|in\s+(?:english|hindi|hinglish)|(?:english|hindi|hinglish)\s+(?:mein|me)|kya|kyu|kyun|kaise|"
     r"kaun|samjha\w*|batao|dobara|phir\s+se)\b|क्या|क्यों|कैसे|कौन|समझा|बताओ|दोबारा|यह|ये|इस|उस|English|हिंदी")
+_REFERS_BACK = re.compile(
+    r"(?i)\b(?:explain|again|example|examples|simpler|simply|meaning|means|mean|summar\w*|values?|moral|"
+    r"lesson|theme|character|story|chapter|poem|teacher|step|part|this|that|they|them|he|she|his|her|their|it|"
+    r"in\s+(?:english|hindi|hinglish)|(?:english|hindi|hinglish)\s+(?:mein|me)|samjha\w*|batao|dobara|"
+    r"phir\s+se|elaborate|more)\b|^\s*(?:why|how\s+so|kyu|kyun)\b|समझा|बताओ|दोबारा|यह|ये|इस|उस|हिंदी")
+_COMMON = {
+    "what", "when", "where", "which", "while", "that", "this", "with", "have", "from", "your", "about",
+    "there", "their", "them", "they", "will", "would", "could", "should", "right", "running", "now",
+    "make", "made", "does", "doing", "done", "just", "like", "know", "tell", "show", "give", "want",
+    "need", "some", "more", "most", "many", "much", "only", "also", "into", "over", "than", "then",
+    "here", "were", "been", "being", "said", "says", "page", "results", "result", "search", "google",
+    "people", "other", "time", "today", "work", "working", "open", "turn", "status", "check",
+}
 _NOT_ABOUT_IT = re.compile(
     r"(?i)\b(?:time|date|weather|temperature|news|score|battery|volume|brightness|remind|reminder|timer|alarm|"
     r"whatsapp|call|email|open|play|search|send|music|song|"
@@ -587,10 +600,15 @@ def follows_explanation(text: str, session: str, now: Optional[float] = None) ->
     from .agent.gate import wants_something_done
     if wants_something_done(said):
         return False
-    if _FOLLOWISH.search(said):
+    # Pointing back at what was explained — "why is that?", "give an example", "what does he mean",
+    # "hindi mein samjhao" — is a follow-up. A question mark or a bare "what" is not: "What coding
+    # agents are running?" and "Is Do Not Disturb on?" were answered by describing the Google page
+    # still on screen, for the full ten minutes after any screen question.
+    if _REFERS_BACK.search(said):
         return True
-    # A name from the material, heard wrong or right: "Nicola", "Jippo".
-    words = {w for w in re.findall(r"[A-Za-z]{4,}", said.lower())}
+    # A distinctive word from the material, heard wrong or right: "Nicola", "Jippo". Common words
+    # ("what", "running", "about") are shared with almost any page and prove nothing.
+    words = {w for w in re.findall(r"[A-Za-z]{4,}", said.lower())} - _COMMON
     return bool(words & {w for w in re.findall(r"[A-Za-z]{4,}", last["material"].lower())})
 
 

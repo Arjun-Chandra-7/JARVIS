@@ -64,6 +64,16 @@ async def lifespan(app: FastAPI):
         loop.call_soon_threadsafe(lambda: asyncio.ensure_future(_emit("coding_job", json.dumps(update.get("job", update)))))
 
     _unsub = coding_jobs.subscribe(_on_coding)
+
+    # A timer set by any turn fires here, in the backend. The voice process speaks it (via the
+    # announce spool) and the HUD shows it; before this the only trace was a notify-send popup.
+    from .jobs import announce_spool, timers
+
+    def _announce(text: str) -> None:
+        announce_spool.post(text)
+        loop.call_soon_threadsafe(lambda: asyncio.ensure_future(_emit("reply", text)))
+
+    timers.set_announcer(_announce)
     watch = asyncio.create_task(_coding_watch())
     study_watch = asyncio.create_task(_study_watch())
     contacts_task = asyncio.create_task(_contacts_ingest())
@@ -584,7 +594,9 @@ async def project_open(req: OpenProject):
 @app.get("/health")
 async def health():
     try:
-        h = hud_state.health()
+        # Off the event loop: weather and the Google check can each touch the network (cached),
+        # and a slow answer here must not hold up every chat turn behind it.
+        h = await asyncio.to_thread(hud_state.health)
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
     h["booting"] = _agent["a"] is None

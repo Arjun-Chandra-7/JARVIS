@@ -86,6 +86,16 @@ def propose_start(config, text: str, session_id: str = "local", *, created_from:
                   store: Optional[Store] = None) -> str:
     from ..approvals import MANAGER
     s = build_session(config, text, created_from=created_from)
+    # Covering messages on a channel that is down is a promise nobody keeps: away mode was offered
+    # "I'll reply on WhatsApp…" while the bridge had been unlinked for three days.
+    if list(s.allowed_platforms) == ["whatsapp"]:
+        try:
+            from ..integrations import whatsapp
+            if not whatsapp.status():
+                return (whatsapp.not_connected_message() +
+                        " Until then I can't cover your messages, so away mode stays off.")
+        except Exception:  # noqa: BLE001 - a failed check must not block the proposal
+            pass
     store = store or Store(config)
     summary_text = describe(s)
     action = MANAGER.propose("away", summary_text,

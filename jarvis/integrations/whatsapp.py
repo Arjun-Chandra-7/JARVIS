@@ -24,6 +24,23 @@ def status() -> bool:
         return False
 
 
+def not_connected_message() -> str:
+    """Why WhatsApp can't be used right now, with the fix that actually applies.
+
+    "Start it with systemctl" was said while the bridge was running and merely unlinked — waiting
+    for a QR scan after its saved session broke — so the advice could never have helped.
+    """
+    try:
+        httpx.get(f"{_BASE}/status", timeout=3).raise_for_status()
+        running = True
+    except Exception:  # noqa: BLE001
+        running = False
+    if running:
+        return ("WhatsApp isn't linked — the bridge is running but waiting for a QR scan. "
+                "Run scripts/relink-whatsapp.sh and scan the code with your phone.")
+    return "WhatsApp bridge isn't running. Start it with: systemctl --user start jarvis-whatsapp"
+
+
 def send(to: str, text: str) -> dict:
     """Returns {'ok': True, 'jid': ...} or {'ok': False, 'error': ...}."""
     try:
@@ -189,8 +206,7 @@ def _deliver(cand, message: str) -> dict:
         return {"ok": True, "status": "dry_run", "preview": preview(cand, message),
                 "message": f'Dry run: would send to {cand.name} on WhatsApp: "{message}"'}
     if not status():
-        return {"ok": False, "status": "failed",
-                "message": "WhatsApp bridge isn't connected. Start it with: systemctl --user start jarvis-whatsapp"}
+        return {"ok": False, "status": "failed", "message": not_connected_message()}
     r = send(cand.address, message)
     if r.get("ok") and r.get("jid"):
         _audit("sent", cand.name, cand.address, message)

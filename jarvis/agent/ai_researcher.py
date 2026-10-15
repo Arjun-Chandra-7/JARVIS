@@ -50,18 +50,30 @@ def _ensure_dirs():
     _SEEN_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 
-def _load_seen() -> set[str]:
+# Ids kept, oldest first. This was `list(set)[-300:]` — a set has no order, so each save kept an
+# arbitrary 300, papers already reported were forgotten, and 61 of them were reported two or
+# three times (each one a model call).
+_SEEN_KEEP = 3000
+# Start-up and pacing. On every start the first cycle wrote ~10 reports — ten cloud calls of up to
+# 1,500 tokens in twelve seconds — which hit Groq's limit a minute after Jarvis came up and parked
+# the brain everyone talks to. Background work waits, and spaces itself out.
+_FIRST_CYCLE_DELAY_S = 180.0
+_REPORTS_PER_CYCLE = 3
+_REPORT_SPACING_S = 20.0
+
+
+def _load_seen() -> dict[str, None]:
     try:
         if _SEEN_FILE.exists():
-            return set(json.loads(_SEEN_FILE.read_text(encoding="utf-8")))
+            return dict.fromkeys(json.loads(_SEEN_FILE.read_text(encoding="utf-8")))
     except Exception:
         pass
-    return set()
+    return {}
 
 
-def _save_seen(seen: set[str]):
+def _save_seen(seen: dict[str, None]):
     try:
-        _SEEN_FILE.write_text(json.dumps(list(seen)[-300:], indent=2), encoding="utf-8")
+        _SEEN_FILE.write_text(json.dumps(list(seen)[-_SEEN_KEEP:], indent=2), encoding="utf-8")
     except Exception:
         pass
 
@@ -267,13 +279,18 @@ def _research_cycle():
         uid = item["id"] or item["title"]
         if uid in seen:
             continue
-        seen.add(uid)
         all_findings.append(item)
 
         # High-interest criteria (breakthrough keywords / high upvotes)
         if item.get("score", 0) >= 2 or item["source"] == "Hugging Face Daily":
+            if len(new_important) >= _REPORTS_PER_CYCLE:
+                continue                       # left unseen: the next cycle reports it
+            if new_important:
+                time.sleep(_REPORT_SPACING_S)
             _write_important_report(item)
             new_important.append(item)
+        seen[uid] = None
+        _save_seen(seen)                       # per item: a restart mid-cycle re-reports nothing
 
     _save_seen(seen)
 
@@ -290,6 +307,10 @@ def _research_cycle():
 
 def _worker_loop():
     global _state
+    waited = 0.0
+    while _state["running"] and waited < _FIRST_CYCLE_DELAY_S:
+        time.sleep(5)
+        waited += 5
     while _state["running"]:
         with _lock:
             _state["status"] = "researching"

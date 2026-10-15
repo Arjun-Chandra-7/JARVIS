@@ -2113,6 +2113,9 @@ class VoiceSession:
         timers.set_announcer(self._speak)
         reminders.set_announcer(self._speak)
         notify.set_announcer(self._speak)
+        # Timers set through the backend's agent fire in the backend; it posts them here to be said.
+        from ..jobs import announce_spool
+        announce_spool.watch(self._speak)
         asyncio.create_task(reminders.run_checker(self.config.vault_path))
         asyncio.create_task(self._watch_screen())  # proactive alerts during live screen-share
         asyncio.create_task(self._watch_afk(agent))  # welcome-back brief after a long idle gap

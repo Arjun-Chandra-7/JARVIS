@@ -188,7 +188,25 @@ function trustedHost(host) {
   return h === `127.0.0.1:${PORT}` || h === `localhost:${PORT}` || h === "127.0.0.1" || h === "localhost";
 }
 
+// Unlinked, waiting for a QR scan. As a service there is no one to scan it: a fresh QR every 20 s
+// went into the journal as ~35 lines of block art (11k lines in three hours) and nothing else said
+// WhatsApp was down. The QR is drawn only on a terminal — scripts/relink-whatsapp.sh — and the
+// service says so once and reports `needs_link` on /status.
+let needsLink = false;
+let toldUnlinked = false;
+
+function checkCreds() {
+  // A creds.json cut to zero bytes (an unclean shutdown mid-write) reads as "never linked".
+  try {
+    const p = path.join(AUTH_DIR, "creds.json");
+    if (fs.existsSync(p) && fs.statSync(p).size === 0) {
+      console.log(`WhatsApp session file ${p} is empty (corrupted). Run scripts/relink-whatsapp.sh to re-link; it keeps your contacts.`);
+    }
+  } catch (_) { /* best effort */ }
+}
+
 async function start() {
+  checkCreds();
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
   const { version } = await fetchLatestBaileysVersion();
   console.log("Using WhatsApp Web version", version.join("."));
@@ -215,10 +233,18 @@ async function start() {
   sock.ev.on("connection.update", (u) => {
     const { connection, lastDisconnect, qr } = u;
     if (qr) {
-      console.log("\nScan this QR in WhatsApp → Settings → Linked devices → Link a device:\n");
-      qrcode.generate(qr, { small: true });
+      needsLink = true;
+      if (process.stdout.isTTY) {
+        console.log("\nScan this QR in WhatsApp → Settings → Linked devices → Link a device:\n");
+        qrcode.generate(qr, { small: true });
+      } else if (!toldUnlinked) {
+        toldUnlinked = true;
+        console.log("WhatsApp is not linked; waiting for a QR scan. Run scripts/relink-whatsapp.sh to link.");
+      }
     }
     if (connection === "open") {
+      needsLink = false;
+      toldUnlinked = false;
       connected = true;
       forgetOwnName();
       console.log("WhatsApp connected.");
@@ -231,7 +257,8 @@ async function start() {
       if (!stop) {
         setTimeout(start, 3000);
       } else {
-        console.log(`Not reconnecting. Delete ${AUTH_DIR} and re-run to re-link.`);
+        needsLink = true;
+        console.log("Not reconnecting: logged out. Run scripts/relink-whatsapp.sh to re-link (it keeps your contacts).");
       }
     }
   });
@@ -304,7 +331,7 @@ http
     if (req.url === "/status") {
       // `me`: the linked account's own chat, where the owner types commands to Jarvis.
       const me = sock?.user?.id ? sock.user.id.split(":")[0] + "@s.whatsapp.net" : "";
-      return res.end(JSON.stringify({ connected, me, commit: BUILD_COMMIT, upserts: events.upserts, lastEvent: events.last }));
+      return res.end(JSON.stringify({ connected, needs_link: needsLink, me, commit: BUILD_COMMIT, upserts: events.upserts, lastEvent: events.last }));
     }
     if (req.url === "/inbox") return res.end(JSON.stringify(inbox.slice(-30)));
     if (req.url.startsWith("/chats")) {

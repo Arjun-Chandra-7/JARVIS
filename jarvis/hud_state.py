@@ -177,8 +177,14 @@ def _voice_health() -> dict:
 
 
 def _google_health() -> dict:
-    ok = CONFIG.google_token_file.exists()
-    return {"name": "Google", "label": "linked" if ok else "not linked", "ok": ok}
+    # Whether Google works, not whether a token file exists: the token's refresh had failed with
+    # invalid_grant since 16 September while this said "linked".
+    from .integrations.google import auth
+    try:
+        ok, label = auth.health(CONFIG)
+    except Exception:  # noqa: BLE001
+        ok, label = CONFIG.google_token_file.exists(), "unknown"
+    return {"name": "Google", "label": label, "ok": ok}
 
 
 def _phone_health() -> dict:

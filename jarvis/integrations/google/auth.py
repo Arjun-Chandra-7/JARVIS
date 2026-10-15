@@ -12,6 +12,8 @@ Setup (one time):
 
 from __future__ import annotations
 
+import os
+import time
 from typing import Optional
 
 SCOPES = [
@@ -35,9 +37,42 @@ def load_credentials(config):
         try:
             creds.refresh(Request())
             token.write_text(creds.to_json())
-        except Exception:  # noqa: BLE001
+            os.chmod(token, 0o600)
+        except Exception as exc:  # noqa: BLE001
+            # Remembered so health can say "sign-in expired" — it said "linked" for a month
+            # while every refresh failed with invalid_grant.
+            LAST_PROBLEM["error"] = f"{type(exc).__name__}: {str(exc)[:80]}"
+            LAST_PROBLEM["at"] = time.time()
             return None
+    LAST_PROBLEM.clear()
     return creds if creds and creds.valid else None
+
+
+LAST_PROBLEM: dict = {}
+_HEALTH: dict = {"at": 0.0, "value": None}
+
+
+def health(config, max_age_s: float = 600.0) -> tuple[bool, str]:
+    """(ok, label) for the HUD and doctor: whether Google actually works, not whether a token file
+    exists. Cached, because the HUD asks every few seconds and a refresh is a network call."""
+    now = time.time()
+    if _HEALTH["value"] is not None and now - _HEALTH["at"] < max_age_s:
+        return _HEALTH["value"]
+    if not config.google_token_file.exists():
+        value = (False, "not linked")
+    else:
+        try:
+            creds = load_credentials(config)
+        except Exception:  # noqa: BLE001
+            creds = None
+        if creds is not None:
+            value = (True, "linked")
+        elif "invalid_grant" in LAST_PROBLEM.get("error", ""):
+            value = (False, "sign-in expired — run jarvis --google-auth")
+        else:
+            value = (False, "not working")
+    _HEALTH.update(at=now, value=value)
+    return value
 
 
 def run_oauth_flow(config):
